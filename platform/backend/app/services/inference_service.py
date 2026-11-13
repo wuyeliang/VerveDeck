@@ -1,0 +1,230 @@
+"""推理部署服务（vLLM / SGLang 引擎）
+
+架构：每个部署 = 一个独立 pause 占位容器，exec 拉起 vllm serve / sglang.launch_server。
+- OpenAI 兼容 API 通过 backend 反向代理 /v1/<deploy_name>/... 对外发布
+- 多 LoRA：启动时 --enable-lora --lora-modules，运行期可热加载 (vLLM /v1/loras)
+- 量化：--quantization awq/gptq/int8（按模型权重实际量化格式）
+- 弹性扩缩容：replicas>1 时创建多副本容器，代理轮询
+"""
+import json
+import os
+import time
+import logging
+import threading
+
+import requests
+
+from ..config import settings
+from ..models import Deployment, ModelAsset
+from ..database import SessionLocal
+from . import taskcontainer as tc
+
+log = logging.getLogger("inference")
+
+_counter = 0
+_counter_lock = threading.Lock()
+
+
+def _next_rr(deployment_id: int, replicas: int) -> int:
+    global _counter
+    with _counter_lock:
+        _counter += 1
+        return _counter % replicas
+
+
+def deployment_container_name(dep: Deployment, replica: int = 0) -> str:
+    return f"ft-infer-{dep.id}" if dep.replicas <= 1 else f"ft-infer-{dep.id}-r{replica}"
+
+
+def build_cmd(dep: Deployment, model_path: str) -> list[str]:
+    if dep.engine == "sglang":
+        cmd = ["python", "-m", "sglang.launch_server",
+               "--model-path", model_path,
+               "--host", "0.0.0.0", "--port", "8000",
+               "--served-model-name", dep.name,
+               "--context-length", str(dep.max_model_len),
+               "--mem-fraction-static", str(min(dep.gpu_mem_util, 0.9))]
+        if dep.quantization and dep.quantization != "none":
+            cmd += ["--quantization", dep.quantization]
+        if dep.tensor_parallel > 1:
+            cmd += ["--tp", str(dep.tensor_parallel)]
+        if dep.enable_lora:
+            cmd.append("--enable-lora")
+        for a in (dep.lora_adapters or []):
+            cmd += [f"--lora-paths", f"{a['name']}={a['path']}"]
+        return cmd
+    # vllm：参数全部拼进 bash -lc 的脚本串（append 成独立 argv 元素不会被 bash -lc 执行）
+    parts = [f"vllm serve {model_path}",
+             "--host 0.0.0.0 --port 8000",
+             f"--served-model-name {dep.name}",
+             f"--max-model-len {dep.max_model_len}",
+             f"--gpu-memory-utilization {dep.gpu_mem_util}"]
+    if dep.quantization and dep.quantization != "none":
+        parts.append(f"--quantization {dep.quantization}")
+    if dep.tensor_parallel > 1:
+        parts.append(f"--tensor-parallel-size {dep.tensor_parallel}")
+    if dep.enable_lora:
+        parts.append("--enable-lora")
+        for a in (dep.lora_adapters or []):
+            parts.append(f"--lora-modules {a['name']}={a['path']}")
+    return ["bash", "-lc", " ".join(parts) + " 2>&1"]
+
+
+def deployment_endpoint(dep: Deployment) -> str:
+    """返回可被 docker 网络内访问的 OpenAI 兼容 base_url（含 /v1）"""
+    return _ep_url(dep, "/v1")
+
+
+def start_replica(dep: Deployment, replica: int, model_path: str) -> str:
+    name = deployment_container_name(dep, replica)
+    tc.remove_container(name, force=True)
+    cid = tc.create_container(
+        name=name,
+        image=settings.images_vllm if dep.engine == "vllm" else settings.images_sglang,
+        gpus=max(dep.tensor_parallel, 1),
+        cpus=8, mem_gb=20,
+        # VLLM_ALLOW_RUNTIME_LORA_UPDATING：vLLM>=0.15 的运行期 LoRA 热加载 API
+        # （POST /v1/load_lora_adapter、/v1/unload_lora_adapter）默认关闭（官方标注
+        # "仅本地开发使用"），平台需要它实现 LoRA 热加载，故显式开启。
+        env={"VLLM_LOGGING_LEVEL": "warning",
+             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1"},
+        labels={"fintune.deployment": str(dep.id), "fintune.type": "inference"},
+    )
+    cmd = build_cmd(dep, model_path)
+    tc.start_task(f"infer-{dep.id}-r{replica}", cid, cmd,
+                  os.path.join(settings.data_dir, "infer", f"{dep.id}", f"run-r{replica}.log"))
+    return cid
+
+
+def _ep_url(dep, path: str = "") -> str:
+    """endpoint 以 IP:port 存储，统一补 http:// 构造 URL（兼容已带 scheme 的值）"""
+    ep = dep.endpoint
+    if not str(ep).startswith("http"):
+        ep = "http://" + ep
+    return ep + path
+
+
+def wait_ready(dep: Deployment, timeout: int = 600) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if dep.endpoint:
+            try:
+                r = requests.get(_ep_url(dep, "/v1/models"), timeout=5)
+                if r.status_code == 200:
+                    return True
+            except Exception:
+                pass
+        time.sleep(5)
+    return False
+
+
+def launch(dep: Deployment, model_path: str) -> None:
+    ids = []
+    for i in range(dep.replicas):
+        ids.append(start_replica(dep, i, model_path))
+    # 等待首副本就绪后登记 endpoint（IP 在创建后即可取）
+    for i in range(dep.replicas):
+        ip = tc.container_ip(ids[i])
+        if i == 0 and ip:
+            dep.endpoint = f"{ip}:8000"
+    dep.container_ids = ids
+    db = SessionLocal()
+    try:
+        d = db.get(Deployment, dep.id)
+        d.container_ids = ids
+        d.endpoint = dep.endpoint
+        d.status = "creating"  # 就绪由 wait_ready/调度器翻转，避免 running 早于端点可用
+        db.commit()
+    finally:
+        db.close()
+
+
+def stop(dep: Deployment) -> None:
+    for i in range(max(dep.replicas, 1)):
+        tc.remove_container(deployment_container_name(dep, i), force=True)
+    dep.container_ids = []
+    dep.endpoint = ""
+    db = SessionLocal()
+    try:
+        d = db.get(Deployment, dep.id)
+        d.container_ids = []
+        d.endpoint = ""
+        d.status = "stopped"
+        db.commit()
+    finally:
+        db.close()
+
+
+def hot_add_lora(dep: Deployment, name: str, path: str) -> dict:
+    """vLLM 运行期热加载 LoRA（无需重启）
+
+    vLLM >=0.15: POST /v1/load_lora_adapter {lora_name, lora_path}
+    中间版本:    PUT /v1/loras/{name} {model_path}
+    （0.8.5/0.9.x/0.10-0.14 均无运行期 LoRA API，需 vLLM>=0.15 或 <=0.14 的对应形态）
+    """
+    if not dep.endpoint:
+        return {"ok": False, "error": "deployment not running"}
+    base = _ep_url(dep)
+    try:
+        r = requests.post(f"{base}/v1/load_lora_adapter",
+                          json={"lora_name": name, "lora_path": path}, timeout=180)
+        if r.status_code < 400:
+            return {"ok": True, "status": r.status_code, "body": r.text[:500]}
+        r2 = requests.put(f"{base}/v1/loras/{name}", json={"model_path": path}, timeout=180)
+        if r2.status_code < 400:
+            return {"ok": True, "status": r2.status_code, "body": r2.text[:500]}
+        return {"ok": False, "status": r.status_code, "body": r.text[:500]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def hot_remove_lora(dep: Deployment, name: str) -> dict:
+    if not dep.endpoint:
+        return {"ok": False, "error": "deployment not running"}
+    base = _ep_url(dep)
+    try:
+        r = requests.post(f"{base}/v1/unload_lora_adapter",
+                          json={"lora_name": name}, timeout=60)
+        if r.status_code < 400:
+            return {"ok": True, "status": r.status_code}
+        r2 = requests.delete(f"{base}/v1/loras/{name}", timeout=60)
+        return {"ok": r2.status_code < 400, "status": r2.status_code}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def ensure_serving(asset: ModelAsset, db) -> tuple[str, str]:
+    """评测 quick-serve：若资产已有运行中部署则复用，否则临时拉起一个"""
+    dep = db.query(Deployment).filter(
+        Deployment.model_asset_id == asset.id,
+        Deployment.status == "running").first()
+    if dep:
+        return deployment_endpoint(dep), dep.name
+    # 临时部署
+    import uuid
+    name = f"tmp-{asset.name}-{uuid.uuid4().hex[:6]}"
+    dep = Deployment(
+        project_id=asset.project_id, name=name, model_asset_id=asset.id,
+        engine="vllm", quantization="none", tensor_parallel=1, max_model_len=8192,
+        gpu_mem_util=0.5, enable_lora=asset.type == "lora",
+        lora_adapters=[{"name": "default", "path": asset.path}] if asset.type == "lora" else [],
+        replicas=1, status="creating", created_by=asset.created_by,
+    )
+    db.add(dep)
+    db.commit()
+    db.refresh(dep)
+    model_path = _resolve_model_path(asset, db)
+    launch(dep, model_path)
+    ready = wait_ready(dep, timeout=900)
+    db.refresh(dep)
+    if not ready:
+        stop(dep)
+        raise RuntimeError("quick-serve 启动超时")
+    return deployment_endpoint(dep), dep.name
+
+
+def _resolve_model_path(asset: ModelAsset, db) -> str:
+    if asset.type == "lora":
+        base = db.get(ModelAsset, asset.parent_asset_id) if asset.parent_asset_id else None
+        return base.path if base else asset.path
+    return asset.path

@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# build artifacts（前端镜像内 npm run build 生成）
+dist/
+**/dist/
+build/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# logs & temp
+*.log
+*.tmp
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# workbuddy project data
+.workbuddy/
