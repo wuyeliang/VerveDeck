@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "儀表盤", "data": "數據中心", "models": "模型倉庫", "train": "訓練中心",
-    "evals": "評測中心", "infer": "推理部署", "cluster": "集群運維", "admin": "系統管理"
+    "evals": "評測中心", "quant": "模型壓縮", "infer": "推理部署", "cluster": "集群運維", "admin": "系統管理"
   },
   "header": { "project": "項目空間", "selectProject": "選擇項目", "logout": "登出" },
   "login": {
@@ -12,13 +12,27 @@
   "common": {
     "loading": "加載中...", "id": "ID", "name": "名稱", "status": "狀態", "type": "類型",
     "desc": "描述", "createTime": "創建時間", "actions": "操作", "detail": "詳情", "delete": "刪除",
-    "enabled": "啟用", "disabled": "禁用", "yes": "是", "no": "否", "none": "無", "optional": "可選", "create": "創建"
+    "enabled": "啟用", "disabled": "禁用", "yes": "是", "no": "否", "none": "無", "optional": "可選", "create": "創建", "required": "此項為必填", "cancel": "取消", "deleted": "已刪除", "deleteConfirm": "確認刪除？此操作不可恢復"
   },
   "dashboard": {
     "gpuUtil": "GPU 利用率", "gpuMem": "GPU 顯存 (GB)", "runningJobs": "運行中任務",
     "dsVersions": "數據集 / 版本", "modelDeploy": "模型資產 / 在線部署",
     "gpuTrend": "GPU 利用率（近 1 小時）", "recentJobs": "最近訓練任務",
-    "chartUtil": "利用率%", "chartMem": "顯存GB", "stage": "階段"
+    "chartUtil": "利用率%", "chartMem": "顯存GB", "stage": "階段",
+    "trainCard": "訓練任務", "evalCard": "評測任務", "modelCard": "模型資產",
+    "queued": "排隊中", "running": "運行中", "done": "已完成", "failed": "已失敗", "samplesTotal": "總樣本量",
+    "gpusTitle": "GPU 即時狀態", "memUsed": "顯存", "power": "功耗", "temp": "溫度", "smClock": "SM 時鐘", "health": "健康度",
+    "sysTitle": "系統狀態", "storage": "對象存儲", "localStorage": "純本地存儲（S3 未啟用）", "diskUsed": "數據盤佔用",
+    "users": "用戶數", "projects": "項目數", "apiKeys": "API 金鑰", "taskQueue": "任務佇列", "dataTasks": "數據任務",
+    "recentEvals": "最近評測", "method": "方式", "benchmark": "基準", "score": "得分",
+    "recentDepts": "最近部署", "engine": "引擎", "quant": "量化", "replicas": "副本", "endpoint": "端點", "model": "模型",
+    "recentActivity": "最近操作", "userCol": "用戶", "action": "操作", "ipCol": "來源 IP", "timeCol": "時間",
+    "alerts": {
+      "node_offline": "GPU 節點 {{arg}} 離線", "storageDown": "對象存儲異常：{{arg}}",
+      "gpu_error": "GPU {{arg}} 硬件錯誤", "gpu_warn": "GPU {{arg}} 狀態警告",
+      "gpu_xid": "GPU {{arg}} 出現 Xid 錯誤", "gpu_remap": "GPU {{arg}} 待執行行重映射",
+      "jobs_failed": "{{arg}} 個訓練任務失敗", "models_pending": "{{arg}} 個模型等待下載"
+    }
   },
   "data": {
     "title": "數據集", "newDataset": "新建數據集", "colVersions": "版本數", "created": "已創建",
@@ -39,10 +53,22 @@
     "modeQa": "QA 問答對", "modeCot": "CoT 思維鏈", "nPerChunk": "每塊生成條數",
     "genModel": "生成模型（平台在線部署）", "needDeploy": "需先部署一個模型用於合成",
     "startSynth": "開始合成（後台任務）", "colType": "類型", "colProgress": "進度", "colFile": "文件/結果",
-    "colError": "錯誤", "namePh": "如：客服問答語料", "selectVersion": "請選擇版本", "requiredName": "請輸入名稱"
+    "colError": "錯誤", "namePh": "如：客服問答語料", "selectVersion": "請選擇版本", "requiredName": "請輸入名稱",
+    "dsKind": "數據集類型", "kindTrain": "訓練集", "kindEval": "評測集",
+    "scenario": "訓練場景", "sceneText": "文本生成", "sceneVlm": "多模態",
+    "colLatest": "最新版本", "colVolume": "數據量", "colPublished": "發布狀態", "published": "已發布", "unpublished": "未發布",
+    "importMethod": "導入方式", "tabLocal": "本地上傳", "tabOss": "OSS 導入",
+    "ossKey": "對象 Key", "ossKeyPh": "輸入桶內對象 Key，如 data/train.jsonl（JSONL/JSON）",
+    "importLocalHint": "創建後將自動以上傳文件生成 v1 版本", "importOssHint": "創建後將自動從對象存儲拉取該對象並生成 v1 版本",
+    "templateBtn": "下載模板"
   },
   "models": {
     "title": "模型資產倉庫", "filterAll": "全部類型", "base": "基座模型", "lora": "LoRA 權重", "merged": "合併模型",
+    "search": "搜尋", "searchPh": "搜尋模型（如 Qwen/Qwen2.5-0.5B-Instruct）", "srcHf": "HuggingFace", "srcMs": "ModelScope", "searchBtn": "搜尋",
+    "noResults": "未找到相關模型（換個搜尋詞重試，或用「手動填寫」）", "add": "加入", "manual": "手動填寫", "upload": "本地上傳",
+    "uploadHint": "將模型目錄壓縮為 zip 上傳（需包含 config.json / *.safetensors）", "uploading": "上傳中", "uploadOk": "上傳完成，模型已註冊",
+    "nameRuleUpload": "模型名僅允許字母數字 . _ -（1-80 位）", "colModelId": "模型 ID", "downloads": "下載量",
+    "dlProgress": "已下載 {{mb}} MB",
     "registerBase": "納管基座模型", "colSource": "來源/基座", "colSize": "大小(GB)", "lineage": "血緣", "trace": "追蹤",
     "modalTitle": "納管基座模型（自動從 HF 下載）", "downloadSubmitted": "已提交下載",
     "nameInRepo": "倉庫內名稱", "namePh": "如：qwen2.5-0.5b-instruct", "hfId": "HuggingFace ID",
@@ -63,8 +89,12 @@
     "loraArtifact": "LoRA 產物", "selectLoraArtifact": "請選擇要合併的 LoRA 產物", "loraPlaceholder": "選擇 LoRA adapter",
     "deepspeed": "DeepSpeed", "noDs": "不使用", "gpuCount": "GPU 數量",
     "summaryName": "任務名", "summarySchedule": "調度", "scheduleDesc": "排隊等待空閒 GPU，完成後自動註冊 LoRA 產物並追蹤血緣",
+    "secBasic": "基本資訊", "secTrainCfg": "訓練配置", "secData": "數據配置", "secHyper": "超參數配置", "secOutput": "訓練產出",
+    "cfgMethod": "訓練方式", "valRatio": "驗證集切分比例", "valRatioTip": "從訓練集自動切出一定比例作為驗證集（0=不切分，建議 0.1）",
+    "useRecommended": "已使用推薦預設值", "advanced": "進階參數", "summaryTitle": "訓練摘要", "startTrain": "開始訓練",
+    "summaryData": "訓練數據", "summaryVal": "驗證集", "summaryGpu": "算力", "summaryPriority": "優先級",
     "enqueued": "任務已入隊，等待 GPU 調度", "detailTitle": "任務詳情", "detailTitleWith": "訓練任務 #{{id}} · {{name}}",
-    "dStage": "階段", "dMethod": "微調", "dGpu": "GPU", "lossTitle": "Loss 曲線（實時）", "lrTitle": "學習率",
+    "dStage": "階段", "dMethod": "微調", "dGpu": "GPU", "paramsTitle": "訓練參數（最終生效配置）", "lossTitle": "Loss 曲線（實時）", "lrTitle": "學習率",
     "ckptTitle": "Checkpoints（可斷點續訓）", "mergeExport": "合併導出完整模型", "noLoraAsset": "未找到 LoRA 產物",
     "mergeEnqueued": "合併導出任務已入隊", "logsTitle": "運行日誌", "noLogs": "(暫無日誌)", "paramLoading": "參數面加載中…",
     "stageCpt": "CPT 繼續預訓練", "stageSft": "SFT 監督微調", "stageDpo": "DPO 對齊", "stageExport": "合併導出",
@@ -124,15 +154,19 @@
     "benchmark": "通用榜單（留空=業務自定義測試集）", "benchPh": "選擇榜單", "customSet": "自定義測試集",
     "selectData": "選擇數據集", "setVersion": "測試集版本", "select": "請選擇", "method": "評分方法",
     "rule": "規則匹配（EM/F1/ROUGE）", "judge": "LLM-as-a-Judge", "both": "規則 + Judge 雙重評分",
-    "judgeModel": "裁判模型（在線部署）", "judgeReq": "judge 模式需指定裁判模型", "limit": "樣本上限",
+    "judgeModel": "裁判模型（在線部署）", "judgeReq": "judge 模式需指定裁判模型", "limit": "樣本上限", "secBasic": "基本資訊", "secTarget": "評測對象", "secData": "評測數據", "secJudge": "評測器", "srcBench": "基準測試集", "srcCustom": "自定義評測集", "targetDep": "在線部署", "targetAsset2": "模型倉庫", "targetKind": "對象的選択", "dataSource": "數據來源",
     "compareTitle": "前後效果對比", "avgScore": "平均分(0-1)", "passRate": "通過率%",
     "detailTitle": "評測詳情", "detailTitleWith": "評測 #{{id}} · {{name}}",
     "statAvg": "平均分", "statPass": "通過率(≥0.6)", "statJudge": "Judge 均分(1-5)", "statTotal": "樣本數",
-    "judgeDist": "Judge 分布：{{dist}}", "perSample": "逐樣本明細", "colQ": "問題", "colRef": "參考",
+    "judgeDist": "Judge 分布：{{dist}}", "perSample": "逐樣本明細", "downloadReport": "下載報告", "colQ": "問題", "colRef": "參考",
     "colPred": "模型回答", "colRuleScore": "規則分", "judgeCol": "Judge", "judgeScore": "{{s}} 分 · {{reason}}"
   },
   "infer": {
     "title": "推理部署（vLLM / SGLang · 量化 · 多 LoRA · OpenAI API）", "newDeploy": "新建部署",
+    "secBasic": "基本資訊", "secModel": "模型選擇", "secResource": "算力資源", "secParams": "執行參數",
+    "desc": "描述", "descPh": "服務說明（可選）", "endpoint": "服務端點",
+    "copy": "複製", "copied": "已複製", "gpuNeed": "需 {n} 張 GPU（TP {tp} × {r} 副本）",
+    "tabInvoke": "服務調用", "invokeHint": "部署運行中即可調用；鑑權：x-api-key（專案 API Key，系統管理頁建立）或 Bearer JWT",
     "colModel": "模型", "colEngine": "引擎", "colQuant": "量化", "colTpRep": "TP/副本", "colLora": "LoRA",
     "start": "啟動", "startInfo": "啟動中（加載模型需要幾分鐘）", "stop": "停止", "stopped": "已停止",
     "deleteConfirm": "刪除部署？",
@@ -153,6 +187,8 @@
   "cluster": {
     "title": "算力調度與運維", "heartbeat": "心跳 {{ts}}", "gpuTotal": "GPU 總數", "gpuUsed": "佔用", "gpuFree": "空閒",
     "gpuLine": "GPU {{idx}} · 利用率 {{util}}% · 顯存 {{u}}/{{t}}GB · {{p}}W · {{c}}°C",
+    "gpuDetail": "顯存溫度 {{mt}}°C · SM/顯存時鐘 {{sm}}/{{mc}}MHz · 顯存利用率 {{mu}}% · ECC dbe/sbe {{ecc}} · XID {{xid}} · 降頻 {{thr}}",
+    "healthOk": "正常", "healthWarn": "警告", "healthErr": "異常",
     "trend": "GPU 利用率 / 顯存 / 功耗（近 1 小時）", "chartUtil": "利用率%", "chartMem": "顯存GB", "chartPower": "功耗W",
     "queueTitle": "任務排隊（優先級調度：1-9，越大越先）", "colTask": "任務", "colStage": "階段",
     "colPriority": "優先級", "top": "置頂", "emptyQueue": "隊列為空",
@@ -175,5 +211,17 @@
     "colPattern": "正則", "colScope": "作用域", "colEnabled": "啟用", "del": "刪除？",
     "auditFilter": "按用戶名過濾", "colTime": "時間", "colUser": "用戶", "colMethod": "方法",
     "colPath": "路徑", "colIp": "IP", "colCode": "狀態碼"
+  },
+  "quant": {
+    "title": "模型壓縮",
+    "intro": "透過量化壓縮模型，降低顯存占用、提升推理吞吐量；產物自動註冊進模型倉庫，可直接部署",
+    "newTask": "新建壓縮任務", "secBasic": "基本資訊", "secMethod": "量化配置",
+    "name": "任務名稱", "namePh": "例如 qwen2.5-7b-nf4",
+    "model": "選擇模型", "modelPh": "僅可選擇已就緒的完整模型（base/merged）；LoRA 需先合併",
+    "method": "量化方式", "methodHint": "BitsAndBytes 在 CPU 上量化、風險最低；GPTQ/AWQ 需校準，使用 GPU",
+    "select": "請選擇", "submitted": "任務已提交，等待調度器分配 GPU",
+    "colModel": "模型", "colMethod": "量化方式", "colFinished": "完成時間", "gpuCount": "GPU 數量",
+    "detailTitle": "任務詳情", "detailTitleWith": "壓縮任務 #{{id}} · {{name}}",
+    "logs": "運行日誌", "logsEmpty": "暫無日誌（等待調度）"
   }
 }

@@ -125,6 +125,59 @@ def get_eval(tid: int, db=Depends(get_db), user=Depends(get_current_user)):
     return {**_brief(t, db), "details": details}
 
 
+@router.get("/{tid}/report")
+def download_report(tid: int, db=Depends(get_db), user=Depends(get_current_user)):
+    """评测报告下载（Markdown）：任务信息 + 汇总指标 + 明细表"""
+    from fastapi.responses import PlainTextResponse
+    import json, os
+    t = db.get(EvalTask, tid)
+    if not t:
+        raise HTTPException(404, "评测不存在")
+    _check(db, t.project_id, user)
+    brief = _brief(t, db)
+    summary = t.summary or {}
+    details = []
+    p = os.path.join(ev.eval_dir(t.id), "result.json")
+    if os.path.exists(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                details = json.load(f).get("details", [])[:100]
+        except Exception:
+            pass
+    L = [
+        f"# 评测报告 · {t.name}（#{t.id}）", "",
+        f"- 状态：{t.status}",
+        f"- 被评对象：{brief['target'] or '-'}",
+        f"- 数据集/榜单：{t.benchmark or brief['dataset_version'] or '-'}",
+        f"- 评测方式：{t.method}",
+        f"- 样本上限：{t.limit}",
+        f"- 创建时间：{t.created_at}",
+        f"- 完成时间：{t.finished_at or '-'}",
+    ]
+    if t.error:
+        L += ["", "## 错误", "", "```", t.error[:2000], "```"]
+    if summary:
+        L += ["", "## 汇总指标", ""]
+        for k, v in summary.items():
+            L.append(f"- **{k}**: {v}")
+    if details:
+        L += ["", "## 明细（前 100 条）", "",
+              "| # | Prompt | 参考 | 预测 | F1 | EM | Judge | 错误 |",
+              "|---|---|---|---|---|---|---|---|"]
+        for d in details:
+            esc = lambda s: str(s or "").replace("|", "\\|").replace("\n", " ")[:80]
+            rule = d.get("rule", {}) or {}
+            judge = d.get("judge", {}) or {}
+            L.append("| {i} | {p} | {r} | {q} | {f1} | {em} | {js} | {e} |".format(
+                i=d.get("index", ""), p=esc(d.get("prompt")), r=esc(d.get("reference")),
+                q=esc(d.get("pred")), f1=rule.get("f1", "-"), em=rule.get("exact", "-"),
+                js=judge.get("score", "-"), e=esc(d.get("error"))))
+    return PlainTextResponse("\n".join(L) + "\n",
+                             media_type="text/markdown; charset=utf-8",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="eval-{tid}-report.md"'})
+
+
 @router.post("/compare")
 def compare(req: dict, db=Depends(get_db), user=Depends(get_current_user)):
     """前后效果对比：传入 eval id 列表，返回汇总（前端画对比图）"""
@@ -144,8 +197,11 @@ def delete_eval(tid: int, db=Depends(get_db), user=Depends(get_current_user)):
     if not t:
         raise HTTPException(404, "评测不存在")
     _check(db, t.project_id, user)
-    if t.status == "running":
+    if t.status in ("pending", "running"):
         raise HTTPException(400, "运行中的评测不可删除")
+    import shutil
     db.delete(t)
     db.commit()
+    # 清理评测产物目录（result.json/日志/临时文件）
+    shutil.rmtree(ev.eval_dir(tid), ignore_errors=True)
     return {"ok": True}

@@ -19,16 +19,23 @@ router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 def nodes(db=Depends(get_db), user=Depends(get_current_user)):
     out = []
     for n in db.query(GpuNode).all():
-        last = (db.query(GpuMetric)
-                .filter(GpuMetric.node_id == n.id)
-                .order_by(GpuMetric.ts.desc()).first())
+        last_ts = (db.query(func.max(GpuMetric.ts))
+                   .filter(GpuMetric.node_id == n.id).scalar())
+        rows = ((db.query(GpuMetric)
+                 .filter(GpuMetric.node_id == n.id, GpuMetric.ts == last_ts)
+                 .order_by(GpuMetric.gpu_index.asc()).all())
+                if last_ts else [])
+        meta_names = (n.meta or {}).get("names", []) or []
         out.append({
             "id": n.id, "name": n.name, "gpu_count": n.gpu_count, "status": n.status,
             "last_heartbeat": str(n.last_heartbeat) if n.last_heartbeat else "",
             "meta": n.meta,
-            "gpus": ([{"index": last.gpu_index, "mem_used": last.mem_used,
-                       "mem_total": last.mem_total, "util": last.util,
-                       "power": last.power, "temp": last.temp}] if last else []),
+            "gpus": ([{"index": r.gpu_index,
+                       "name": (meta_names[r.gpu_index]
+                                if r.gpu_index < len(meta_names) else ""),
+                       "mem_used": r.mem_used, "mem_total": r.mem_total,
+                       "util": r.util, "power": r.power, "temp": r.temp,
+                       "extra": r.extra or {}} for r in rows]),
             "gpu_in_use": scheduler._gpu_in_use(db),
         })
     return out

@@ -159,17 +159,19 @@ services:
     build: ../platform/frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "443:443"
+    volumes:
+      - ./tls:/etc/nginx/tls:ro
     depends_on:
       - backend
     networks: [fintune]
 
+  # GPU 监控 Agent：DCGM 采集（温度/功耗/时钟/ECC/降频/健康度/XID 等 28 项扩展指标，5s 周期）
   gpu-agent:
-    image: nvidia/cuda:12.4.1-base-ubuntu22.04
+    image: fintune/gpu-agent:1.0
+    build: ../images/gpu-agent
     restart: unless-stopped
-    command: >
-      bash -c "while true; do nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu,power.draw,temperature.gpu
-      --format=csv,header,nounits > /data/gpu/agent.csv && date +%s > /data/gpu/agent.ts; sleep 5; done"
+    ipc: host   # DCGM hostengine 需要宿主共享内存
     volumes:
       - /data/gpu:/data/gpu
     deploy:
@@ -177,7 +179,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]
     networks: [fintune]
 

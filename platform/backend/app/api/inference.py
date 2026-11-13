@@ -64,6 +64,7 @@ def _brief(d: Deployment, db: Session) -> dict:
         "gpu_mem_util": d.gpu_mem_util, "enable_lora": d.enable_lora,
         "lora_adapters": d.lora_adapters or [], "replicas": d.replicas,
         "endpoint": d.endpoint, "status": d.status, "error": d.error,
+        "description": d.description or "",
         "created_at": str(d.created_at),
         "openai_base_url": f"/v1/{d.name}" if d.status == "running" else "",
     }
@@ -83,6 +84,7 @@ class DeployReq(BaseModel):
     enable_lora: bool = False
     lora_adapters: list[dict] = []
     replicas: int = 1
+    description: str = ""
 
 
 @router.post("/api/inference/deployments")
@@ -100,7 +102,8 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         engine=req.engine, quantization=req.quantization, tensor_parallel=req.tensor_parallel,
         max_model_len=req.max_model_len, gpu_mem_util=req.gpu_mem_util,
         enable_lora=req.enable_lora, lora_adapters=req.lora_adapters,
-        replicas=max(1, req.replicas), status="creating", created_by=user.id,
+        replicas=max(1, req.replicas), description=req.description,
+        status="creating", created_by=user.id,
     )
     db.add(d)
     db.commit()

@@ -26,6 +26,8 @@ build images/evalscope    fintune/evalscope:1.0
 build images/argilla      fintune/argilla:1.0
 # PDF 解析（compose 服务，占 1 张 GPU）
 build images/mineru       fintune/mineru:1.0
+# GPU 监控 Agent（DCGM 采集，compose 服务）
+build images/gpu-agent    fintune/gpu-agent:1.0
 
 echo ""
 echo "全部任务镜像就绪："

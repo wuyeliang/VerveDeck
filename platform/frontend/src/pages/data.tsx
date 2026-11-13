@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, Select, Upload, Checkbox,
-  Drawer, Tabs, Descriptions, Progress, message, Popconfirm, Divider,
+  Drawer, Tabs, Progress, message, Radio, Row, Col,
 } from 'antd'
-import { PlusOutlined, EyeOutlined, CloudUploadOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { PlusOutlined, EyeOutlined, CloudUploadOutlined, ThunderboltOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
 const T_STATUS: Record<string, string> = { draft: 'default', committed: 'success', running: 'processing', done: 'success', failed: 'error', pending: 'default' }
+const FMTS = ['alpaca', 'sharegpt', 'dpo']
 
 export default function DataCenter() {
   const { t } = useTranslation()
@@ -19,6 +20,12 @@ export default function DataCenter() {
   const [tasks, setTasks] = useState<any[]>([])
   const [deps, setDeps] = useState<any[]>([])
   const [createForm] = Form.useForm()
+  // 新建：导入方式
+  const [createTab, setCreateTab] = useState('local')
+  const [upFile, setUpFile] = useState<any>(null)
+  const [upFmt, setUpFmt] = useState('alpaca')
+  const [s3Key, setS3Key] = useState('')
+  const [s3Fmt, setS3Fmt] = useState('alpaca')
 
   const load = useCallback(() => {
     api.get('/api/datasets', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
@@ -45,33 +52,138 @@ export default function DataCenter() {
   }, [drawer, cur?.id])
   useEffect(() => { if (drawer) { loadTasks(); reloadCur() } }, [drawer])
 
+  const openCreate = () => {
+    createForm.resetFields()
+    setCreateTab('local'); setUpFile(null); setS3Key(''); setUpFmt('alpaca'); setS3Fmt('alpaca')
+    setCreateOpen(true)
+  }
+
+  // 模板下载（blob + 本地 objectURL）
+  const downloadTemplate = (fmt: string) => {
+    api.get('/api/datasets/template', { params: { fmt }, responseType: 'blob' }).then((r) => {
+      const url = URL.createObjectURL(new Blob([r.data]))
+      const a = document.createElement('a')
+      a.href = url; a.download = `dataset_${fmt}_template.jsonl`
+      a.click()
+      URL.revokeObjectURL(url)
+    }).catch(() => {})
+  }
+
+  const onCreate = async () => {
+    try { await createForm.validateFields() } catch { return }
+    const v = createForm.getFieldsValue()
+    const r = await api.post('/api/datasets', { project_id: projectId, ...v })
+    const did = r.data.id
+    try {
+      if (createTab === 'local' && upFile) {
+        const fd = new FormData()
+        fd.append('file', upFile)
+        await api.post(`/api/datasets/${did}/versions/upload?fmt=${upFmt}&note=upload:${upFile.name}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      } else if (createTab === 's3' && s3Key.trim()) {
+        await api.post('/api/datasets/import-s3', { dataset_id: did, key: s3Key.trim(), fmt: s3Fmt })
+      }
+    } catch { /* 数据集已创建；导入失败在详情里重试即可 */ }
+    message.success(t('data.created'))
+    setCreateOpen(false)
+    load()
+  }
+
   return (
     <div>
       <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
         <h3 style={{ margin: 0 }}>{t('data.title')}</h3>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('data.newDataset')}</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('data.newDataset')}</Button>
       </Space>
       <Table rowKey="id" dataSource={list} pagination={{ pageSize: 10 }}
         columns={[
-          { title: t('common.id'), dataIndex: 'id', width: 60 },
-          { title: t('common.name'), dataIndex: 'name' },
-          { title: t('data.colVersions'), dataIndex: 'versions', width: 80 },
+          { title: t('common.id'), dataIndex: 'id', width: 55 },
+          { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true },
+          { title: t('data.dsKind'), dataIndex: 'kind', width: 90,
+            render: (v: string) => <Tag color={v === 'eval' ? 'purple' : 'blue'}>{v === 'eval' ? t('data.kindEval') : t('data.kindTrain')}</Tag> },
+          { title: t('data.colLatest'), dataIndex: 'latest_version', width: 90, render: (v: number) => (v ? `v${v}` : '-') },
+          { title: t('data.colVolume'), dataIndex: 'samples', width: 80 },
+          { title: t('data.colPublished'), dataIndex: 'published', width: 100,
+            render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? t('data.published') : t('data.unpublished')}</Tag> },
           { title: t('common.desc'), dataIndex: 'description', ellipsis: true },
-          { title: t('common.createTime'), dataIndex: 'created_at', width: 180 },
-          { title: t('common.actions'), width: 100, render: (_: any, r: any) => <Button size="small" icon={<EyeOutlined />} onClick={() => openDs(r.id)}>{t('common.detail')}</Button> },
+          { title: t('common.createTime'), dataIndex: 'created_at', width: 170 },
+          {
+            title: t('common.actions'), width: 150, render: (_: any, r: any) => (
+              <Space size={4}>
+                <Button size="small" icon={<EyeOutlined />} onClick={() => openDs(r.id)}>{t('common.detail')}</Button>
+                <Button size="small" danger onClick={() => Modal.confirm({
+                  title: t('common.deleteConfirm'), okText: t('common.delete'), cancelText: t('common.cancel'),
+                  onOk: async () => { await api.delete(`/api/datasets/${r.id}`); message.success(t('common.deleted')); load() },
+                })}>{t('common.delete')}</Button>
+              </Space>
+            ),
+          },
         ]} />
 
+      {/* 新建数据集（百炼风格：类型/场景/导入方式/模板下载） */}
       <Modal title={t('data.newDataset')} open={createOpen} onCancel={() => setCreateOpen(false)}
-        okText={t('common.create')} onOk={async () => {
-          try {
-            await api.post('/api/datasets', { project_id: projectId, ...createForm.getFieldsValue() })
-            message.success(t('data.created')); setCreateOpen(false); load()
-          } catch { }
-        }}>
-        <DsForm form={createForm} />
+        okText={t('common.create')} onOk={onCreate} width={640}
+        afterClose={() => createForm.resetFields()}>
+        <Form form={createForm} layout="vertical" initialValues={{ name: '', description: '', kind: 'train', scenario: 'text' }}>
+          <Form.Item name="name" label={t('common.name')} rules={[{ required: true, message: t('data.requiredName') }, { max: 50 }]}>
+            <Input maxLength={50} showCount placeholder={t('data.namePh')} />
+          </Form.Item>
+          <Form.Item name="description" label={t('common.desc')}>
+            <Input.TextArea rows={2} maxLength={200} showCount />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}><Form.Item name="kind" label={t('data.dsKind')}>
+              <Radio.Group options={[{ value: 'train', label: t('data.kindTrain') }, { value: 'eval', label: t('data.kindEval') }]} />
+            </Form.Item></Col>
+            <Col span={12}><Form.Item name="scenario" label={t('data.scenario')}>
+              <Radio.Group options={[{ value: 'text', label: t('data.sceneText') }, { value: 'vlm', label: t('data.sceneVlm') }]} />
+            </Form.Item></Col>
+          </Row>
+          <Form.Item label={t('data.importMethod')} required style={{ marginBottom: 0 }}>
+            <Tabs activeKey={createTab} onChange={setCreateTab} size="small" items={[
+              {
+                key: 'local', label: t('data.tabLocal'), children: (
+                  <div>
+                    <Upload.Dragger accept=".json,.jsonl" showUploadList={false}
+                      beforeUpload={(f) => { setUpFile(f); return false }}>
+                      <p className="ant-upload-drag-icon"><CloudUploadOutlined /></p>
+                      <p>{upFile ? upFile.name : t('data.uploadVersion')}</p>
+                    </Upload.Dragger>
+                    <Space style={{ marginTop: 8 }}>
+                      <Select value={upFmt} onChange={setUpFmt} style={{ width: 140 }} options={FMTS.map((f) => ({ value: f, label: f }))} />
+                      <span style={{ color: '#888' }}>{t('data.importLocalHint')}</span>
+                    </Space>
+                  </div>
+                ),
+              },
+              {
+                key: 's3', label: t('data.tabOss'), children: (
+                  <div>
+                    <Input value={s3Key} onChange={(e) => setS3Key(e.target.value)} placeholder={t('data.ossKeyPh')} />
+                    <Space style={{ marginTop: 8 }}>
+                      <Select value={s3Fmt} onChange={setS3Fmt} style={{ width: 140 }} options={FMTS.map((f) => ({ value: f, label: f }))} />
+                      <span style={{ color: '#888' }}>{t('data.importOssHint')}</span>
+                    </Space>
+                  </div>
+                ),
+              },
+            ]} />
+          </Form.Item>
+          <div style={{ marginTop: 4, color: '#555' }}>
+            <DownloadOutlined /> {t('data.templateBtn')}：
+            {FMTS.map((f) => (
+              <a key={f} style={{ marginLeft: 10 }} onClick={() => downloadTemplate(f)}>{f}</a>
+            ))}
+          </div>
+        </Form>
       </Modal>
 
-      <Drawer title={cur ? t('data.drawerTitleWith', { name: cur.name }) : t('data.drawerTitle')} width={860} open={drawer} onClose={() => setDrawer(false)}>
+      <Drawer title={cur ? t('data.drawerTitleWith', { name: cur.name }) : t('data.drawerTitle')} width={860} open={drawer} onClose={() => setDrawer(false)}
+        extra={cur && (
+          <Space>
+            <Tag color={cur.kind === 'eval' ? 'purple' : 'blue'}>{cur.kind === 'eval' ? t('data.kindEval') : t('data.kindTrain')}</Tag>
+            <Tag>{cur.scenario === 'vlm' ? t('data.sceneVlm') : t('data.sceneText')}</Tag>
+          </Space>
+        )}>
         {cur && (
           <DsDetail cur={cur} projectId={projectId} reload={reloadCur} deps={deps}
             onCreateVersion={(fmt, note, file) => {
@@ -97,16 +209,6 @@ export default function DataCenter() {
         )}
       </Drawer>
     </div>
-  )
-}
-
-function DsForm({ form }: { form: any }) {
-  const { t } = useTranslation()
-  return (
-    <Form form={form} layout="vertical" initialValues={{ name: '', description: '' }}>
-      <Form.Item name="name" label={t('common.name')} rules={[{ required: true, message: t('data.requiredName') }]}><Input placeholder={t('data.namePh')} /></Form.Item>
-      <Form.Item name="description" label={t('common.desc')}><Input.TextArea /></Form.Item>
-    </Form>
   )
 }
 

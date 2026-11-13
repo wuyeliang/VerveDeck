@@ -18,10 +18,10 @@ from sqlalchemy import func
 
 from .config import settings
 from .database import SessionLocal
-from .models import TrainingJob, EvalTask, Deployment, ModelAsset, GpuNode, GpuMetric
+from .models import TrainingJob, EvalTask, Deployment, ModelAsset, GpuNode, GpuMetric, QuantTask
 from .services import gpu_service
 from .services import taskcontainer as tc
-from .services import training_service, eval_service, inference_service
+from .services import training_service, eval_service, inference_service, quantize_service
 
 log = logging.getLogger("scheduler")
 
@@ -36,6 +36,8 @@ def _gpu_in_use(db) -> int:
         used += j.gpu_count or 1
     for d in db.query(Deployment).filter(Deployment.status.in_(["running", "creating"])).all():
         used += (d.tensor_parallel or 1) * max(d.replicas, 1)
+    for q in db.query(QuantTask).filter(QuantTask.status == "running").all():
+        used += q.gpu_count or 1
     return used
 
 
@@ -96,6 +98,34 @@ def _reconcile_training(db):
             log.warning("training job %s reconciled (lost context)", job.id)
 
 
+def _finalize_quant(db, task: QuantTask, success: bool, error: str = ""):
+    from datetime import datetime
+    task.status = "succeeded" if success else "failed"
+    task.error = error[:4000]
+    task.finished_at = datetime.utcnow()
+    if success:
+        asset = quantize_service.register_artifact(task)
+        if not asset:
+            task.status = "failed"
+            task.error = "量化执行完成但未找到产物（out 目录为空），请查看日志"
+    quantize_service.cleanup(task)
+    db.commit()
+
+
+def _reconcile_quant(db):
+    for task in db.query(QuantTask).filter(QuantTask.status == "running").all():
+        st = tc.task_state(f"quant-{task.id}")
+        if st["known"] and st["done"]:
+            code = st["code"]
+            _finalize_quant(db, task, code == 0,
+                            "" if code == 0 else f"exit code {code}\n" + _tail(f"{quantize_service.task_dir(task.id)}/run.log"))
+            log.info("quant task %s -> %s", task.id, task.status)
+        elif not st["known"]:
+            # backend 重启导致 exec 线程丢失
+            _finalize_quant(db, task, False, "调度器重启，量化上下文丢失")
+            log.warning("quant task %s reconciled (lost context)", task.id)
+
+
 def _reconcile_eval(db):
     for task in db.query(EvalTask).filter(EvalTask.status == "running").all():
         st = tc.task_state(f"eval-{task.id}")
@@ -153,6 +183,21 @@ def _admit_jobs(db):
                 job.error = f"启动失败: {e}"
                 db.commit()
                 log.exception("launch job %s failed", job.id)
+    # 量化任务（每任务固定 1 卡）：训练任务之后按 id 升序补位
+    queued_q = (db.query(QuantTask)
+                .filter(QuantTask.status == "pending")
+                .order_by(QuantTask.id.asc()).all())
+    for task in queued_q:
+        if (task.gpu_count or 1) <= free:
+            try:
+                quantize_service.launch(task)
+                free -= task.gpu_count or 1
+                log.info("admitted quant task %s", task.id)
+            except Exception as e:
+                task.status = "failed"
+                task.error = f"启动失败: {e}"
+                db.commit()
+                log.exception("launch quant task %s failed", task.id)
 
 
 def _dir_size(path: str) -> int:
@@ -184,10 +229,16 @@ def _model_downloads(db):
         # backend 线程内下载（不起容器）
         def _dl(a=asset):
             try:
-                from huggingface_hub import snapshot_download
-                snapshot_download(a.hf_id, local_dir=a.path,
-                                  endpoint=settings.hf_endpoint)
-                code = 0
+                if a.hf_id.startswith("ms:"):
+                    # ModelScope 仓库（搜索源=ModelScope 时自动加前缀）
+                    from modelscope.hub.snapshot_download import snapshot_download as ms_dl
+                    ms_dl(a.hf_id[3:], local_dir=a.path)
+                    code = 0
+                else:
+                    from huggingface_hub import snapshot_download
+                    snapshot_download(a.hf_id, local_dir=a.path,
+                                      endpoint=settings.hf_endpoint)
+                    code = 0
             except Exception as e:
                 log.error("download %s failed: %s", a.hf_id, e)
                 code = 1
@@ -219,6 +270,7 @@ class SchedulerThread(threading.Thread):
             try:
                 gpu_service.tick()
                 _reconcile_training(db)
+                _reconcile_quant(db)
                 _reconcile_eval(db)
                 _reconcile_deployments(db)
                 _admit_jobs(db)

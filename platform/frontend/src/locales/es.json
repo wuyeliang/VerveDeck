@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "Panel", "data": "Centro de datos", "models": "Repositorio de modelos", "train": "Entrenamiento",
-    "evals": "Evaluación", "infer": "Despliegue de inferencia", "cluster": "Operación del clúster", "admin": "Administración"
+    "evals": "Evaluación", "quant": "Compresión", "infer": "Despliegue de inferencia", "cluster": "Operación del clúster", "admin": "Administración"
   },
   "header": { "project": "Proyecto", "selectProject": "Seleccionar proyecto", "logout": "Cerrar sesión" },
   "login": {
@@ -12,13 +12,27 @@
   "common": {
     "loading": "Cargando...", "id": "ID", "name": "Nombre", "status": "Estado", "type": "Tipo",
     "desc": "Descripción", "createTime": "Creado", "actions": "Acciones", "detail": "Detalles", "delete": "Eliminar",
-    "enabled": "Activado", "disabled": "Deshabilitado", "yes": "Sí", "no": "No", "none": "Ninguno", "optional": "Opcional", "create": "Crear"
+    "enabled": "Activado", "disabled": "Deshabilitado", "yes": "Sí", "no": "No", "none": "Ninguno", "optional": "Opcional", "create": "Crear", "required": "Campo obligatorio", "cancel": "Cancelar", "deleted": "Eliminado", "deleteConfirm": "¿Eliminar? Esta acción no se puede deshacer"
   },
   "dashboard": {
     "gpuUtil": "Uso de GPU", "gpuMem": "Memoria GPU (GB)", "runningJobs": "Tareas en curso",
     "dsVersions": "Conjuntos de datos / Versiones", "modelDeploy": "Modelos / Despliegues activos",
     "gpuTrend": "Uso de GPU (última hora)", "recentJobs": "Tareas de entrenamiento recientes",
-    "chartUtil": "Uso %", "chartMem": "Mem GB", "stage": "Etapa"
+    "chartUtil": "Uso %", "chartMem": "Mem GB", "stage": "Etapa",
+    "trainCard": "Tareas de entrenamiento", "evalCard": "Evaluaciones", "modelCard": "Activos de modelos",
+    "queued": "En cola", "running": "En curso", "done": "Completado", "failed": "Fallido", "samplesTotal": "muestras en total",
+    "gpusTitle": "Estado GPU en vivo", "memUsed": "Memoria", "power": "Potencia", "temp": "Temp.", "smClock": "Reloj SM", "health": "Salud",
+    "sysTitle": "Estado del sistema", "storage": "Almacenamiento de objetos", "localStorage": "Solo local (S3 desactivado)", "diskUsed": "Disco de datos",
+    "users": "Usuarios", "projects": "Proyectos", "apiKeys": "Claves API", "taskQueue": "Cola de tareas", "dataTasks": "Tareas de datos",
+    "recentEvals": "Evaluaciones recientes", "method": "Método", "benchmark": "Benchmark", "score": "Puntuación",
+    "recentDepts": "Despliegues recientes", "engine": "Motor", "quant": "Cuánt.", "replicas": "Réplicas", "endpoint": "Endpoint", "model": "Modelo",
+    "recentActivity": "Actividad reciente", "userCol": "Usuario", "action": "Acción", "ipCol": "IP de origen", "timeCol": "Hora",
+    "alerts": {
+      "node_offline": "Nodo GPU {{arg}} sin conexión", "storageDown": "Almacenamiento de objetos con falla: {{arg}}",
+      "gpu_error": "Error de hardware en GPU {{arg}}", "gpu_warn": "Advertencia en GPU {{arg}}",
+      "gpu_xid": "Errores Xid en GPU {{arg}}", "gpu_remap": "Remapeo de filas pendiente en GPU {{arg}}",
+      "jobs_failed": "{{arg}} tarea(s) de entrenamiento fallida(s)", "models_pending": "{{arg}} modelo(s) pendiente(s) de descarga"
+    }
   },
   "data": {
     "title": "Conjuntos de datos", "newDataset": "Nuevo conjunto de datos", "colVersions": "Versiones", "created": "Creado",
@@ -39,10 +53,22 @@
     "modeQa": "Parejas QA", "modeCot": "Cadena de pensamiento CoT", "nPerChunk": "Elementos por chunk",
     "genModel": "Modelo generador (despliegue en línea)", "needDeploy": "Despliegue primero un modelo para la síntesis",
     "startSynth": "Iniciar síntesis (tarea en segundo plano)", "colType": "Tipo", "colProgress": "Progreso", "colFile": "Archivo / Resultado",
-    "colError": "Error", "namePh": "ej.: corpus-soporte-cliente", "selectVersion": "Seleccione la versión", "requiredName": "Introduzca un nombre"
+    "colError": "Error", "namePh": "ej.: corpus-soporte-cliente", "selectVersion": "Seleccione la versión", "requiredName": "Introduzca un nombre",
+    "dsKind": "Tipo de conjunto", "kindTrain": "Conjunto de entrenamiento", "kindEval": "Conjunto de evaluación",
+    "scenario": "Escenario", "sceneText": "Generación de texto", "sceneVlm": "Multimodal",
+    "colLatest": "Versión reciente", "colVolume": "Volumen", "colPublished": "Publicado", "published": "Publicado", "unpublished": "Borrador",
+    "importMethod": "Método de importación", "tabLocal": "Subida local", "tabOss": "Importación OSS",
+    "ossKey": "Clave de objeto", "ossKeyPh": "Clave de objeto en el bucket, ej. data/train.jsonl (JSONL/JSON)",
+    "importLocalHint": "v1 se crea automáticamente desde el archivo subido", "importOssHint": "El objeto se descarga del almacenamiento y se crea como v1",
+    "templateBtn": "Descargar plantilla"
   },
   "models": {
     "title": "Repositorio de activos de modelos", "filterAll": "Todos los tipos", "base": "Modelo base", "lora": "Pesos LoRA", "merged": "Modelo fusionado",
+    "search": "Buscar", "searchPh": "Buscar modelos (p. ej. Qwen/Qwen2.5-0.5B-Instruct)", "srcHf": "HuggingFace", "srcMs": "ModelScope", "searchBtn": "Buscar",
+    "noResults": "No se encontraron modelos (otro término o Manual)", "add": "Añadir", "manual": "Manual", "upload": "Subida local",
+    "uploadHint": "Suba el directorio del modelo como zip (debe contener config.json / *.safetensors)", "uploading": "Subiendo", "uploadOk": "Subida completada, modelo registrado",
+    "nameRuleUpload": "Nombre: letras, dígitos, . _ - solo (1-80)", "colModelId": "ID del modelo", "downloads": "Descargas",
+    "dlProgress": "Descargado {{mb}} MB",
     "registerBase": "Registrar modelo base", "colSource": "Origen / Base", "colSize": "Tamaño (GB)", "lineage": "Línea", "trace": "Rastrear",
     "modalTitle": "Registrar modelo base (descarga automática de HF)", "downloadSubmitted": "Descarga enviada",
     "nameInRepo": "Nombre en el repositorio", "namePh": "ej.: qwen2.5-0.5b-instruct", "hfId": "ID de HuggingFace",
@@ -63,8 +89,12 @@
     "loraArtifact": "Artefacto LoRA", "selectLoraArtifact": "Seleccione el artefacto LoRA a fusionar", "loraPlaceholder": "Seleccionar adaptador LoRA",
     "deepspeed": "DeepSpeed", "noDs": "Ninguno", "gpuCount": "Nº de GPU",
     "summaryName": "Tarea", "summarySchedule": "Orquestación", "scheduleDesc": "En cola esperando GPU libre; el artefacto LoRA se registra automáticamente con seguimiento de línea",
+    "secBasic": "Información básica", "secTrainCfg": "Configuración de entrenamiento", "secData": "Configuración de datos", "secHyper": "Hiparametros", "secOutput": "Salida de entrenamiento",
+    "cfgMethod": "Método de entrenamiento", "valRatio": "Proporción de validación", "valRatioTip": "Divide automáticamente una fracción del conjunto de entrenamiento como validación (0 = ninguna, 0.1 recomendada)",
+    "useRecommended": "Valores recomendados aplicados", "advanced": "Avanzado", "summaryTitle": "Resumen de entrenamiento", "startTrain": "Iniciar entrenamiento",
+    "summaryData": "Conjunto de entrenamiento", "summaryVal": "Validación", "summaryGpu": "Computación", "summaryPriority": "Prioridad",
     "enqueued": "Tarea en cola, esperando GPU", "detailTitle": "Detalles de la tarea", "detailTitleWith": "Tarea #{{id}} · {{name}}",
-    "dStage": "Etapa", "dMethod": "Método", "dGpu": "GPU", "lossTitle": "Curva de pérdida (en vivo)", "lrTitle": "Tasa de aprendizaje",
+    "dStage": "Etapa", "dMethod": "Método", "dGpu": "GPU", "paramsTitle": "Parámetros de entrenamiento (config efectiva)", "lossTitle": "Curva de pérdida (en vivo)", "lrTitle": "Tasa de aprendizaje",
     "ckptTitle": "Checkpoints (reanudables)", "mergeExport": "Fusionar y exportar modelo completo", "noLoraAsset": "Artefacto LoRA no encontrado",
     "mergeEnqueued": "Tarea de fusión/exportación en cola", "logsTitle": "Registro de ejecución", "noLogs": "(sin registros)", "paramLoading": "Cargando especificación de parámetros…",
     "stageCpt": "CPT preentrenamiento continuo", "stageSft": "SFT fine-tuning supervisado", "stageDpo": "DPO alineación", "stageExport": "Fusión y exportación",
@@ -124,15 +154,19 @@
     "benchmark": "Benchmark (vacío = set personalizado)", "benchPh": "Seleccionar benchmark", "customSet": "Set de prueba personalizado",
     "selectData": "Seleccionar conjunto de datos", "setVersion": "Versión del set de prueba", "select": "Seleccione", "method": "Método de puntuación",
     "rule": "Coincidencia por reglas (EM/F1/ROUGE)", "judge": "LLM-as-a-Judge", "both": "Reglas + Judge (doble puntuación)",
-    "judgeModel": "Modelo juez (despliegue en línea)", "judgeReq": "El modo judge requiere un modelo juez", "limit": "Límite de muestras",
+    "judgeModel": "Modelo juez (despliegue en línea)", "judgeReq": "El modo judge requiere un modelo juez", "limit": "Límite de muestras", "secBasic": "Información básica", "secTarget": "Objetivo de evaluación", "secData": "Datos de evaluación", "secJudge": "Evaluador", "srcBench": "Benchmark", "srcCustom": "Conjunto personalizado", "targetDep": "Despliegue en línea", "targetAsset2": "Repositorio de modelos", "targetKind": "Seleccionar objetivo", "dataSource": "Fuente de datos",
     "compareTitle": "Comparación antes / después", "avgScore": "Puntaje medio (0-1)", "passRate": "Tasa de aprobación %",
     "detailTitle": "Detalles de la evaluación", "detailTitleWith": "Evaluación #{{id}} · {{name}}",
     "statAvg": "Puntaje medio", "statPass": "Tasa de aprobación (≥0.6)", "statJudge": "Media Judge (1-5)", "statTotal": "Muestras",
-    "judgeDist": "Distribución Judge: {{dist}}", "perSample": "Detalle por muestra", "colQ": "Pregunta", "colRef": "Referencia",
+    "judgeDist": "Distribución Judge: {{dist}}", "perSample": "Detalle por muestra", "downloadReport": "Descargar informe", "colQ": "Pregunta", "colRef": "Referencia",
     "colPred": "Respuesta del modelo", "colRuleScore": "Puntaje reglas", "judgeCol": "Judge", "judgeScore": "{{s}} · {{reason}}"
   },
   "infer": {
     "title": "Despliegues de inferencia (vLLM / SGLang · Cuantización · Multi-LoRA · API OpenAI)", "newDeploy": "Nuevo despliegue",
+    "secBasic": "Información", "secModel": "Modelo", "secResource": "Recursos de cómputo", "secParams": "Parámetros de ejecución",
+    "desc": "Descripción", "descPh": "Descripción del servicio (opcional)", "endpoint": "Endpoint",
+    "copy": "Copiar", "copied": "Copiado", "gpuNeed": "Requiere {n} GPU (TP {tp} × {r} réplicas)",
+    "tabInvoke": "Invocar servicio", "invokeHint": "Llamable mientras el despliegue esté en ejecución. Auth: x-api-key (clave API del proyecto) o Bearer JWT",
     "colModel": "Modelo", "colEngine": "Motor", "colQuant": "Cuant.", "colTpRep": "TP/Réplicas", "colLora": "LoRA",
     "start": "Iniciar", "startInfo": "Iniciando (la carga del modelo toma unos minutos)", "stop": "Detener", "stopped": "Detenido",
     "deleteConfirm": "¿Eliminar despliegue?",
@@ -153,6 +187,8 @@
   "cluster": {
     "title": "Orquestación y operación de cómputo", "heartbeat": "Latido {{ts}}", "gpuTotal": "GPU en total", "gpuUsed": "Ocupadas", "gpuFree": "Libres",
     "gpuLine": "GPU {{idx}} · Uso {{util}}% · Mem {{u}}/{{t}}GB · {{p}}W · {{c}}°C",
+    "gpuDetail": "Mem {{mt}}°C · Reloj SM/Mem {{sm}}/{{mc}}MHz · Util. mem. {{mu}}% · ECC dbe/sbe {{ecc}} · XID {{xid}} · Ahogo {{thr}}",
+    "healthOk": "OK", "healthWarn": "Aviso", "healthErr": "Error",
     "trend": "Uso de GPU / Memoria / Potencia (última hora)", "chartUtil": "Uso %", "chartMem": "Mem GB", "chartPower": "Potencia W",
     "queueTitle": "Cola de tareas (prioridad: 1-9, mayor primero)", "colTask": "Tarea", "colStage": "Etapa",
     "colPriority": "Prioridad", "top": "Promover", "emptyQueue": "Cola vacía",
@@ -175,5 +211,17 @@
     "colPattern": "Regex", "colScope": "Alcance", "colEnabled": "Activado", "del": "¿Eliminar?",
     "auditFilter": "Filtrar por usuario", "colTime": "Hora", "colUser": "Usuario", "colMethod": "Método",
     "colPath": "Ruta", "colIp": "IP", "colCode": "Código"
+  },
+  "quant": {
+    "title": "Compresión de modelos",
+    "intro": "Comprima modelos mediante cuantización para reducir la memoria GPU y aumentar el rendimiento de inferencia. Los artefactos se registran automáticamente en el repositorio de modelos y están listos para desplegar.",
+    "newTask": "Nueva tarea de compresión", "secBasic": "Información", "secMethod": "Cuantización",
+    "name": "Nombre de la tarea", "namePh": "p. ej. qwen2.5-7b-nf4",
+    "model": "Seleccionar modelo", "modelPh": "Solo modelos completos listos (base/merged); primero fusione el LoRA",
+    "method": "Método de cuantización", "methodHint": "BitsAndBytes cuantiza en CPU (menor riesgo); GPTQ/AWQ requieren calibración y usan GPU",
+    "select": "Seleccione", "submitted": "Tarea enviada, esperando que el programador asigne una GPU",
+    "colModel": "Modelo", "colMethod": "Método", "colFinished": "Finalizado", "gpuCount": "GPU",
+    "detailTitle": "Detalles de la tarea", "detailTitleWith": "Tarea de compresión #{{id}} · {{name}}",
+    "logs": "Registro de ejecución", "logsEmpty": "Sin registro todavía (esperando programación)"
   }
 }

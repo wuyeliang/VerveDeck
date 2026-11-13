@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import {
   DashboardOutlined, DatabaseOutlined, ContainerOutlined, ExperimentOutlined,
   BarChartOutlined, CloudServerOutlined, ClusterOutlined, SettingOutlined,
-  LogoutOutlined, RocketOutlined, GlobalOutlined,
+  LogoutOutlined, RocketOutlined, GlobalOutlined, ShrinkOutlined,
 } from '@ant-design/icons'
 import Login from './pages/login'
 import Dashboard from './pages/dashboard'
@@ -13,6 +13,7 @@ import DataCenter from './pages/data'
 import ModelRepo from './pages/models'
 import TrainCenter from './pages/train'
 import EvalCenter from './pages/evals'
+import QuantCenter from './pages/quantize'
 import Inference from './pages/infer'
 import ClusterOps from './pages/cluster'
 import AdminPanel from './pages/admin'
@@ -54,20 +55,22 @@ function Shell({ children }: { children: React.ReactNode }) {
     { key: '/models', icon: <ContainerOutlined />, label: t('nav.models') },
     { key: '/train', icon: <ExperimentOutlined />, label: t('nav.train') },
     { key: '/evals', icon: <BarChartOutlined />, label: t('nav.evals') },
+    { key: '/quantize', icon: <ShrinkOutlined />, label: t('nav.quant') },
     { key: '/infer', icon: <CloudServerOutlined />, label: t('nav.infer') },
     { key: '/cluster', icon: <ClusterOutlined />, label: t('nav.cluster') },
   ]
   const menu = isSuper ? [...MENU, { key: '/admin', icon: <SettingOutlined />, label: t('nav.admin') }] : MENU
 
+  // 语言选择器独立放 Header（不能嵌在 Dropdown 菜单项内：点击会冒泡触发菜单项关闭，下拉瞬间消失无法选中）
+  const langSelect = (
+    <Select size="small" style={{ width: 140 }} value={ti18n.language}
+      options={LANGS.map((l) => ({ value: l.code, label: l.label }))}
+      onChange={(v) => setLang(v)} suffixIcon={<GlobalOutlined />} />
+  )
+
   const userMenu = (
     <Dropdown menu={{
       items: [
-        { key: 'lang', icon: <GlobalOutlined />, label: (
-          <Select size="small" bordered={false} style={{ width: 130 }} value={ti18n.language}
-            options={LANGS.map((l) => ({ value: l.code, label: l.label }))}
-            onChange={(v) => setLang(v)} />
-        ) },
-        { type: 'divider' as const },
         { key: 'logout', icon: <LogoutOutlined />, label: t('header.logout'), onClick: () => { localStorage.removeItem('token'); nav('/login') } },
       ],
     }}>
@@ -82,7 +85,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <Layout style={{ minHeight: '100vh' }}>
       <Sider width={210} theme="dark">
         <div style={{ color: '#fff', padding: '16px 20px', fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <RocketOutlined /> VerveDeck
+          <img src="/logo.svg" alt="VerveDeck" style={{ width: 28, height: 28, borderRadius: 7 }} /> VerveDeck
         </div>
         <Menu theme="dark" mode="inline" selectedKeys={[loc.pathname]}
           items={menu.map((m) => ({ key: m.key, icon: m.icon, label: m.label }))}
@@ -97,7 +100,10 @@ function Shell({ children }: { children: React.ReactNode }) {
               options={projects.filter((p) => p.can_access).map((p) => ({ value: p.id, label: p.name }))} />
             {user && <Tag color={user.role === 'super_admin' ? 'gold' : 'blue'}>{user.role}</Tag>}
           </div>
-          {userMenu}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {langSelect}
+            {userMenu}
+          </div>
         </Header>
         <Content style={{ margin: 16, padding: 16, background: '#fff', borderRadius: 8, minHeight: 280 }}>
           {children}
@@ -123,6 +129,7 @@ export default function App() {
         <Route path="/models" element={hasToken ? <Shell><ModelRepo /></Shell> : <Navigate to="/login" />} />
         <Route path="/train" element={hasToken ? <Shell><TrainCenter /></Shell> : <Navigate to="/login" />} />
         <Route path="/evals" element={hasToken ? <Shell><EvalCenter /></Shell> : <Navigate to="/login" />} />
+        <Route path="/quantize" element={hasToken ? <Shell><QuantCenter /></Shell> : <Navigate to="/login" />} />
         <Route path="/infer" element={hasToken ? <Shell><Inference /></Shell> : <Navigate to="/login" />} />
         <Route path="/cluster" element={hasToken ? <Shell><ClusterOps /></Shell> : <Navigate to="/login" />} />
         <Route path="/admin" element={hasToken ? <Shell><AdminPanel /></Shell> : <Navigate to="/login" />} />

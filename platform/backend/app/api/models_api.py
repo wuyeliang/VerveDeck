@@ -2,7 +2,7 @@
 import os
 import shutil
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -61,7 +61,14 @@ def list_models(project_id: int | None = None, mtype: str = "", db=Depends(get_d
     if mtype:
         q = q.filter(ModelAsset.type == mtype)
     rows = q.order_by(ModelAsset.id.desc()).all()
-    return [_brief(a, db) for a in rows]
+    out = []
+    for a in rows:
+        b = _brief(a, db)
+        if a.status == "pending_download" and a.path:
+            # 断点续传进度：实时统计已落地字节数（huggingface_hub 直接写 local_dir，部分文件也在内）
+            b["size_bytes"] = _size(a.path)
+        out.append(b)
+    return out
 
 
 class BaseReq(BaseModel):
@@ -84,6 +91,103 @@ def register_base(req: BaseReq, db=Depends(get_db), user=Depends(get_current_use
     if os.path.exists(path):
         a.size_bytes = _size(path)
         a.status = "ready"
+    db.add(a)
+    db.commit()
+    db.refresh(a)
+    return _brief(a, db)
+
+
+@router.get("/search")
+def search_models(source: str = "hf", q: str = "", limit: int = 20,
+                  db=Depends(get_db), user=Depends(get_current_user)):
+    """模型搜索（后端代理 HuggingFace / ModelScope，前端不直连，规避网络与 CORS 问题）"""
+    if not q.strip():
+        return []
+    limit = max(1, min(int(limit), 50))
+    try:
+        import httpx
+        if source == "ms":
+            # ModelScope OpenAPI（/openapi/v1 前缀，search 自由文本检索），
+            # 响应形如 {"data":{"models":[{"id","display_name","downloads","likes",...}]}}
+            r = httpx.get("https://modelscope.cn/openapi/v1/models",
+                          params={"search": q.strip(), "sort": "downloads",
+                                  "page_number": 1, "page_size": limit},
+                          timeout=15, follow_redirects=True)
+            r.raise_for_status()
+            data = ((r.json().get("data") or {}).get("models")) or []
+            return [{
+                "source": "ms",
+                "id": m.get("id") or "",
+                "name": (m.get("id") or "").split("/")[-1],
+                "display": m.get("display_name") or m.get("id") or "",
+                "downloads": m.get("downloads") or 0,
+                "likes": m.get("likes") or 0,
+            } for m in data[:limit]]
+        base = (settings.hf_endpoint or "https://hf-mirror.com").rstrip("/")
+        r = httpx.get(f"{base}/api/models",
+                      params={"search": q.strip(), "limit": limit,
+                              "sort": "downloads", "direction": -1},
+                      timeout=15, follow_redirects=True)
+        r.raise_for_status()
+        return [{
+            "source": "hf",
+            "id": m.get("id") or "",
+            "name": m.get("modelId") or m.get("id") or "",
+            "display": m.get("id") or "",
+            "downloads": m.get("downloads") or 0,
+            "likes": m.get("likes") or 0,
+        } for m in r.json()[:limit]]
+    except Exception as e:
+        raise HTTPException(502, f"搜索源暂不可用（{source}）: {str(e)[:200]}")
+
+
+@router.post("/upload")
+async def upload_model(project_id: int = Form(...), name: str = Form(...),
+                       note: str = Form(""),
+                       file: UploadFile = File(...),
+                       db=Depends(get_db), user=Depends(get_current_user)):
+    """本地上传：zip 包（含 config.json / *.safetensors 的完整模型目录）→ 解压入仓"""
+    import io
+    import re
+    import zipfile
+    _check_project(db, project_id, user)
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$", name or ""):
+        raise HTTPException(400, "模型名仅允许字母数字 . _ -（1-80 位）")
+    if db.query(ModelAsset).filter_by(project_id=project_id, name=name).first():
+        raise HTTPException(400, "同名模型已存在")
+    content = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "需上传 zip 包（将模型目录压缩为 .zip 后上传）")
+    dest = os.path.realpath(os.path.join(settings.data_dir, "models", "hub", name))
+    if os.path.exists(dest):
+        raise HTTPException(400, "目标目录已存在")
+    os.makedirs(dest, exist_ok=True)
+
+    def _abort():
+        shutil.rmtree(dest, ignore_errors=True)
+
+    try:
+        for info in zf.infolist():
+            target = os.path.realpath(os.path.join(dest, info.filename))
+            if target != dest and not target.startswith(dest + os.sep):
+                raise HTTPException(400, "zip 包含非法路径（zip-slip），已拒绝")
+        zf.extractall(dest)
+    except HTTPException:
+        _abort()
+        raise
+    except Exception as e:
+        _abort()
+        raise HTTPException(400, f"解压失败: {str(e)[:200]}")
+    files = os.listdir(dest)
+    if not (os.path.exists(os.path.join(dest, "config.json"))
+            or any(f.endswith(".safetensors") for f in files)):
+        _abort()
+        raise HTTPException(400, "zip 不是完整模型目录（缺 config.json 或 *.safetensors）")
+    a = ModelAsset(project_id=project_id, name=name, type="base", path=dest,
+                   source="upload", status="ready", size_bytes=_size(dest),
+                   note=note or f"local upload: {file.filename}", created_by=user.id)
     db.add(a)
     db.commit()
     db.refresh(a)
@@ -171,6 +275,32 @@ def delete_model(aid: int, db=Depends(get_db), user=Depends(require_role("super_
     if not a:
         raise HTTPException(404, "模型不存在")
     _check_project(db, a.project_id, user)
+    # 引用检查：运行中部署 / 训练任务 / 评测 / 子模型
+    from ..models import Deployment, TrainingJob, EvalTask
+    running_dep = (db.query(Deployment)
+                   .filter(Deployment.model_asset_id == aid, Deployment.status == "running").first())
+    if running_dep:
+        raise HTTPException(400, f"模型正被运行中部署「{running_dep.name}」使用，不可删除")
+    job = db.query(TrainingJob).filter(TrainingJob.base_model_id == aid).first() or \
+        db.query(TrainingJob).filter(TrainingJob.adapter_asset_id == aid).first()
+    if job and job.status in ("queued", "running"):
+        raise HTTPException(400, f"模型正被训练任务 #{job.id}（{job.status}）使用，不可删除")
+    if db.query(EvalTask).filter(EvalTask.target_asset_id == aid,
+                                 EvalTask.status.in_(["pending", "running"])).first():
+        raise HTTPException(400, "模型被运行中的评测任务引用，不可删除")
+    children = db.query(ModelAsset).filter(ModelAsset.parent_asset_id == aid).count()
+    if children:
+        raise HTTPException(400, f"模型有 {children} 个子模型（血缘依赖），请先删除子模型")
+    path = a.path
     db.delete(a)
     db.commit()
-    return {"ok": True, "note": "仅删除仓库登记，磁盘文件未删除（如需释放磁盘请手动 rm）"}
+    # 磁盘清理：仅限平台数据目录内的路径
+    import os, shutil
+    try:
+        data_root = os.path.realpath(settings.data_dir)
+        rp = os.path.realpath(path)
+        if rp.startswith(data_root + os.sep) and os.path.isdir(rp):
+            shutil.rmtree(rp, ignore_errors=True)
+    except Exception:
+        pass
+    return {"ok": True}

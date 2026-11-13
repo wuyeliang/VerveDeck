@@ -13,7 +13,7 @@ from .models import User, Tenant, Project, GpuNode, GuardRule
 from .audit import AuditMiddleware
 from .scheduler import start_scheduler
 from .api import (auth, admin, datasets, models_api, training, evals,
-                  inference, cluster, dashboard)
+                  inference, cluster, dashboard, quantize)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -25,8 +25,34 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
 app.add_middleware(AuditMiddleware)
 
 
+def _migrate_columns():
+    """旧库补列（create_all 只建缺失表、不补已有表的列）。幂等。"""
+    from sqlalchemy import inspect, text
+    try:
+        insp = inspect(engine)
+        json_type = "JSON" if engine.dialect.name == "sqlite" else "JSONB"
+        plan = {
+            "gpu_metrics": [("extra", f"{json_type} NOT NULL DEFAULT '{{}}'")],
+            "datasets": [
+                ("kind", "VARCHAR(16) NOT NULL DEFAULT 'train'"),
+                ("scenario", "VARCHAR(16) NOT NULL DEFAULT 'text'"),
+            ],
+            "deployments": [("description", "TEXT NOT NULL DEFAULT ''")],
+        }
+        with engine.begin() as conn:
+            for table, cols in plan.items():
+                have = {c["name"] for c in insp.get_columns(table)}
+                for name, decl in cols:
+                    if name not in have:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {decl}"))
+                        log.info("migration: %s.%s column added", table, name)
+    except Exception as e:
+        log.warning("migration check failed: %s", e)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    _migrate_columns()
     db = SessionLocal()
     try:
         # 超级管理员（必须先建，作为默认项目 owner 的外键目标）
@@ -112,3 +138,4 @@ app.include_router(evals.router)
 app.include_router(inference.router)
 app.include_router(cluster.router)
 app.include_router(dashboard.router)
+app.include_router(quantize.router)

@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "Dashboard", "data": "Data Center", "models": "Model Repo", "train": "Training",
-    "evals": "Evaluation", "infer": "Inference", "cluster": "Cluster Ops", "admin": "Admin"
+    "evals": "Evaluation", "quant": "Compression", "infer": "Inference", "cluster": "Cluster Ops", "admin": "Admin"
   },
   "header": { "project": "Project", "selectProject": "Select project", "logout": "Sign out" },
   "login": {
@@ -12,13 +12,27 @@
   "common": {
     "loading": "Loading...", "id": "ID", "name": "Name", "status": "Status", "type": "Type",
     "desc": "Description", "createTime": "Created", "actions": "Actions", "detail": "Details", "delete": "Delete",
-    "enabled": "Enabled", "disabled": "Disabled", "yes": "Yes", "no": "No", "none": "None", "optional": "Optional", "create": "Create"
+    "enabled": "Enabled", "disabled": "Disabled", "yes": "Yes", "no": "No", "none": "None", "optional": "Optional", "create": "Create", "required": "This field is required", "cancel": "Cancel", "deleted": "Deleted", "deleteConfirm": "Delete? This action cannot be undone"
   },
   "dashboard": {
     "gpuUtil": "GPU Utilization", "gpuMem": "GPU Memory (GB)", "runningJobs": "Running Jobs",
     "dsVersions": "Datasets / Versions", "modelDeploy": "Models / Live Deployments",
     "gpuTrend": "GPU Utilization (last hour)", "recentJobs": "Recent Training Jobs",
-    "chartUtil": "Util %", "chartMem": "Mem GB", "stage": "Stage"
+    "chartUtil": "Util %", "chartMem": "Mem GB", "stage": "Stage",
+    "trainCard": "Training Jobs", "evalCard": "Evaluations", "modelCard": "Model Assets",
+    "queued": "Queued", "running": "Running", "done": "Done", "failed": "Failed", "samplesTotal": "total samples",
+    "gpusTitle": "GPU Live Status", "memUsed": "Memory", "power": "Power", "temp": "Temp", "smClock": "SM Clock", "health": "Health",
+    "sysTitle": "System Status", "storage": "Object Storage", "localStorage": "Local only (S3 disabled)", "diskUsed": "Data Disk",
+    "users": "Users", "projects": "Projects", "apiKeys": "API Keys", "taskQueue": "Task Queue", "dataTasks": "Data Tasks",
+    "recentEvals": "Recent Evals", "method": "Method", "benchmark": "Benchmark", "score": "Score",
+    "recentDepts": "Recent Deployments", "engine": "Engine", "quant": "Quant", "replicas": "Replicas", "endpoint": "Endpoint", "model": "Model",
+    "recentActivity": "Recent Activity", "userCol": "User", "action": "Action", "ipCol": "Source IP", "timeCol": "Time",
+    "alerts": {
+      "node_offline": "GPU node {{arg}} is offline", "storageDown": "Object storage unhealthy: {{arg}}",
+      "gpu_error": "GPU {{arg}} hardware error", "gpu_warn": "GPU {{arg}} warning",
+      "gpu_xid": "Xid errors on GPU {{arg}}", "gpu_remap": "Row remap pending on GPU {{arg}}",
+      "jobs_failed": "{{arg}} training job(s) failed", "models_pending": "{{arg}} model(s) awaiting download"
+    }
   },
   "data": {
     "title": "Datasets", "newDataset": "New Dataset", "colVersions": "Versions", "created": "Created",
@@ -39,10 +53,22 @@
     "modeQa": "QA pairs", "modeCot": "CoT chain-of-thought", "nPerChunk": "Items per chunk",
     "genModel": "Generator model (live deployment)", "needDeploy": "Deploy a model first for synthesis",
     "startSynth": "Start Synthesis (background task)", "colType": "Type", "colProgress": "Progress", "colFile": "File / Result",
-    "colError": "Error", "namePh": "e.g. customer-support-corpus", "selectVersion": "Select version(s)", "requiredName": "Please enter a name"
+    "colError": "Error", "namePh": "e.g. customer-support-corpus", "selectVersion": "Select version(s)", "requiredName": "Please enter a name",
+    "dsKind": "Dataset Type", "kindTrain": "Training Set", "kindEval": "Evaluation Set",
+    "scenario": "Training Scenario", "sceneText": "Text Generation", "sceneVlm": "Multimodal",
+    "colLatest": "Latest Version", "colVolume": "Volume", "colPublished": "Published", "published": "Published", "unpublished": "Draft",
+    "importMethod": "Import Method", "tabLocal": "Local Upload", "tabOss": "OSS Import",
+    "ossKey": "Object Key", "ossKeyPh": "Object key in the bucket, e.g. data/train.jsonl (JSONL/JSON)",
+    "importLocalHint": "v1 is created automatically from the uploaded file after creation", "importOssHint": "The object is fetched from object storage and created as v1 automatically",
+    "templateBtn": "Download Template"
   },
   "models": {
     "title": "Model Asset Repository", "filterAll": "All types", "base": "Base model", "lora": "LoRA weights", "merged": "Merged model",
+    "search": "Search", "searchPh": "Search models (e.g. Qwen/Qwen2.5-0.5B-Instruct)", "srcHf": "HuggingFace", "srcMs": "ModelScope", "searchBtn": "Search",
+    "noResults": "No models found (try another keyword or use Manual)", "add": "Add", "manual": "Manual", "upload": "Local Upload",
+    "uploadHint": "Upload the model directory as a zip (must contain config.json / *.safetensors)", "uploading": "Uploading", "uploadOk": "Upload complete, model registered",
+    "nameRuleUpload": "Model name: letters, digits, . _ - only (1-80)", "colModelId": "Model ID", "downloads": "Downloads",
+    "dlProgress": "Downloaded {{mb}} MB",
     "registerBase": "Register Base Model", "colSource": "Source / Base", "colSize": "Size (GB)", "lineage": "Lineage", "trace": "Trace",
     "modalTitle": "Register Base Model (auto-download from HF)", "downloadSubmitted": "Download submitted",
     "nameInRepo": "Repository Name", "namePh": "e.g. qwen2.5-0.5b-instruct", "hfId": "HuggingFace ID",
@@ -63,8 +89,12 @@
     "loraArtifact": "LoRA Artifact", "selectLoraArtifact": "Select the LoRA artifact to merge", "loraPlaceholder": "Select LoRA adapter",
     "deepspeed": "DeepSpeed", "noDs": "None", "gpuCount": "GPU Count",
     "summaryName": "Job", "summarySchedule": "Scheduling", "scheduleDesc": "Queues for a free GPU; the LoRA artifact is auto-registered and lineage tracked on completion",
+    "secBasic": "Basic Info", "secTrainCfg": "Training Configuration", "secData": "Data Configuration", "secHyper": "Hyperparameters", "secOutput": "Training Output",
+    "cfgMethod": "Training Method", "valRatio": "Validation Split Ratio", "valRatioTip": "Auto-split a fraction of the training set as the validation set (0 = none, 0.1 recommended)",
+    "useRecommended": "Recommended defaults applied", "advanced": "Advanced", "summaryTitle": "Training Summary", "startTrain": "Start Training",
+    "summaryData": "Training Data", "summaryVal": "Validation", "summaryGpu": "Compute", "summaryPriority": "Priority",
     "enqueued": "Job enqueued, waiting for GPU scheduling", "detailTitle": "Job Details", "detailTitleWith": "Training Job #{{id}} · {{name}}",
-    "dStage": "Stage", "dMethod": "Method", "dGpu": "GPU", "lossTitle": "Loss Curve (live)", "lrTitle": "Learning Rate",
+    "dStage": "Stage", "dMethod": "Method", "dGpu": "GPU", "paramsTitle": "Training Parameters (effective config)", "lossTitle": "Loss Curve (live)", "lrTitle": "Learning Rate",
     "ckptTitle": "Checkpoints (resumable)", "mergeExport": "Merge & Export Full Model", "noLoraAsset": "LoRA artifact not found",
     "mergeEnqueued": "Merge/export job enqueued", "logsTitle": "Run Log", "noLogs": "(no logs yet)", "paramLoading": "Loading parameter spec…",
     "stageCpt": "CPT continued pre-training", "stageSft": "SFT supervised fine-tuning", "stageDpo": "DPO alignment", "stageExport": "Merge & Export",
@@ -124,15 +154,19 @@
     "benchmark": "Benchmark (empty = custom test set)", "benchPh": "Select benchmark", "customSet": "Custom Test Set",
     "selectData": "Select dataset", "setVersion": "Test set version", "select": "Select", "method": "Scoring Method",
     "rule": "Rule matching (EM/F1/ROUGE)", "judge": "LLM-as-a-Judge", "both": "Rule + Judge dual scoring",
-    "judgeModel": "Judge model (live deployment)", "judgeReq": "Judge mode requires a judge model", "limit": "Sample Limit",
+    "judgeModel": "Judge model (live deployment)", "judgeReq": "Judge mode requires a judge model", "limit": "Sample Limit", "secBasic": "Basic Info", "secTarget": "Eval Target", "secData": "Eval Data", "secJudge": "Judge", "srcBench": "Benchmark", "srcCustom": "Custom Dataset", "targetDep": "Live Deployment", "targetAsset2": "Model Repo", "targetKind": "Select Target", "dataSource": "Data Source",
     "compareTitle": "Before / After Comparison", "avgScore": "Avg score (0-1)", "passRate": "Pass rate %",
     "detailTitle": "Evaluation Details", "detailTitleWith": "Evaluation #{{id}} · {{name}}",
     "statAvg": "Avg Score", "statPass": "Pass rate (≥0.6)", "statJudge": "Judge avg (1-5)", "statTotal": "Samples",
-    "judgeDist": "Judge distribution: {{dist}}", "perSample": "Per-sample details", "colQ": "Question", "colRef": "Reference",
+    "judgeDist": "Judge distribution: {{dist}}", "perSample": "Per-sample details", "downloadReport": "Download Report", "colQ": "Question", "colRef": "Reference",
     "colPred": "Prediction", "colRuleScore": "Rule Score", "judgeCol": "Judge", "judgeScore": "{{s}} · {{reason}}"
   },
   "infer": {
     "title": "Inference Deployments (vLLM / SGLang · Quantization · Multi-LoRA · OpenAI API)", "newDeploy": "New Deployment",
+    "secBasic": "Basic Info", "secModel": "Model", "secResource": "Compute Resources", "secParams": "Runtime Params",
+    "desc": "Description", "descPh": "Service description (optional)", "endpoint": "Endpoint",
+    "copy": "Copy", "copied": "Copied", "gpuNeed": "Needs {n} GPU(s) (TP {tp} × {r} replicas)",
+    "tabInvoke": "Invoke", "invokeHint": "Callable while the deployment is running. Auth: x-api-key (project API key) or Bearer JWT",
     "colModel": "Model", "colEngine": "Engine", "colQuant": "Quant", "colTpRep": "TP/Replicas", "colLora": "LoRA",
     "start": "Start", "startInfo": "Starting (model load takes a few minutes)", "stop": "Stop", "stopped": "Stopped",
     "deleteConfirm": "Delete deployment?",
@@ -153,6 +187,8 @@
   "cluster": {
     "title": "Compute Scheduling & Ops", "heartbeat": "Heartbeat {{ts}}", "gpuTotal": "GPUs", "gpuUsed": "In use", "gpuFree": "Free",
     "gpuLine": "GPU {{idx}} · Util {{util}}% · Mem {{u}}/{{t}}GB · {{p}}W · {{c}}°C",
+    "gpuDetail": "Mem {{mt}}°C · SM/Mem clock {{sm}}/{{mc}}MHz · Mem util {{mu}}% · ECC dbe/sbe {{ecc}} · XID {{xid}} · Throttle {{thr}}",
+    "healthOk": "OK", "healthWarn": "Warning", "healthErr": "Error",
     "trend": "GPU Utilization / Memory / Power (last hour)", "chartUtil": "Util %", "chartMem": "Mem GB", "chartPower": "Power W",
     "queueTitle": "Job Queue (priority scheduling: 1-9, higher first)", "colTask": "Job", "colStage": "Stage",
     "colPriority": "Priority", "top": "Promote", "emptyQueue": "Queue is empty",
@@ -175,5 +211,17 @@
     "colPattern": "Pattern", "colScope": "Scope", "colEnabled": "Enabled", "del": "Delete?",
     "auditFilter": "Filter by username", "colTime": "Time", "colUser": "User", "colMethod": "Method",
     "colPath": "Path", "colIp": "IP", "colCode": "Status"
+  },
+  "quant": {
+    "title": "Model Compression",
+    "intro": "Compress models with quantization to reduce GPU memory and boost inference throughput. Artifacts are auto-registered in the model repo and ready to deploy.",
+    "newTask": "New Compression Task", "secBasic": "Basic Info", "secMethod": "Quantization",
+    "name": "Task Name", "namePh": "e.g. qwen2.5-7b-nf4",
+    "model": "Select Model", "modelPh": "Only ready full models (base/merged) — merge LoRA first",
+    "method": "Quantization Method", "methodHint": "BitsAndBytes runs on CPU (lowest risk); GPTQ/AWQ need calibration and use the GPU",
+    "select": "Please select", "submitted": "Task submitted, waiting for the scheduler to assign a GPU",
+    "colModel": "Model", "colMethod": "Method", "colFinished": "Finished At", "gpuCount": "GPUs",
+    "detailTitle": "Task Details", "detailTitleWith": "Compression Task #{{id}} · {{name}}",
+    "logs": "Run Log", "logsEmpty": "No log yet (waiting for scheduling)"
   }
 }

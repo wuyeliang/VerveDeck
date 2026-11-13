@@ -74,12 +74,8 @@ PARAM_GROUPS: list[dict] = [
         {"key": "save_strategy", "label": "保存策略", "type": "str", "default": "steps", "choices": ["no", "steps", "epoch", "best"]},
         {"key": "logging_steps", "label": "日志间隔 logging_steps", "type": "int", "default": 5, "min": 1},
         {"key": "eval_strategy", "label": "验证策略 eval_strategy", "type": "str", "default": "no", "choices": ["no", "steps", "epoch"]},
-        {"key": "early_stopping_patience", "label": "早停耐心值", "type": "int", "default": 3, "min": 1},
-        {"key": "early_stopping_threshold", "label": "早停阈值", "type": "float", "default": 0, "step": 0.001},
         {"key": "gradient_checkpointing", "label": "梯度检查点（省显存）", "type": "bool", "default": True},
-        {"key": "lazy_tokenize", "label": "惰性 tokenize lazy_tokenize", "type": "bool", "default": False},
         {"key": "seed", "label": "随机种子 seed", "type": "int", "default": 42},
-        {"key": "bias", "label": "bias 更新范围", "type": "str", "default": "none", "choices": ["none", "all"]},
         {"key": "enable_thinking", "label": "思考模式 enable_thinking（Qwen3 等）", "type": "bool", "default": True},
         {"key": "report_to", "label": "实验上报 report_to", "type": "str", "default": "tensorboard",
          "choices": ["none", "wandb", "mlflow", "neptune", "tensorboard", "swanlab", "all"]},
@@ -162,6 +158,13 @@ INTERNAL_KEYS = {
     "logging_dir", "dataset", "dataset_dir", "adapter_name_or_path",
     "export_dir", "deepspeed", "overwrite_output_dir", "plot_loss",
     "trust_remote_code", "ddp_timeout",
+}
+
+# 镜像内 LLaMA-Factory 0.9.3 不支持的键（HfArgumentParser 会因「未使用」而报错）。
+# 已从 PARAM_GROUPS 移除（UI 不再提供）；此处兜底剥离，防止旧任务 hyperparams /
+# extra_args 透传残留导致训练容器启动即失败。
+UNSUPPORTED_LF_KEYS = {
+    "bias", "early_stopping_patience", "early_stopping_threshold", "lazy_tokenize",
 }
 
 
@@ -355,6 +358,9 @@ def build_config(job: TrainingJob, db) -> dict:
         "overwrite_output_dir": True,
         "plot_loss": True,
     })
+    # 剥离镜像 LF 0.9.3 不支持的键（旧 hyperparams / extra_args 兜底）
+    for k in UNSUPPORTED_LF_KEYS:
+        d.pop(k, None)
     return {k: v for k, v in d.items() if v is not None}
 
 

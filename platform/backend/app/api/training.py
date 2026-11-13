@@ -102,8 +102,13 @@ def get_job(jid: int, db=Depends(get_db), user=Depends(get_current_user)):
     if not j:
         raise HTTPException(404, "任务不存在")
     _check(db, j.project_id, user)
+    try:
+        config = ts.build_config(j, db)  # 最终生效的 LLaMA-Factory 配置（spec 默认+用户覆盖+派生）
+    except Exception:
+        config = {}
     return {**_brief(j, db),
             "checkpoints": [{"step": c["step"], "path": c["path"]} for c in ts.checkpoints(j)],
+            "config": config,
             "container_name": j.container_name}
 
 
@@ -148,6 +153,34 @@ def cancel_job(jid: int, db=Depends(get_db), user=Depends(get_current_user)):
     from datetime import datetime
     j.finished_at = datetime.utcnow()
     db.commit()
+    return {"ok": True}
+
+
+@router.delete("/jobs/{jid}")
+def delete_job(jid: int, db=Depends(get_db), user=Depends(get_current_user)):
+    j = db.get(TrainingJob, jid)
+    if not j:
+        raise HTTPException(404, "任务不存在")
+    _check(db, j.project_id, user)
+    if j.status in ("queued", "running"):
+        raise HTTPException(400, f"当前状态 {j.status} 不可删除（请先取消）")
+    if db.query(ModelAsset).filter(ModelAsset.job_id == jid).first():
+        raise HTTPException(400, "任务已产出模型资产，请先在模型仓库删除对应产物再删除任务")
+    if db.query(TrainingJob).filter(TrainingJob.resume_from_job_id == jid).first():
+        raise HTTPException(400, "存在基于该任务续训的新任务，不可删除")
+    work_dir = j.work_dir
+    db.delete(j)
+    db.commit()
+    # 磁盘清理：仅限平台数据目录内的任务工作目录
+    import os
+    try:
+        root = os.path.realpath(settings.data_dir)
+        rp = os.path.realpath(work_dir)
+        if rp.startswith(root + os.sep) and os.path.isdir(rp):
+            import shutil
+            shutil.rmtree(rp, ignore_errors=True)
+    except Exception:
+        pass
     return {"ok": True}
 
 

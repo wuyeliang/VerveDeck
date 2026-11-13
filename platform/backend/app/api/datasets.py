@@ -72,6 +72,8 @@ class DsReq(BaseModel):
     project_id: int
     name: str
     description: str = ""
+    kind: str = "train"  # train/eval
+    scenario: str = "text"  # text/vlm
 
 
 @router.get("")
@@ -85,9 +87,14 @@ def list_datasets(project_id: int | None = None, db=Depends(get_db), user=Depend
         q = q.filter(Dataset.project_id.in_(pids or [0]))
     out = []
     for d in q.all():
-        n = db.query(DatasetVersion).filter_by(dataset_id=d.id).count()
+        vers = db.query(DatasetVersion).filter_by(dataset_id=d.id).all()
+        latest = max((v.version for v in vers), default=0)
+        latest_status = next((v.status for v in vers if v.version == latest), "")
         out.append({"id": d.id, "project_id": d.project_id, "name": d.name,
-                    "description": d.description, "versions": n,
+                    "description": d.description, "versions": len(vers),
+                    "kind": d.kind, "scenario": d.scenario,
+                    "latest_version": latest, "samples": sum(v.sample_count for v in vers),
+                    "published": latest_status == "committed",
                     "created_at": str(d.created_at)})
     return out
 
@@ -95,9 +102,14 @@ def list_datasets(project_id: int | None = None, db=Depends(get_db), user=Depend
 @router.post("")
 def create_dataset(req: DsReq, db=Depends(get_db), user=Depends(get_current_user)):
     _proj(db, req.project_id, user)
+    if req.kind not in ("train", "eval"):
+        raise HTTPException(400, "kind 仅支持 train/eval")
+    if req.scenario not in ("text", "vlm"):
+        raise HTTPException(400, "scenario 仅支持 text/vlm")
     if db.query(Dataset).filter_by(project_id=req.project_id, name=req.name).first():
         raise HTTPException(400, "数据集已存在")
-    d = Dataset(project_id=req.project_id, name=req.name, description=req.description, created_by=user.id)
+    d = Dataset(project_id=req.project_id, name=req.name, description=req.description,
+                kind=req.kind, scenario=req.scenario, created_by=user.id)
     db.add(d)
     db.commit()
     db.refresh(d)
@@ -109,16 +121,28 @@ def create_dataset(req: DsReq, db=Depends(get_db), user=Depends(get_current_user
 def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("super_admin", "tenant_admin", "developer"))):
     d = _get_ds(db, dsid, user)
     repo = ds.dataset_repo_dir(d.project_id, d.name)  # commit 后 ORM 属性过期，先捕获路径
+    vids = {v.id for v in db.query(DatasetVersion).filter_by(dataset_id=dsid).all()}
+    # 引用检查：训练任务（数据版本 / 由本数据集产物）与评测任务
+    from ..models import TrainingJob, EvalTask
+    for j in db.query(TrainingJob).all():
+        if j.dataset_version_ids and (set(j.dataset_version_ids) & vids):
+            raise HTTPException(400, f"数据集被训练任务 #{j.id}（{j.name}）引用，不可删除")
+    if vids and db.query(EvalTask).filter(EvalTask.dataset_version_id.in_(list(vids))).first():
+        raise HTTPException(400, "数据集版本被评测任务引用，不可删除")
+    db.query(DataTask).filter_by(dataset_id=dsid).delete()
     db.query(DatasetVersion).filter_by(dataset_id=dsid).delete()
     db.delete(d)
     db.commit()
-    # 对象存储同步清理（主存储为 rustfs 时）
+    # 清理：对象存储 + 本地仓库目录 + 解析上传缓存
+    import shutil
     from ..services import storage
     storage.delete_dir(repo)
+    shutil.rmtree(repo, ignore_errors=True)
+    shutil.rmtree(os.path.join(settings.data_dir, "uploads", str(dsid)), ignore_errors=True)
     return {"ok": True}
 
 
-# 注意：/tasks 必须在 /{dsid} 之前注册，否则被动态路由遮蔽（Starlette 按注册顺序匹配）
+# 注意：/tasks、/template 等静态路由必须在 /{dsid} 之前注册，否则被动态路由遮蔽（Starlette 按注册顺序匹配）
 @router.get("/tasks")
 def list_tasks(dataset_id: int | None = None, db=Depends(get_db), user=Depends(get_current_user)):
     q = db.query(DataTask)
@@ -133,12 +157,73 @@ def list_tasks(dataset_id: int | None = None, db=Depends(get_db), user=Depends(g
              "created_at": str(t.created_at), "updated_at": str(t.updated_at)} for t in rows]
 
 
+# 数据模板下载（新建流程参照：提供各格式样例 JSONL）
+_TEMPLATES: dict[str, list[dict]] = {
+    "alpaca": [
+        {"instruction": "什么是 LoRA 微调？", "input": "", "output": "LoRA（Low-Rank Adaptation）是一种参数高效微调方法，通过训练低秩分解的权重矩阵适配器来更新模型，参数量远小于全参数微调。"},
+        {"instruction": "梯度累积的作用是什么？", "input": "", "output": "梯度累积在多个小批量上累加梯度后一次性更新参数，等效于更大的 batch size，用于在显存受限时提升训练稳定性。"},
+    ],
+    "sharegpt": [
+        {"conversations": [
+            {"from": "human", "value": "你好，请介绍一下自己"},
+            {"from": "gpt", "value": "你好！我是一个大语言模型助手，很高兴为你解答问题。"},
+        ]},
+    ],
+    "dpo": [
+        {"prompt": "请给出一条学习建议", "chosen": "建议使用间隔重复结合动手实践，定期回顾错题并输出总结，这样记忆更牢固。",
+         "rejected": "多背几遍就行了。"},
+    ],
+}
+
+
+@router.get("/template")
+def download_template(fmt: str = "alpaca", db=Depends(get_db), user=Depends(get_current_user)):
+    rows = _TEMPLATES.get(fmt)
+    if not rows:
+        raise HTTPException(400, f"未知格式 {fmt}（支持 alpaca/sharegpt/dpo）")
+    from fastapi.responses import PlainTextResponse
+    body = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n"
+    return PlainTextResponse(body, media_type="application/jsonl",
+                             headers={"Content-Disposition": f"attachment; filename=dataset_{fmt}_template.jsonl"})
+
+
+# OSS（rustfs/S3）导入：从桶内对象拉取 JSONL/JSON 生成 v1
+class ImportS3Req(BaseModel):
+    dataset_id: int
+    key: str  # 桶内对象 key
+    fmt: str = "alpaca"
+    note: str = ""
+
+
+@router.post("/import-s3")
+def import_s3(req: ImportS3Req, db=Depends(get_db), user=Depends(get_current_user)):
+    from ..services import storage
+    if not storage.enabled():
+        raise HTTPException(400, "对象存储（S3/OSS）未启用")
+    d = _get_ds(db, req.dataset_id, user)
+    try:
+        storage.ensure_bucket()
+        c = storage.client()
+        resp = c.get_object(settings.s3_bucket, req.key)
+        data = resp.read()
+        resp.close()
+        resp.release_conn()
+    except Exception as e:
+        raise HTTPException(400, f"拉取对象 {req.key} 失败：{str(e)[:200]}")
+    rows = _parse_rows(data.decode("utf-8", "ignore"), req.fmt, "s3-import")
+    if not rows:
+        raise HTTPException(400, "对象中未解析出有效样本（需 instruction/output 或 prompt/chosen/rejected 字段）")
+    ver = _create_version(db, d, rows, user.id, req.fmt, req.note or f"s3:{req.key}")
+    return _ver_brief(ver)
+
+
 @router.get("/{dsid}")
 def get_dataset(dsid: int, db=Depends(get_db), user=Depends(get_current_user)):
     d = _get_ds(db, dsid, user)
     vers = db.query(DatasetVersion).filter_by(dataset_id=dsid).order_by(DatasetVersion.version.desc()).all()
     return {**{
         "id": d.id, "project_id": d.project_id, "name": d.name, "description": d.description,
+        "kind": d.kind, "scenario": d.scenario,
         "created_at": str(d.created_at)},
         "versions": [_ver_brief(v) for v in vers]}
 
@@ -210,15 +295,11 @@ class UploadVersionReq(BaseModel):
     note: str = ""
 
 
-@router.post("/{dsid}/versions/upload")
-async def upload_version(dsid: int, fmt: str = "alpaca", note: str = "",
-                         file: UploadFile = File(...), db=Depends(get_db), user=Depends(get_current_user)):
-    d = _get_ds(db, dsid, user)
-    content = await file.read()
-    text = content.decode("utf-8", "ignore")
-    rows = []
-    fname = (file.filename or "").lower()
-    if fname.endswith((".json",)) or text.strip().startswith("["):
+def _parse_rows(text: str, fmt: str, fname: str) -> list[dict]:
+    """JSON/JSONL 文本 -> 规范化样本行（解析失败抛 400；无有效样本返回 []）"""
+    rows: list[dict] = []
+    fname = (fname or "").lower()
+    if fname.endswith(".json") or text.strip().startswith("["):
         try:
             data = json.loads(text)
             rows = data if isinstance(data, list) else data.get("data", [])
@@ -233,7 +314,15 @@ async def upload_version(dsid: int, fmt: str = "alpaca", note: str = "",
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    normed = [r for r in (ds.normalize(r, fmt) for r in rows) if r]
+    return [r for r in (ds.normalize(r, fmt) for r in rows) if r]
+
+
+@router.post("/{dsid}/versions/upload")
+async def upload_version(dsid: int, fmt: str = "alpaca", note: str = "",
+                         file: UploadFile = File(...), db=Depends(get_db), user=Depends(get_current_user)):
+    d = _get_ds(db, dsid, user)
+    content = await file.read()
+    normed = _parse_rows(content.decode("utf-8", "ignore"), fmt, file.filename or "")
     if not normed:
         raise HTTPException(400, "未解析出有效样本（需 instruction/output 或 prompt/chosen/rejected 字段）")
     ver = _create_version(db, d, normed, user.id, fmt, note or f"upload:{file.filename}")

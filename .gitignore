@@ -30,3 +30,6 @@ Thumbs.db
 
 # workbuddy project data
 .workbuddy/
+
+# tls self-signed certs（deploy.sh 生成）
+deploy/tls/

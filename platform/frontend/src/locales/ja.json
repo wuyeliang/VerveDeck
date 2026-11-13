@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "ダッシュボード", "data": "データセンター", "models": "モデルリポジトリ", "train": "トレーニング",
-    "evals": "評価", "infer": "推論デプロイ", "cluster": "クラスタ運用", "admin": "システム管理"
+    "evals": "評価", "quant": "モデル量子化", "infer": "推論デプロイ", "cluster": "クラスタ運用", "admin": "システム管理"
   },
   "header": { "project": "プロジェクト", "selectProject": "プロジェクトを選択", "logout": "ログアウト" },
   "login": {
@@ -12,13 +12,27 @@
   "common": {
     "loading": "読み込み中...", "id": "ID", "name": "名前", "status": "状態", "type": "種類",
     "desc": "説明", "createTime": "作成日時", "actions": "操作", "detail": "詳細", "delete": "削除",
-    "enabled": "有効", "disabled": "無効", "yes": "はい", "no": "いいえ", "none": "なし", "optional": "任意", "create": "作成"
+    "enabled": "有効", "disabled": "無効", "yes": "はい", "no": "いいえ", "none": "なし", "optional": "任意", "create": "作成", "required": "必須入力項目です", "cancel": "キャンセル", "deleted": "削除しました", "deleteConfirm": "削除しますか？この操作は取り消せません"
   },
   "dashboard": {
     "gpuUtil": "GPU 使用率", "gpuMem": "GPU メモリ (GB)", "runningJobs": "実行中ジョブ",
     "dsVersions": "データセット / バージョン", "modelDeploy": "モデル資産 / 稼働デプロイ",
     "gpuTrend": "GPU 使用率（直近 1 時間）", "recentJobs": "最近のトレーニングジョブ",
-    "chartUtil": "使用率%", "chartMem": "メモリGB", "stage": "ステージ"
+    "chartUtil": "使用率%", "chartMem": "メモリGB", "stage": "ステージ",
+    "trainCard": "トレーニングジョブ", "evalCard": "評価タスク", "modelCard": "モデル資産",
+    "queued": "待機中", "running": "実行中", "done": "完了", "failed": "失敗", "samplesTotal": "総サンプル数",
+    "gpusTitle": "GPU リアルタイム状態", "memUsed": "メモリ", "power": "消費電力", "temp": "温度", "smClock": "SM クロック", "health": "健全性",
+    "sysTitle": "システム状態", "storage": "オブジェクトストレージ", "localStorage": "ローカルのみ（S3 無効）", "diskUsed": "データディスク",
+    "users": "ユーザー数", "projects": "プロジェクト数", "apiKeys": "API キー", "taskQueue": "タスクキュー", "dataTasks": "データタスク",
+    "recentEvals": "最近の評価", "method": "手法", "benchmark": "ベンチマーク", "score": "スコア",
+    "recentDepts": "最近のデプロイ", "engine": "エンジン", "quant": "量子化", "replicas": "レプリカ", "endpoint": "エンドポイント", "model": "モデル",
+    "recentActivity": "最近の操作", "userCol": "ユーザー", "action": "操作", "ipCol": "ソース IP", "timeCol": "時刻",
+    "alerts": {
+      "node_offline": "GPU ノード {{arg}} がオフライン", "storageDown": "オブジェクトストレージ異常：{{arg}}",
+      "gpu_error": "GPU {{arg}} ハードウェアエラー", "gpu_warn": "GPU {{arg}} 警告",
+      "gpu_xid": "GPU {{arg}} に Xid エラー", "gpu_remap": "GPU {{arg}} で行リマップ保留",
+      "jobs_failed": "トレーニングジョブ {{arg}} 件が失敗", "models_pending": "モデル {{arg}} 件がダウンロード待ち"
+    }
   },
   "data": {
     "title": "データセット", "newDataset": "新規データセット", "colVersions": "バージョン数", "created": "作成しました",
@@ -39,10 +53,22 @@
     "modeQa": "QA 問答ペア", "modeCot": "CoT 思考連鎖", "nPerChunk": "チャンクあたり生成数",
     "genModel": "生成モデル（オンラインデプロイ）", "needDeploy": "合成には先にモデルをデプロイしてください",
     "startSynth": "合成開始（バックグラウンドタスク）", "colType": "種類", "colProgress": "進捗", "colFile": "ファイル/結果",
-    "colError": "エラー", "namePh": "例：カスタマーサポートコーパス", "selectVersion": "バージョンを選択", "requiredName": "名前を入力してください"
+    "colError": "エラー", "namePh": "例：カスタマーサポートコーパス", "selectVersion": "バージョンを選択", "requiredName": "名前を入力してください",
+    "dsKind": "データセット種別", "kindTrain": "学習セット", "kindEval": "評価セット",
+    "scenario": "学習シナリオ", "sceneText": "テキスト生成", "sceneVlm": "マルチモーダル",
+    "colLatest": "最新バージョン", "colVolume": "データ量", "colPublished": "公開状態", "published": "公開済み", "unpublished": "未公開",
+    "importMethod": "インポート方法", "tabLocal": "ローカルアップロード", "tabOss": "OSS インポート",
+    "ossKey": "オブジェクトキー", "ossKeyPh": "バケット内のオブジェクトキー（例: data/train.jsonl、JSONL/JSON）",
+    "importLocalHint": "作成後、アップロードファイルから v1 が自動生成されます", "importOssHint": "作成後、オブジェクトストレージから取得し v1 を自動生成します",
+    "templateBtn": "テンプレートダウンロード"
   },
   "models": {
     "title": "モデル資産リポジトリ", "filterAll": "全種類", "base": "ベースモデル", "lora": "LoRA 重み", "merged": "マージモデル",
+    "search": "検索", "searchPh": "モデルを検索（例: Qwen/Qwen2.5-0.5B-Instruct）", "srcHf": "HuggingFace", "srcMs": "ModelScope", "searchBtn": "検索",
+    "noResults": "該当モデルが見つかりません（キーワードを変えて再試行、または「手動入力」を使用）", "add": "追加", "manual": "手動入力", "upload": "ローカルアップロード",
+    "uploadHint": "モデルディレクトリを zip に圧縮してアップロード（config.json / *.safetensors を含めること）", "uploading": "アップロード中", "uploadOk": "アップロード完了、モデルを登録しました",
+    "nameRuleUpload": "モデル名は英数字 . _ - のみ許可（1-80 文字）", "colModelId": "モデル ID", "downloads": "DL 数",
+    "dlProgress": "ダウンロード済み {{mb}} MB",
     "registerBase": "ベースモデル登録", "colSource": "ソース/ベース", "colSize": "サイズ(GB)", "lineage": "系譜", "trace": "追跡",
     "modalTitle": "ベースモデル登録（HF から自動ダウンロード）", "downloadSubmitted": "ダウンロードを提出しました",
     "nameInRepo": "リポジトリ内名称", "namePh": "例：qwen2.5-0.5b-instruct", "hfId": "HuggingFace ID",
@@ -63,8 +89,12 @@
     "loraArtifact": "LoRA 成果物", "selectLoraArtifact": "マージする LoRA 成果物を選択", "loraPlaceholder": "LoRA アダプタを選択",
     "deepspeed": "DeepSpeed", "noDs": "使用しない", "gpuCount": "GPU 数",
     "summaryName": "ジョブ名", "summarySchedule": "スケジューリング", "scheduleDesc": "空き GPU をキューで待機。完了後に LoRA 成果物を自動登録し系譜を追跡",
+    "secBasic": "基本情報", "secTrainCfg": "トレーニング設定", "secData": "データ設定", "secHyper": "ハイパーパラメータ", "secOutput": "学習成果",
+    "cfgMethod": "学習方式", "valRatio": "検証セット比率", "valRatioTip": "トレーニングセットから検証セットを自動分割（0=分割なし、0.1 推奨）",
+    "useRecommended": "推奨デフォルトを適用中", "advanced": "詳細設定", "summaryTitle": "トレーニングサマリー", "startTrain": "トレーニング開始",
+    "summaryData": "学習データ", "summaryVal": "検証セット", "summaryGpu": "計算リソース", "summaryPriority": "優先度",
     "enqueued": "ジョブをキューに追加しました。GPU スケジューリングを待機中", "detailTitle": "ジョブ詳細", "detailTitleWith": "トレーニングジョブ #{{id}} · {{name}}",
-    "dStage": "ステージ", "dMethod": "微調整", "dGpu": "GPU", "lossTitle": "Loss カーブ（リアルタイム）", "lrTitle": "学習率",
+    "dStage": "ステージ", "dMethod": "微調整", "dGpu": "GPU", "paramsTitle": "学習パラメータ（有効設定）", "lossTitle": "Loss カーブ（リアルタイム）", "lrTitle": "学習率",
     "ckptTitle": "Checkpoints（再開可能）", "mergeExport": "完全モデルをマージエクスポート", "noLoraAsset": "LoRA 成果物が見つかりません",
     "mergeEnqueued": "マージエクスポートジョブをキューに追加しました", "logsTitle": "実行ログ", "noLogs": "(ログなし)", "paramLoading": "パラメータ面を読み込み中…",
     "stageCpt": "CPT 継続事前学習", "stageSft": "SFT 教師あり微調整", "stageDpo": "DPO 整列", "stageExport": "マージエクスポート",
@@ -124,15 +154,19 @@
     "benchmark": "ベンチマーク（空欄=カスタムテストセット）", "benchPh": "ベンチマークを選択", "customSet": "カスタムテストセット",
     "selectData": "データセットを選択", "setVersion": "テストセットバージョン", "select": "選択してください", "method": "採点方式",
     "rule": "ルールマッチ（EM/F1/ROUGE）", "judge": "LLM-as-a-Judge", "both": "ルール + Judge 二重採点",
-    "judgeModel": "ジャッジモデル（オンラインデプロイ）", "judgeReq": "judge モードではジャッジモデルを指定する必要があります", "limit": "サンプル上限",
+    "judgeModel": "ジャッジモデル（オンラインデプロイ）", "judgeReq": "judge モードではジャッジモデルを指定する必要があります", "limit": "サンプル上限", "secBasic": "基本情報", "secTarget": "評価対象", "secData": "評価データ", "secJudge": "評価器", "srcBench": "ベンチマークセット", "srcCustom": "カスタム評価セット", "targetDep": "オンラインデプロイ", "targetAsset2": "モデルリポジトリ", "targetKind": "対象の選択", "dataSource": "データソース",
     "compareTitle": "前後比較", "avgScore": "平均点(0-1)", "passRate": "パス率%",
     "detailTitle": "評価詳細", "detailTitleWith": "評価 #{{id}} · {{name}}",
     "statAvg": "平均点", "statPass": "パス率(≥0.6)", "statJudge": "Judge 平均(1-5)", "statTotal": "サンプル数",
-    "judgeDist": "Judge 分布：{{dist}}", "perSample": "サンプル別明細", "colQ": "質問", "colRef": "参考",
+    "judgeDist": "Judge 分布：{{dist}}", "perSample": "サンプル別明細", "downloadReport": "レポートをダウンロード", "colQ": "質問", "colRef": "参考",
     "colPred": "モデル回答", "colRuleScore": "ルール点", "judgeCol": "Judge", "judgeScore": "{{s}} 点 · {{reason}}"
   },
   "infer": {
     "title": "推論デプロイ（vLLM / SGLang · 量子化 · マルチ LoRA · OpenAI API）", "newDeploy": "新規デプロイ",
+    "secBasic": "基本情報", "secModel": "モデル選択", "secResource": "計算リソース", "secParams": "実行パラメータ",
+    "desc": "説明", "descPh": "サービスの説明（任意）", "endpoint": "服务端点",
+    "copy": "コピー", "copied": "コピーしました", "gpuNeed": "GPU {n} 枚必要（TP {tp} × レプリカ {r}）",
+    "tabInvoke": "サービス呼び出し", "invokeHint": "デプロイ実行中のとき呼び出し可能。認証: x-api-key（プロジェクト API キー）または Bearer JWT",
     "colModel": "モデル", "colEngine": "エンジン", "colQuant": "量子化", "colTpRep": "TP/レプリカ", "colLora": "LoRA",
     "start": "起動", "startInfo": "起動中（モデル読み込みに数分かかります）", "stop": "停止", "stopped": "停止しました",
     "deleteConfirm": "デプロイを削除しますか？",
@@ -153,6 +187,8 @@
   "cluster": {
     "title": "計算スケジューリングと運用", "heartbeat": "ハートビート {{ts}}", "gpuTotal": "GPU 総数", "gpuUsed": "使用中", "gpuFree": "空き",
     "gpuLine": "GPU {{idx}} · 使用率 {{util}}% · VRAM {{u}}/{{t}}GB · {{p}}W · {{c}}°C",
+    "gpuDetail": "メモリ温度 {{mt}}°C · SM/メモリクロック {{sm}}/{{mc}}MHz · メモリ使用率 {{mu}}% · ECC dbe/sbe {{ecc}} · XID {{xid}} · スロットル {{thr}}",
+    "healthOk": "正常", "healthWarn": "警告", "healthErr": "異常",
     "trend": "GPU 使用率 / VRAM / 電力（直近 1 時間）", "chartUtil": "使用率%", "chartMem": "VRAM GB", "chartPower": "電力 W",
     "queueTitle": "ジョブキュー（優先度スケジューリング：1-9、大きいほど先）", "colTask": "ジョブ", "colStage": "ステージ",
     "colPriority": "優先度", "top": "最上位", "emptyQueue": "キューは空です",
@@ -175,5 +211,17 @@
     "colPattern": "正規表現", "colScope": "スコープ", "colEnabled": "有効", "del": "削除しますか？",
     "auditFilter": "ユーザー名で絞り込み", "colTime": "時間", "colUser": "ユーザー", "colMethod": "メソッド",
     "colPath": "パス", "colIp": "IP", "colCode": "ステータス"
+  },
+  "quant": {
+    "title": "モデル量子化",
+    "intro": "量子化でモデルを圧縮し、GPU メモリ使用量を下げて推論スループットを向上。成果物はモデルリポジトリに自動登録され、そのままデプロイできます",
+    "newTask": "圧縮タスクを作成", "secBasic": "基本情報", "secMethod": "量子化設定",
+    "name": "タスク名", "namePh": "例: qwen2.5-7b-nf4",
+    "model": "モデルを選択", "modelPh": "準備が整った完全なモデル（base/merged）のみ選択可能。LoRA は先にマージしてください",
+    "method": "量子化方式", "methodHint": "BitsAndBytes は CPU で量子化しリスクが最も低いです。GPTQ/AWQ はキャリブレーションが必要で GPU を使用します",
+    "select": "選択してください", "submitted": "タスクを提出しました。スケジューラが GPU を割り当てるのを待ってください",
+    "colModel": "モデル", "colMethod": "量子化方式", "colFinished": "完了時刻", "gpuCount": "GPU 数",
+    "detailTitle": "タスク詳細", "detailTitleWith": "圧縮タスク #{{id}} · {{name}}",
+    "logs": "実行ログ", "logsEmpty": "ログはまだありません（スケジューリング待ち）"
   }
 }

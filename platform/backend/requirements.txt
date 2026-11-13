@@ -16,6 +16,7 @@ dvc>=3.40
 tensorboard>=2.16
 minio>=7.2
 huggingface-hub>=0.24
+modelscope>=1.14
 argilla>=2.0,<3
 # 自动化测试套件（500 用例）在容器内运行，随镜像内置
 pytest>=8.0

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="platform/frontend/public/logo.svg" width="84" alt="VerveDeck Logo" />
+</p>
+
 # VerveDeck · 大模型微调训练平台
 
 **Web 全量重写 + 全栈容器化**的大模型微调训练平台：数据工程 → 微调训练 → 评测 → 推理发布 全链路闭环。
@@ -14,7 +18,8 @@ VerveDeck 是一个开箱即用的一体化 LLM 微调训练平台：在单机/�
 
 - **全栈容器化**：FastAPI 后端 + React/Ant Design 前端 + nginx 网关，任务级容器隔离（训练/推理/评测各自独立容器）。
 - **七大模块**：数据工程、模型资产仓库、分布式微调（LLaMA-Factory）、自动化评测（EvalScope）、高性能推理（vLLM/SGLang）、算力调度运维、安全权限治理。
-- **一键部署**：`bash deploy.sh` 完成环境预检 → 配置生成 → 6 个任务镜像构建 → 全栈启动 → 健康检查。
+- **一键部署**：`bash deploy.sh` 完成环境预检 → 配置生成 → 7 个任务镜像构建 → 全栈启动 → 健康检查。
+- **强制 HTTPS**：web 网关 443 强制 HTTPS + HSTS（80 仅 301 跳转），自签证书（10 年，含 SAN）由 deploy.sh 首次自动生成。
 - **国际化**：Web 界面支持 **简体中文、繁體中文、日本語、English、Français、Español** 6 种语言（右上角用户菜单切换，antd/dayjs 组件语言同步联动）。
 - **数据集对象存储**：数据集版本主存储为 rustfs（S3 兼容），本地为处理缓存，未命中自动回源；`S3_ENDPOINT` 置空即降级纯本地。
 
@@ -27,7 +32,7 @@ VerveDeck 是一个开箱即用的一体化 LLM 微调训练平台：在单机/�
 | 3 分布式微调 | CPT/SFT/DPO/合并导出全链路、LoRA/Full、DeepSpeed ZeRO-2/3、可视化超参向导（**94 参数 × 10 组**，对齐 LLaMA-Factory WebUI 全量）、实时 Loss/LR 曲线、断点续训、取消 | LLaMA-Factory |
 | 4 自动化评测 | 通用榜单（EvalScope：gsm8k/ceval/arc/cmmlu/human_eval/mbpp）、业务自定义测试集、规则匹配（EM/Contains/F1/ROUGE-L）、LLM-as-a-Judge、微调前后对比图 | EvalScope |
 | 5 高性能推理 | vLLM / SGLang 双引擎、量化（awq/gptq/int8）、多 LoRA 动态热加载（运行期 /v1/loras）、OpenAI 兼容 API 发布（代理+鉴权+护栏）、副本弹性扩缩容 | vLLM + SGLang |
-| 6 算力调度运维 | GPU 节点池化、多任务排队 + 优先级调度（1-9）、利用率/显存/功耗/温度监控、节点心跳 60s 超时故障自愈（离线判定+任务收敛+可续训） | 自研调度器 + nvidia-smi agent |
+| 6 算力调度运维 | GPU 节点池化、多任务排队 + 优先级调度（1-9）、DCGM 全量指标监控（利用率/显存/功耗/温度/时钟/ECC/降频/健康度/XID）、节点心跳 60s 超时故障自愈（离线判定+任务收敛+可续训） | 自研调度器 + DCGM agent |
 | 7 安全权限治理 | 多租户 + 项目空间隔离、RBAC（super_admin/tenant_admin/developer/viewer）、全量写操作审计日志、推理输入/输出内容安全护栏（正则规则库，可全局/项目级） | 自研中间件 |
 
 ### 架构约定
@@ -55,7 +60,7 @@ VerveDeck 是一个开箱即用的一体化 LLM 微调训练平台：在单机/�
 ```
 deploy/          docker-compose.yaml、.env.example、deploy.sh（一键部署）、build-images.sh、setup-a3.sh
 images/          llama-factory / vllm / sglang / evalscope / mineru / argilla 镜像
-docs/            完整文档（架构/部署/数据与存储/训练参数/API/测试/运维）
+docs/            完整文档（架构/部署/数据与存储/训练参数/API/测试/运维）；docs/en/ 为英文版
 platform/backend FastAPI 平台服务（认证/RBAC/审计/调度器/七大模块 API）
 platform/frontend React + Ant Design Web（i18next 6 语言）
 ```
@@ -75,7 +80,7 @@ cd /opt/vervedeck/deploy
 bash deploy.sh
 ```
 
-deploy.sh 五步：环境预检（nvidia-smi 缺失仅警告）→ 生成 `.env`（基于 `.env.example`）+ `/data` 目录 → `build-images.sh` 构建 6 个任务镜像（已存在跳过，`REBUILD=1` 强制重建）→ `docker compose up -d` → 轮询 backend `/health` 与 rustfs 健康，打印入口与默认账号。
+deploy.sh 五步：环境预检（nvidia-smi 缺失仅警告）→ 生成 `.env`（基于 `.env.example`）+ `/data` 目录 + TLS 自签证书（首次）→ `build-images.sh` 构建 7 个任务镜像（已存在跳过，`REBUILD=1` 强制重建）→ `docker compose up -d` → 轮询 backend `/health` 与 rustfs 健康，打印入口与默认账号。
 
 首次运行最耗时的是任务镜像构建（torch 下载大）；重复执行幂等，已存在的镜像跳过。
 
@@ -83,7 +88,7 @@ deploy.sh 五步：环境预检（nvidia-smi 缺失仅警告）→ 生成 `.env`
 
 ### 验收冒烟流程
 
-1. 浏览器打开 `http://<server>:3000`，用 `admin / admin123` 登录。
+1. 浏览器打开 `https://<server>`（443 强制 HTTPS；自签证书首次访问需点击"继续访问"信任），用 `admin / admin123` 登录。
 2. 系统管理 → 创建用户/租户/项目（RBAC），创建 API Key。
 3. 模型仓库 → 纳管基座模型 `Qwen/Qwen2.5-0.5B-Instruct`（自动下载，状态 pending_download→ready）。
 4. 数据中心 → 新建数据集 → 上传 JSONL 生成 v1 → DVC 提交；或上传 PDF 走 MinerU 解析；对版本做清洗脱敏；部署一个模型后用其合成 QA 数据。数据集版本主存储为 rustfs 对象存储（`vervedeck-datasets` 桶，控制台 `:9001`），本地 `/data/datasets` 为处理缓存，未命中自动回源；系统总览 API 返回存储健康（enabled/ok/bucket）。
@@ -116,7 +121,7 @@ TC07 会先停推理部署释放 GPU（单卡互斥），训练真实执行（0.
 - **LoRA 热加载开关**：vLLM 0.15.x 的动态 LoRA API 默认关闭（官方标注"仅本地开发"），平台在推理容器 env 显式设 `VLLM_ALLOW_RUNTIME_LORA_UPDATING=1`（inference_service.start_replica），否则 /v1/load_lora_adapter 返回 404。
 - **evalscope 镜像**：同样 pin `transformers>=4.49,<5`。
 - **CPU 限额必须用 `cpu_quota`/`cpu_period`**：实测 Docker 29.9.3 daemon 对 docker-py 7.2.0 的 `nano_cpus` 参数误限流为固定 `cpu.max=1000 100000`（0.01 核，容器 import 极慢），`cpu_quota=int(cpus*100000)`+`cpu_period=100000` 行为正常（与 CLI `--cpus` 等价）。
-- **gpu-agent CSV**：nvidia-smi `--format=csv,nounits`（默认带表头，`noheader` 与 DictReader 解析不匹配；`csv,header` 不被 nvidia-smi 支持）；输出键值带前导空格（`" name"`、`" 1"`），解析必须 strip。
+- **gpu-agent（DCGM 版）**：容器内需 `ipc: host`（hostengine 共享内存）；`dcgmi dmon` 数据行以 `GPU <idx>` 开头、字段按 `-e` 请求顺序排列，解析用位置映射；不支持的字段输出 `N/A`，按 0 处理；CSV 先写临时文件再 `mv` 原子替换，避免 backend 读到半截文件。
 - **部署状态机**：start 端点后台线程 `wait_ready(1200)` 翻转 creating→running/failed（模型加载超时 20 分钟判 failed）；调度器兜底对账（容器丢失→failed，creating 且端点 200→running）；启动/停止换发 launch token 作废旧后台线程，防止其超时回写覆盖新状态；状态翻正时同步清空 error 字段，避免 DB 显示陈旧错误。
 - **OpenAI 代理**：对外 `/v1/<部署名>/<rest>`，转发目标必须补 `/v1/` 前缀（vLLM 的 OpenAI 路由在 `/v1/` 下，直接转发 `/models` 会 404）。**httpx 客户端生命周期**：endpoint 的 `finally` 在返回 StreamingResponse 之后、body 被消费之前执行，若在那里 `aclose()` 会导致流式响应空 body（200 但无内容）——非流式请求须在 endpoint 内读完整段再关 client，流式响应须由 generator 的 finally 负责关闭。
 - **任务命令拼装**：`["bash", "-lc", "<脚本>"]` 之后再 append 的 argv 元素只是 bash 的位置参数（$0/$1），不会被执行——vLLM 的所有 CLI 参数必须拼进脚本串（曾导致 `--enable-lora` 静默失效，LoRA 热加载报 400）。
@@ -127,8 +132,8 @@ TC07 会先停推理部署释放 GPU（单卡互斥），训练真实执行（0.
 
 | 端口 | 服务 |
 |---|---|
-| 3000 | Web（nginx，唯一对外入口；/api、/v1 代理到 backend） |
-| 3000/argilla/ | Argilla 标注 UI（经 nginx 反代） |
+| 443 | Web（nginx，**强制 HTTPS**，唯一对外入口；/api、/v1 代理到 backend） |
+| 443/argilla/ | Argilla 标注 UI（经 nginx 反代，https） |
 | 3001 | backend API（内网） |
 | 9000 | rustfs S3 API（对象存储；backend 存取数据集版本） |
 | 9001 | rustfs 控制台（对象存储 Web UI） |
@@ -158,7 +163,8 @@ Key highlights:
 
 - **Fully containerized stack**: FastAPI backend + React/Ant Design frontend + nginx gateway, with per-task container isolation (each training / inference / evaluation job runs in its own dedicated container).
 - **Seven modules**: data engineering, model asset repository, distributed fine-tuning (LLaMA-Factory), automated evaluation (EvalScope), high-performance inference (vLLM/SGLang), GPU scheduling & ops, and security & governance.
-- **One-click deployment**: `bash deploy.sh` performs environment pre-check → config generation → build of 6 task images → full-stack startup → health checks.
+- **One-click deployment**: `bash deploy.sh` performs environment pre-check → config generation (+ TLS cert on first run) → build of 7 task images → full-stack startup → health checks.
+- **HTTPS enforced**: web gateway serves **443/HTTPS with HSTS** (port 80 only 301-redirects); a self-signed cert (10y, SAN) is auto-generated by deploy.sh.
 - **Internationalization**: the Web UI ships with **Simplified Chinese, Traditional Chinese, Japanese, English, French and Spanish** (switch from the user menu at the top right; antd & dayjs component locales switch in sync).
 - **Dataset object storage**: dataset version files live primarily in rustfs (S3-compatible); the local disk is a processing cache with automatic S3 fallback. Setting `S3_ENDPOINT` to empty gracefully degrades to local-only storage.
 
@@ -171,7 +177,7 @@ Key highlights:
 | 3 Fine-tuning | Full CPT/SFT/DPO/merge-export pipeline, LoRA/Full fine-tuning, DeepSpeed ZeRO-2/3, visual hyperparameter wizard (**94 params × 10 groups**, aligned with the full LLaMA-Factory WebUI), real-time Loss/LR curves, resume-from-checkpoint, cancel | LLaMA-Factory |
 | 4 Evaluation | Public benchmarks (EvalScope: gsm8k/ceval/arc/cmmlu/human_eval/mbpp), custom business test sets, rule-based scoring (EM/Contains/F1/ROUGE-L), LLM-as-a-Judge, before/after comparison charts | EvalScope |
 | 5 High-perf Inference | vLLM / SGLang dual engines, quantization (awq/gptq/int8), multi-LoRA dynamic hot-loading (runtime /v1/loras), OpenAI-compatible API publishing (proxy + auth + guardrails), elastic replica scaling | vLLM + SGLang |
-| 6 GPU Scheduling & Ops | GPU node pooling, multi-task queue with priority scheduling (1-9), utilization/VRAM/power/temperature monitoring, node heartbeat (60s) fault self-healing (offline detection + job convergence + resumable) | Custom scheduler + nvidia-smi agent |
+| 6 GPU Scheduling & Ops | GPU node pooling, multi-task queue with priority scheduling (1-9), full DCGM metric monitoring (util/VRAM/power/temp/clocks/ECC/throttling/health/XID), node heartbeat (60s) fault self-healing (offline detection + job convergence + resumable) | Custom scheduler + DCGM agent |
 | 7 Security & Governance | Multi-tenant + project isolation, RBAC (super_admin/tenant_admin/developer/viewer), full audit log of write operations, input/output content-safety guardrails (regex rule base, global/project level) | Custom middleware |
 
 ### Architecture Notes
@@ -186,20 +192,22 @@ Key highlights:
 
 | Doc | Content |
 |---|---|
-| [docs/01-架构设计.md](docs/01-架构设计.md) | System overview, pause task-container mechanism, scheduler, data directories, image inventory (Chinese) |
-| [docs/02-一键部署.md](docs/02-一键部署.md) | Prerequisites, one-click deploy.sh, service stack & env vars, object storage, verification checklist, ops commands (Chinese) |
-| [docs/03-数据集与对象存储.md](docs/03-数据集与对象存储.md) | Dataset data model, rustfs(S3) read/write/delete paths & fallback, key layout, production pipeline (Chinese) |
-| [docs/04-训练参数全表.md](docs/04-训练参数全表.md) | 94 training params × 10 groups (aligned with LLaMA-Factory 0.9.3 webui) + templates (Chinese) |
-| [docs/05-API参考.md](docs/05-API参考.md) | REST API route table for all modules (Chinese) |
-| [docs/06-测试体系.md](docs/06-测试体系.md) | Two-tier testing (unit/API suite + 10 E2E cases), how to run, pitfalls (Chinese) |
-| [docs/07-运维手册.md](docs/07-运维手册.md) | Daily commands, troubleshooting, backup/migration, capacity cleanup, security baseline (Chinese) |
+| [docs/en/01-architecture.md](docs/en/01-architecture.md) | System overview, pause task-container mechanism, scheduler, data directories, image inventory |
+| [docs/en/02-one-click-deploy.md](docs/en/02-one-click-deploy.md) | Prerequisites, one-click deploy.sh, service stack & env vars, object storage, verification checklist, ops commands |
+| [docs/en/03-datasets-object-storage.md](docs/en/03-datasets-object-storage.md) | Dataset data model, rustfs(S3) read/write/delete paths & fallback, key layout, production pipeline |
+| [docs/en/04-training-parameters.md](docs/en/04-training-parameters.md) | 94 training params × 10 groups (aligned with LLaMA-Factory 0.9.3 webui) + templates |
+| [docs/en/05-api-reference.md](docs/en/05-api-reference.md) | REST API route table for all modules |
+| [docs/en/06-testing.md](docs/en/06-testing.md) | Two-tier testing (unit/API suite + 10 E2E cases), how to run, pitfalls |
+| [docs/en/07-operations.md](docs/en/07-operations.md) | Daily commands, troubleshooting, backup/migration, capacity cleanup, security baseline |
+
+> 中文版见上文「文档」表格（docs/ 根目录）。
 
 ### Directory Layout
 
 ```
 deploy/          docker-compose.yaml, .env.example, deploy.sh (one-click), build-images.sh, setup-a3.sh
 images/          llama-factory / vllm / sglang / evalscope / mineru / argilla task images
-docs/            Full documentation (architecture / deploy / data & storage / params / API / tests / ops)
+docs/            Full documentation in Chinese (架构/部署/数据/参数/API/测试/运维); docs/en/ holds the English versions
 platform/backend FastAPI platform service (auth / RBAC / audit / scheduler / 7-module APIs)
 platform/frontend React + Ant Design web (i18next, 6 languages)
 ```
@@ -211,23 +219,23 @@ platform/frontend React + Ant Design web (i18next, 6 languages)
 scp -r ./ root@<server>:/opt/vervedeck
 
 # 2. Base server dependencies (Docker + NVIDIA driver + nvidia-container-toolkit, fresh machines only)
-#    Full step-by-step script: docs/02-一键部署.md "Prerequisites". Verify with:
+#    Full step-by-step script: docs/en/02-one-click-deploy.md "Prerequisites". Verify with:
 nvidia-smi   # if unavailable after a first-time driver install, reboot and re-verify
 
-# 3. One-click deploy (generate .env & /data dirs → build 6 task images → start stack → health checks)
+# 3. One-click deploy (generate .env, /data dirs & TLS cert → build 7 task images → start stack → health checks)
 cd /opt/vervedeck/deploy
 bash deploy.sh
 ```
 
-deploy.sh runs five steps: environment pre-check (missing nvidia-smi is a warning only) → generate `.env` (from `.env.example`) + `/data` directories → `build-images.sh` builds the 6 task images (skipped if present; force with `REBUILD=1`) → `docker compose up -d` → poll backend `/health` and rustfs health, then print the entry URL and default credentials.
+deploy.sh runs five steps: environment pre-check (missing nvidia-smi is a warning only) → generate `.env` (from `.env.example`) + `/data` directories + TLS self-signed cert (first run) → `build-images.sh` builds the 7 task images (skipped if present; force with `REBUILD=1`) → `docker compose up -d` → poll backend `/health` and rustfs health, then print the entry URL and default credentials.
 
 The first run is dominated by task-image build time (large torch downloads); reruns are idempotent and skip existing images.
 
-See [docs/02-一键部署.md](docs/02-一键部署.md) (Chinese) for the manual step-by-step flow, full env-var reference, and the deployment verification checklist.
+See [docs/en/02-one-click-deploy.md](docs/en/02-one-click-deploy.md) for the manual step-by-step flow, full env-var reference, and the deployment verification checklist.
 
 ### Acceptance Smoke Flow
 
-1. Open `http://<server>:3000` in a browser, log in with `admin / admin123`.
+1. Open `https://<server>` in a browser (port 443, forced HTTPS; the self-signed cert needs to be accepted on first visit), log in with `admin / admin123`.
 2. Admin → create user/tenant/project (RBAC), create an API Key.
 3. Model Repo → register base model `Qwen/Qwen2.5-0.5B-Instruct` (auto-download; status pending_download → ready).
 4. Data Center → create dataset → upload JSONL to make v1 → DVC commit; or upload a PDF for MinerU parsing; clean/mask a version; after deploying a model, use it to synthesize QA data. Dataset versions are stored in rustfs (bucket `vervedeck-datasets`, console on :9001) with local `/data/datasets` as cache; the dashboard API reports storage health (enabled/ok/bucket).
@@ -239,7 +247,7 @@ See [docs/02-一键部署.md](docs/02-一键部署.md) (Chinese) for the manual 
 
 ### End-to-End Tests (10 cases)
 
-Cover all seven modules: auth/tenant/RBAC/model lineage/dataset DVC+Argilla/inference OpenAI API/SFT LoRA training + artifact lineage/rule-based evaluation/LoRA hot-loading/guardrails + audit. The relationship between the fast unit/API suite (13 files, including S3 object-storage read/write/refetch/bucket-deletion checks and full 94-param build_config assertions) and the E2E suite, plus run instructions and pitfalls, is documented in [docs/06-测试体系.md](docs/06-测试体系.md) (Chinese).
+Cover all seven modules: auth/tenant/RBAC/model lineage/dataset DVC+Argilla/inference OpenAI API/SFT LoRA training + artifact lineage/rule-based evaluation/LoRA hot-loading/guardrails + audit. The relationship between the fast unit/API suite (13 files, including S3 object-storage read/write/refetch/bucket-deletion checks and full 94-param build_config assertions) and the E2E suite, plus run instructions and pitfalls, is documented in [docs/en/06-testing.md](docs/en/06-testing.md).
 
 ```bash
 # 1) Tests are not shipped in the image; copy them into the backend container (re-copy after image rebuilds)
@@ -260,7 +268,7 @@ TC07 first stops the inference deployment to free the GPU (single-card mutual ex
 - **LoRA hot-load switch**: vLLM 0.15.x disables the dynamic LoRA API by default (marked "local development only"); the platform sets `VLLM_ALLOW_RUNTIME_LORA_UPDATING=1` in the inference container env (inference_service.start_replica), otherwise /v1/load_lora_adapter returns 404.
 - **evalscope image**: likewise pins `transformers>=4.49,<5`.
 - **CPU limits must use `cpu_quota`/`cpu_period`**: measured on Docker 29.9.3 daemon, docker-py 7.2.0's `nano_cpus` parameter mis-limits to a fixed `cpu.max=1000 100000` (0.01 cores, extremely slow container imports); `cpu_quota=int(cpus*100000)` + `cpu_period=100000` behaves correctly (equivalent to CLI `--cpus`).
-- **gpu-agent CSV**: nvidia-smi `--format=csv,nounits` (default has a header; `noheader` breaks DictReader parsing; `csv,header` is not supported by nvidia-smi); output key/values carry leading spaces (`" name"`, `" 1"`), parsing must strip.
+- **gpu-agent (DCGM)**: the container needs `ipc: host` (hostengine shared memory); `dcgmi dmon` data lines start with `GPU <idx>` and fields follow the `-e` request order (positional mapping); unsupported fields print `N/A` (parsed as 0); the CSV is written to a temp file and `mv`-replaced atomically so the backend never reads a half-written file.
 - **Deployment state machine**: the start endpoint runs a background `wait_ready(1200)` thread flipping creating→running/failed (model load timeout of 20 min ⇒ failed); the scheduler performs reconciliation as a safety net (lost container → failed; creating with endpoint 200 → running); start/stop rotate a launch token to invalidate stale background threads so their timeout writes cannot overwrite newer state; when state goes healthy the stale `error` field is cleared so the DB doesn't show outdated errors.
 - **OpenAI proxy**: external path is `/v1/<deployment>/<rest>`; the upstream target must add the `/v1/` prefix (vLLM's OpenAI routes live under `/v1/`; forwarding `/models` directly gives 404). **httpx client lifecycle**: the endpoint's `finally` runs after StreamingResponse is returned but before the body is consumed — calling `aclose()` there yields an empty streamed body (200 but no content). Non-streaming requests must read fully inside the endpoint before closing; streaming responses must close the client in the generator's finally.
 - **Task command assembly**: argv elements appended after `["bash", "-lc", "<script>"]` are merely bash positional parameters ($0/$1) and are NOT executed — every vLLM CLI argument must be baked into the script string (this once made `--enable-lora` silently fail, and LoRA hot-load returned 400).
@@ -271,8 +279,8 @@ TC07 first stops the inference deployment to free the GPU (single-card mutual ex
 
 | Port | Service |
 |---|---|
-| 3000 | Web (nginx, the only public entry; /api and /v1 proxied to backend) |
-| 3000/argilla/ | Argilla annotation UI (via nginx reverse proxy) |
+| 443 | Web (nginx, **forced HTTPS**, the only public entry; /api and /v1 proxied to backend) |
+| 443/argilla/ | Argilla annotation UI (via nginx reverse proxy, https) |
 | 3001 | backend API (internal) |
 | 9000 | rustfs S3 API (object storage; backend reads/writes dataset versions) |
 | 9001 | rustfs console (object storage Web UI) |

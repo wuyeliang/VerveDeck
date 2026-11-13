@@ -16,11 +16,48 @@ log = logging.getLogger("gpu")
 STALE_SECONDS = 60
 _fail_count = 0
 
+# DCGM 扩展字段（与 images/gpu-agent/collect.sh 的 HEADER 列一一对应）
+EXTRA_KEYS = [
+    "temp", "power", "power_limit", "enc_util", "dec_util", "gpu_util",
+    "mem_util", "mem_copy_util", "mem_temp", "total_energy",
+    "ecc_dbe_agg", "ecc_sbe_agg", "ecc_dbe_vol", "ecc_sbe_vol",
+    "thermal_slowdown", "hw_slowdown", "hw_thermal_slowdown",
+    "hw_power_brake_slowdown", "sw_thermal_slowdown",
+    "fb_free", "fb_used", "fb_total",
+    "sm_clock", "mem_clock", "video_clock",
+    "health", "row_remap_pending", "xid_error_count",
+]
+
+
+def _f(v) -> float:
+    """数值解析：N/A / 空 / 脏值一律按 0（DCGM 对不支持的字段输出 N/A）"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
 
 def read_agent() -> tuple[int, list[dict]]:
-    """返回 (ts, gpus[{index,name,mem_used,mem_total,util,power,temp}])"""
+    """返回 (ts, gpus[{index,name,mem_used,mem_total,util,power,temp,extra{...DCGM 28 项}}])
+
+    agent.csv 由 gpu-agent（DCGM 版）写出，29 列 = index + EXTRA_KEYS。
+    """
     csv_path = os.path.join(settings.data_dir, "gpu", "agent.csv")
     ts_path = os.path.join(settings.data_dir, "gpu", "agent.ts")
+    names_path = os.path.join(settings.data_dir, "gpu", "agent.names")
+    names: dict[int, str] = {}
+    try:
+        with open(names_path) as f:
+            for line in f:
+                line = line.strip()
+                if "," in line:
+                    i, n = line.split(",", 1)
+                    try:
+                        names[int(float(i))] = n
+                    except ValueError:
+                        continue
+    except (FileNotFoundError, OSError):
+        pass
     try:
         with open(ts_path) as f:
             ts = int(f.read().strip() or time.time())
@@ -28,21 +65,20 @@ def read_agent() -> tuple[int, list[dict]]:
             reader = csv.DictReader(f)
             gpus = []
             for raw in reader:
-                # nvidia-smi 表头/值含前导空格（" name"、" 1"），统一 strip
-                row = {}
-                for k, v in raw.items():
-                    if k is None:
-                        continue
-                    row[k.strip()] = v.strip() if isinstance(v, str) else v
+                row = {k.strip(): (v.strip() if isinstance(v, str) else v)
+                       for k, v in raw.items() if k is not None}
                 try:
+                    idx = int(float(row.get("index") or 0))
+                    extra = {k: _f(row.get(k)) for k in EXTRA_KEYS}
                     gpus.append({
-                        "index": int(float(row.get("index") or 0)),
-                        "name": row.get("name") or "",
-                        "mem_used": float(row.get("memory.used [MiB]") or 0),
-                        "mem_total": float(row.get("memory.total [MiB]") or 0),
-                        "util": float(row.get("utilization.gpu [%]") or 0),
-                        "power": float(row.get("power.draw [W]") or 0),
-                        "temp": float(row.get("temperature.gpu") or 0),
+                        "index": idx,
+                        "name": row.get("name") or names.get(idx, ""),
+                        "mem_used": extra["fb_used"],
+                        "mem_total": extra["fb_total"],
+                        "util": extra["gpu_util"],
+                        "power": extra["power"],
+                        "temp": extra["temp"],
+                        "extra": extra,
                     })
                 except Exception:
                     continue
@@ -83,7 +119,8 @@ def tick():
             for g in gpus:
                 db.add(GpuMetric(node_id=node.id, ts=ts, gpu_index=g["index"],
                                  mem_used=g["mem_used"], mem_total=g["mem_total"],
-                                 util=g["util"], power=g["power"], temp=g["temp"]))
+                                 util=g["util"], power=g["power"], temp=g["temp"],
+                                 extra=g.get("extra", {})))
         else:
             # 连续 2 次 tick 读不到心跳（~10s）且超过 STALE 才判离线，避免 CSV 写入瞬间误判
             _fail_count += 1

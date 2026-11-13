@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, Drawer,
-  Descriptions, Statistic, Row, Col, message,
+  Descriptions, Statistic, Row, Col, message, Radio,
 } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import { PlusOutlined, DownloadOutlined } from '@ant-design/icons'
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
@@ -24,6 +24,8 @@ export default function EvalCenter() {
   const [dsVersions, setDsVersions] = useState<any[]>([])
   const [detail, setDetail] = useState<any>(null)
   const [compare, setCompare] = useState<any[]>([])
+  const [targetKind, setTargetKind] = useState<'dep' | 'asset'>('dep')
+  const [src, setSrc] = useState<'custom' | 'benchmark'>('custom')
 
   const load = useCallback(() => {
     api.get('/api/evals', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
@@ -33,6 +35,7 @@ export default function EvalCenter() {
   const openWizard = async () => {
     form.resetFields()
     form.setFieldsValue({ method: 'rule', limit: 50 })
+    setTargetKind('dep'); setSrc('custom')
     setDsVersions([])
     try {
       const [d, m, ds] = await Promise.all([
@@ -73,7 +76,19 @@ export default function EvalCenter() {
               : '-',
           },
           { title: t('common.createTime'), dataIndex: 'created_at', width: 170 },
-          { title: t('common.actions'), width: 90, render: (_: any, r: any) => <Button size="small" onClick={() => api.get(`/api/evals/${r.id}`).then((x) => setDetail(x.data))}>{t('common.detail')}</Button> },
+          {
+            title: t('common.actions'), width: 140, render: (_: any, r: any) => (
+              <Space size={4}>
+                <Button size="small" onClick={() => api.get(`/api/evals/${r.id}`).then((x) => setDetail(x.data))}>{t('common.detail')}</Button>
+                {r.status !== 'pending' && r.status !== 'running' && (
+                  <Button size="small" danger onClick={() => Modal.confirm({
+                    title: t('common.deleteConfirm'), okText: t('common.delete'), cancelText: t('common.cancel'),
+                    onOk: async () => { await api.delete(`/api/evals/${r.id}`); message.success(t('common.deleted')); load() },
+                  })}>{t('common.delete')}</Button>
+                )}
+              </Space>
+            ),
+          },
         ]} />
 
       {compare.length > 0 && (
@@ -94,15 +109,18 @@ export default function EvalCenter() {
         </Row>
       )}
 
+      {/* 新建评测（百炼风格：基本信息 / 评测对象 / 评测数据 / 评测器） */}
       <Modal title={t('evals.newEval')} open={open} onCancel={() => setOpen(false)} width={640}
         onOk={async () => {
           const v = await form.validateFields()
+          const isBench = src === 'benchmark' && !!v.benchmark
+          if (!isBench && !v.dataset_version_id) { message.error(t('evals.select')); return }
           await api.post('/api/evals', {
             project_id: projectId, name: v.name,
-            target_deployment_id: v.target_deployment_id || undefined,
-            target_asset_id: v.target_asset_id || undefined,
-            dataset_version_id: v.dataset_version_id || undefined,
-            benchmark: v.benchmark || '', method: v.benchmark ? 'benchmark' : v.method,
+            target_deployment_id: targetKind === 'dep' ? v.target_deployment_id : undefined,
+            target_asset_id: targetKind === 'asset' ? v.target_asset_id : undefined,
+            dataset_version_id: isBench ? undefined : v.dataset_version_id,
+            benchmark: isBench ? v.benchmark : '', method: isBench ? 'benchmark' : v.method,
             judge_deployment_id: v.judge_deployment_id || undefined, judge_model: '',
             limit: v.limit,
           })
@@ -110,56 +128,85 @@ export default function EvalCenter() {
           setOpen(false); load()
         }}>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('evals.evalName')} rules={[{ required: true }]}><Input placeholder={t('evals.evalNamePh')} /></Form.Item>
-          <Space>
-            <Form.Item name="target_deployment_id" label={t('evals.targetDep')}>
-              <Select allowClear style={{ width: 240 }} options={deps.map((d: any) => ({ value: d.id, label: `${d.name} (${d.model})` }))} placeholder={t('common.optional')} />
+          <EvalSection title={t('evals.secBasic')}>
+            <Form.Item name="name" label={t('evals.evalName')} rules={[{ required: true }]}><Input placeholder={t('evals.evalNamePh')} /></Form.Item>
+          </EvalSection>
+          <EvalSection title={t('evals.secTarget')}>
+            <Form.Item label={t('evals.targetKind')} style={{ marginBottom: 8 }}>
+              <Radio.Group value={targetKind} onChange={(e) => setTargetKind(e.target.value)} optionType="button" buttonStyle="solid"
+                options={[{ value: 'dep', label: t('evals.targetDep') }, { value: 'asset', label: t('evals.targetAsset2') }]} />
             </Form.Item>
-            <Form.Item name="target_asset_id" label={t('evals.targetAsset')}>
-              <Select allowClear style={{ width: 240 }} options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} placeholder="quick-serve" />
+            {targetKind === 'dep' ? (
+              <Form.Item name="target_deployment_id" label={t('evals.targetDep')} rules={[{ required: true, message: t('evals.select') }]}>
+                <Select style={{ width: '100%' }} options={deps.map((d: any) => ({ value: d.id, label: `${d.name} (${d.model})` }))} />
+              </Form.Item>
+            ) : (
+              <Form.Item name="target_asset_id" label={t('evals.targetAsset2')} rules={[{ required: true, message: t('evals.select') }]}>
+                <Select style={{ width: '100%' }} options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
+              </Form.Item>
+            )}
+          </EvalSection>
+          <EvalSection title={t('evals.secData')}>
+            <Form.Item label={t('evals.dataSource')} style={{ marginBottom: 8 }}>
+              <Radio.Group value={src} onChange={(e) => setSrc(e.target.value)} optionType="button" buttonStyle="solid"
+                options={[{ value: 'custom', label: t('evals.srcCustom') }, { value: 'benchmark', label: t('evals.srcBench') }]} />
             </Form.Item>
-          </Space>
-          <Form.Item name="benchmark" label={t('evals.benchmark')}>
-            <Select allowClear options={BENCHES.map((b) => ({ value: b, label: b }))} placeholder={t('evals.benchPh')} />
-          </Form.Item>
-          <Space>
-            <Form.Item noStyle shouldUpdate={(a, b) => a.benchmark !== b.benchmark}>
-              {({ getFieldValue }) => getFieldValue('benchmark') ? null : (
-                <>
-                  <Form.Item label={t('evals.customSet')}>
-                    <Select style={{ width: 300 }} placeholder={t('evals.selectData')}
-                      options={datasets.map((d: any) => ({ value: d.id, label: d.name }))}
-                      onChange={async (did) => {
-                        form.setFieldsValue({ dataset_version_id: undefined })
-                        if (did) setDsVersions((await api.get(`/api/datasets/${did}/versions`)).data)
-                      }} />
-                  </Form.Item>
-                  <Form.Item name="dataset_version_id" label={t('evals.setVersion')} rules={[{ required: true, message: t('evals.select') }]}>
-                    <Select style={{ width: 300 }} options={dsVersions.map((v: any) => ({ value: v.id, label: `v${v.version} (${v.sample_count})` }))} />
-                  </Form.Item>
-                  <Form.Item name="method" label={t('evals.method')}>
-                    <Select style={{ width: 180 }} options={[
-                      { value: 'rule', label: t('evals.rule') },
-                      { value: 'judge', label: t('evals.judge') },
-                      { value: 'both', label: t('evals.both') },
-                    ]} />
-                  </Form.Item>
-                  <Form.Item noStyle shouldUpdate={(a, b) => a.method !== b.method}>
-                    {({ getFieldValue }) => getFieldValue('method') !== 'rule' ? (
-                      <Form.Item name="judge_deployment_id" label={t('evals.judgeModel')} rules={[{ required: true, message: t('evals.judgeReq') }]}>
-                        <Select style={{ width: 240 }} options={deps.map((d: any) => ({ value: d.id, label: d.name }))} />
-                      </Form.Item>
-                    ) : null}
-                  </Form.Item>
-                </>
-              )}
-            </Form.Item>
-          </Space>
-          <Form.Item name="limit" label={t('evals.limit')}><InputNumber min={1} max={5000} /></Form.Item>
+            {src === 'custom' ? (
+              <>
+                <Form.Item label={t('evals.customSet')}>
+                  <Select style={{ width: '100%' }} placeholder={t('evals.selectData')}
+                    options={[...datasets].sort((a: any, b: any) => ((a.kind === 'eval' ? 0 : 1) - (b.kind === 'eval' ? 0 : 1)))
+                      .map((d: any) => ({ value: d.id, label: `${d.name}${d.kind === 'eval' ? ` (${t('data.kindEval')})` : d.kind === 'train' ? ` (${t('data.kindTrain')})` : ''}` }))}
+                    onChange={async (did) => {
+                      form.setFieldsValue({ dataset_version_id: undefined })
+                      if (did) setDsVersions((await api.get(`/api/datasets/${did}/versions`)).data)
+                    }} />
+                </Form.Item>
+                <Form.Item name="dataset_version_id" label={t('evals.setVersion')} rules={[{ required: true, message: t('evals.select') }]}>
+                  <Select style={{ width: '100%' }} options={dsVersions.map((v: any) => ({ value: v.id, label: `v${v.version} (${v.sample_count})` }))} />
+                </Form.Item>
+              </>
+            ) : (
+              <Form.Item name="benchmark" label={t('evals.benchmark')} rules={[{ required: true, message: t('evals.select') }]}>
+                <Select style={{ width: '100%' }} options={BENCHES.map((b) => ({ value: b, label: b }))} placeholder={t('evals.benchPh')} />
+              </Form.Item>
+            )}
+          </EvalSection>
+          <EvalSection title={t('evals.secJudge')}>
+            {src !== 'benchmark' && (
+              <>
+                <Form.Item name="method" label={t('evals.method')}>
+                  <Radio.Group options={[
+                    { value: 'rule', label: t('evals.rule') },
+                    { value: 'judge', label: t('evals.judge') },
+                    { value: 'both', label: t('evals.both') },
+                  ]} />
+                </Form.Item>
+                <Form.Item noStyle shouldUpdate={(a, b) => a.method !== b.method}>
+                  {({ getFieldValue }) => getFieldValue('method') !== 'rule' ? (
+                    <Form.Item name="judge_deployment_id" label={t('evals.judgeModel')} rules={[{ required: true, message: t('evals.judgeReq') }]}>
+                      <Select style={{ width: 240 }} options={deps.map((d: any) => ({ value: d.id, label: d.name }))} />
+                    </Form.Item>
+                  ) : null}
+                </Form.Item>
+              </>
+            )}
+            <Form.Item name="limit" label={t('evals.limit')}><InputNumber min={1} max={5000} /></Form.Item>
+          </EvalSection>
         </Form>
       </Modal>
 
-      <Drawer title={detail ? t('evals.detailTitleWith', { id: detail.id, name: detail.name }) : t('evals.detailTitle')} width={720} open={!!detail} onClose={() => setDetail(null)}>
+      <Drawer title={detail ? t('evals.detailTitleWith', { id: detail.id, name: detail.name }) : t('evals.detailTitle')} width={720} open={!!detail} onClose={() => setDetail(null)}
+        extra={detail && (
+          <Button icon={<DownloadOutlined />}
+            onClick={() => api.get(`/api/evals/${detail.id}/report`, { responseType: 'blob' }).then((r) => {
+              const url = URL.createObjectURL(new Blob([r.data]))
+              const a = document.createElement('a')
+              a.href = url; a.download = `eval-${detail.id}-report.md`; a.click()
+              URL.revokeObjectURL(url)
+            }).catch(() => message.error(t('api.requestFailed')))
+          }>{t('evals.downloadReport')}</Button>
+        )}>
         {detail && (
           <div>
             <Row gutter={12}>
@@ -191,4 +238,17 @@ export default function EvalCenter() {
 
 function Card_s({ children }: { children: React.ReactNode }) {
   return <div style={{ background: '#fafafa', padding: '10px 14px', borderRadius: 8 }}>{children}</div>
+}
+
+// 分区标题（百炼风格：蓝色竖条 + 加粗标题）
+function EvalSection({ title, children }: { title: string, children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ width: 4, height: 16, background: '#1677ff', marginRight: 8, borderRadius: 2 }} />
+        <span style={{ fontWeight: 600 }}>{title}</span>
+      </div>
+      {children}
+    </div>
+  )
 }

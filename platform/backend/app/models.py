@@ -66,6 +66,8 @@ class Dataset(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str] = mapped_column(Text, default="")
+    kind: Mapped[str] = mapped_column(String(16), default="train")  # train/eval（训练集/评测集）
+    scenario: Mapped[str] = mapped_column(String(16), default="text")  # text/vlm（文本生成/多模态）
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     __table_args__ = (Index("ix_ds_proj_name", "project_id", "name", unique=True),)
@@ -197,8 +199,29 @@ class Deployment(Base):
     container_ids: Mapped[list] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="creating")  # creating/running/stopped/failed
     error: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class QuantTask(Base):
+    """模型压缩（量化）任务：llamafactory-cli export 产出可部署量化模型"""
+    __tablename__ = "quant_tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    model_asset_id: Mapped[int] = mapped_column(ForeignKey("model_assets.id"))
+    method: Mapped[str] = mapped_column(String(16), default="bnb4")  # bnb4/bnb8/gptq4/awq4
+    gpu_count: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/running/succeeded/failed
+    container_id: Mapped[str] = mapped_column(String(64), default="")
+    container_name: Mapped[str] = mapped_column(String(128), default="")
+    work_dir: Mapped[str] = mapped_column(String(512), default="")
+    output_dir: Mapped[str] = mapped_column(String(512), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class GpuNode(Base):
@@ -223,6 +246,8 @@ class GpuMetric(Base):
     util: Mapped[float] = mapped_column(Float, default=0)
     power: Mapped[float] = mapped_column(Float, default=0)
     temp: Mapped[float] = mapped_column(Float, default=0)
+    # DCGM 扩展指标（mem_temp/clocks/ecc_*/throttle_*/health/xid_error_count 等）
+    extra: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class GuardRule(Base):

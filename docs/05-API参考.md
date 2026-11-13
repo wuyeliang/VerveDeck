@@ -1,6 +1,6 @@
 # API 参考
 
-Base URL：`http://<ip>:3000/api/...`（经 web 反代；容器内网为 `:3001`）
+Base URL：`https://<ip>/api/...`（443 强制 HTTPS，经 web 反代；容器内网为 `:3001`；自签证书 curl 需加 `-k`）
 认证：`Authorization: Bearer <token>`（`POST /api/auth/login` 获取，默认 72h 有效）
 
 ## 认证 /api/auth
@@ -95,7 +95,7 @@ Base URL：`http://<ip>:3000/api/...`（经 web 反代；容器内网为 `:3001`
 | DELETE | /api/inference/deployments/{id}/adapters/{name} | 卸载 LoRA |
 | DELETE | /api/inference/deployments/{id} | 删除部署 |
 
-部署完成后提供 **OpenAI 兼容端点**（`http://<ip>:8100+/v1/chat/completions`），
+部署完成后提供 **OpenAI 兼容端点**（`https://<ip>/v1/<deploy_name>/chat/completions`），
 以项目 API Key 鉴权；护栏在输出侧生效。
 
 ## 集群 /api/cluster

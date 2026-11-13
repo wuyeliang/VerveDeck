@@ -19,6 +19,17 @@ echo "==> [2/5] 准备配置与环境"
 mkdir -p /data/models/hub /data/datasets /data/jobs /data/evals /data/uploads \
          /data/gpu /data/argilla /data/postgres /data/redis /data/opensearch
 
+# 自签 TLS 证书（Web 强制 HTTPS 443；已有则跳过，生产可替换为正式证书）
+mkdir -p tls
+if [ ! -f tls/vervedeck.crt ]; then
+  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+    -keyout tls/vervedeck.key -out tls/vervedeck.crt \
+    -subj "/CN=vervedeck.local" \
+    -addext "subjectAltName=DNS:vervedeck.local,IP:127.0.0.1" 2>/dev/null
+  chmod 600 tls/vervedeck.key
+  echo "    已生成自签证书 tls/vervedeck.{crt,key}（浏览器首次访问需信任证书）"
+fi
+
 echo "==> [3/5] 构建任务镜像"
 bash build-images.sh
 
@@ -49,7 +60,7 @@ docker compose ps
 echo ""
 echo "================ 部署完成 ================"
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-echo "  Web 控制台:     http://${IP:-<服务器IP>}:3000"
+echo "  Web 控制台:     https://${IP:-<服务器IP>}（443 强制 HTTPS，自签证书浏览器需信任）"
 echo "  对象存储控制台: http://${IP:-<服务器IP>}:9001"
 echo "  S3 API:         http://${IP:-<服务器IP>}:9000"
 echo "  初始账号:       admin / ${ADMIN_PASSWORD:-admin123}"

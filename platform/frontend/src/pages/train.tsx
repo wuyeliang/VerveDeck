@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
-  Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, Steps,
-  Drawer, Descriptions, message, Tooltip, Collapse, Checkbox,
+  Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select,
+  Drawer, Descriptions, message, Tooltip, Collapse, Checkbox, Row, Col, Card, Radio,
 } from 'antd'
-import { PlusOutlined, StopOutlined, CaretRightOutlined, MergeCellsOutlined } from '@ant-design/icons'
+import { PlusOutlined, StopOutlined, CaretRightOutlined, MergeCellsOutlined, DeleteOutlined } from '@ant-design/icons'
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
@@ -23,12 +23,25 @@ const ParamControl = ({ p }: { p: any }) => {
   return <Input style={{ width: 220 }} />
 }
 
+// 主面板直接展示的常用超参（其余进高级折叠）
+const MAIN_KEYS = ['learning_rate', 'num_train_epochs', 'per_device_train_batch_size', 'gradient_accumulation_steps', 'cutoff_len', 'lr_scheduler_type', 'lora_rank', 'lora_alpha']
+
+const Section = ({ title, extra, children }: { title: React.ReactNode, extra?: React.ReactNode, children: React.ReactNode }) => (
+  <div style={{ marginBottom: 20 }}>
+    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+      <span style={{ width: 4, height: 16, background: '#1677ff', marginRight: 8, borderRadius: 2 }} />
+      <span style={{ fontWeight: 600 }}>{title}</span>
+      {extra && <span style={{ marginLeft: 8 }}>{extra}</span>}
+    </div>
+    {children}
+  </div>
+)
+
 export default function TrainCenter() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
   const [open, setOpen] = useState(false)
-  const [step, setStep] = useState(0)
   const [form] = Form.useForm()
   const [models, setModels] = useState<any[]>([])
   const [datasets, setDatasets] = useState<any[]>([])
@@ -39,10 +52,22 @@ export default function TrainCenter() {
   const [dsVersions, setDsVersions] = useState<any[]>([])
   const [paramSpec, setParamSpec] = useState<any[]>([])
   const finetuningType = Form.useWatch('finetuning_type', form) || 'lora'
+  const wName = Form.useWatch('name', form)
+  const wBase = Form.useWatch('base_model_id', form)
+  const wAdapter = Form.useWatch('adapter_asset_id', form)
+  const wDsId = Form.useWatch('dataset_id', form)
+  const wVerIds = Form.useWatch('dataset_version_ids', form)
+  const wVal = Form.useWatch('val_size', form)
+  const wGpu = Form.useWatch('gpu_count', form)
+  const wDeep = Form.useWatch('deepspeed', form)
+  const wPriority = Form.useWatch('priority', form)
 
   const STAGE_LABEL: Record<string, string> = {
     cpt: t('train.stageCpt'), sft: t('train.stageSft'), dpo: t('train.stageDpo'), export: t('train.stageExport'),
   }
+
+  const specIndex: Record<string, any> = {}
+  for (const g of paramSpec) for (const p of g.params) specIndex[p.key] = p
 
   useEffect(() => { api.get('/api/training/params').then((r) => setParamSpec(r.data || [])).catch(() => {}) }, [])
 
@@ -76,22 +101,38 @@ export default function TrainCenter() {
   }
 
   const openWizard = () => {
-    setStep(0)
     form.resetFields()
     form.setFieldsValue({ stage: 'sft', finetuning_type: 'lora', priority: 5, gpu_count: 1, deepspeed: 'none', ...specDefaults() })
+    setStage('sft')
+    setDsVersions([])
     api.get('/api/models', { params: { project_id: projectId } }).then((r) => setModels(r.data.filter((m: any) => m.status === 'ready'))).catch(() => {})
     api.get('/api/datasets', { params: { project_id: projectId } }).then((r) => setDatasets(r.data)).catch(() => {})
+    applyTemplate('sft')
     setOpen(true)
   }
 
-  // 进入超参数步时：先铺 spec 默认值，再叠阶段模板（模板优先）
+  // 铺 spec 默认值后叠阶段模板（模板优先，即“推荐默认值”）
   const applyTemplate = async (s: string) => {
     form.setFieldsValue(specDefaults())
     const r = await api.get('/api/training/templates')
     form.setFieldsValue(r.data[s] || {})
   }
 
-  // 超参数步：收集所有 spec 分组里当前值（剔除 undefined/空串）
+  // 切换训练方式：清数据选择并按新方式刷新推荐超参
+  const changeStage = (v: string) => {
+    setStage(v)
+    form.setFieldsValue({ dataset_version_ids: [] })
+    setDsVersions([])
+    applyTemplate(v)
+  }
+
+  // 必填字段（提交前统一强制校验，缺失则原地停留并标红）
+  const requiredFields = () => {
+    const base = ['name', 'stage', 'finetuning_type', 'base_model_id', 'deepspeed', 'gpu_count']
+    return stage === 'export' ? [...base, 'adapter_asset_id'] : [...base, 'dataset_id', 'dataset_version_ids']
+  }
+
+  // 收集所有 spec 分组里当前值（剔除 undefined/空串）
   const collectHyperparams = () => {
     const v = form.getFieldsValue(true)
     const out: any = {}
@@ -104,6 +145,7 @@ export default function TrainCenter() {
   }
 
   const submit = async () => {
+    try { await form.validateFields(requiredFields()) } catch { return }
     const v = form.getFieldsValue()
     await api.post('/api/training/jobs', {
       project_id: projectId, name: v.name, stage: v.stage, finetuning_type: v.finetuning_type,
@@ -134,6 +176,16 @@ export default function TrainCenter() {
   const lossData = (metrics.loss || []).map((p: any, i: number) => ({ step: p[0], loss: p[1], epoch: (metrics.epoch?.[i] || [])[0] !== undefined ? metrics.epoch[i][1] : undefined }))
   const lrData = metrics.learning_rate || []
 
+  const mainKeys = MAIN_KEYS.filter((k) => {
+    if ((k === 'lora_rank' || k === 'lora_alpha')) return finetuningType === 'lora' && stage !== 'export'
+    return true
+  })
+  const advancedGroups = paramSpec.filter((g) => groupVisible(g)).map((g) => ({
+    key: g.key,
+    label: t('pg.' + g.key, g.label) as string,
+    params: g.params.filter((p: any) => !MAIN_KEYS.includes(p.key) && p.key !== 'val_size' && p.key !== 'save_steps' && p.key !== 'save_total_limit'),
+  })).filter((g: any) => g.params.length > 0)
+
   return (
     <div>
       <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
@@ -156,94 +208,144 @@ export default function TrainCenter() {
               <Button size="small" onClick={() => openDetail(r.id)}>{t('common.detail')}</Button>
               {r.status === 'queued' && <Tooltip title={t('train.cancelTip')}><Button size="small" danger icon={<StopOutlined />} onClick={() => api.post(`/api/training/jobs/${r.id}/cancel`).then(() => load())} /></Tooltip>}
               {r.status === 'failed' && <Tooltip title={t('train.resumeTip')}><Button size="small" icon={<CaretRightOutlined />} onClick={() => api.post(`/api/training/jobs/${r.id}/resume`, {}).then(() => { message.success(t('train.resumeEnqueued')); load() })} /></Tooltip>}
+              {!['queued', 'running'].includes(r.status) && (
+                <Tooltip title={t('common.deleteConfirm')}>
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({
+                    title: t('common.deleteConfirm'), okText: t('common.delete'), cancelText: t('common.cancel'),
+                    onOk: async () => { await api.delete(`/api/training/jobs/${r.id}`); message.success(t('common.deleted')); load() },
+                  })} />
+                </Tooltip>
+              )}
             </Space>
           )},
         ]} />
 
-      <Modal title={t('train.newJob')} open={open} onCancel={() => setOpen(false)} width={720}
+      {/* 新建任务：百炼式单页表单（左侧分区 + 右侧实时摘要） */}
+      <Modal title={t('train.newJob')} open={open} onCancel={() => setOpen(false)} width={1000}
         footer={[
-          <Button key="b" onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0}>{t('train.prev')}</Button>,
-          step < 2
-            ? <Button key="n" type="primary" onClick={async () => { try { await form.validateFields(); setStep(step + 1); if (step === 0) applyTemplate(form.getFieldValue('stage')) } catch { } }}>{t('train.next')}</Button>
-            : <Button key="s" type="primary" onClick={submit}>{t('train.submit')}</Button>,
+          <Button key="c" onClick={() => setOpen(false)}>{t('common.cancel')}</Button>,
+          <Button key="s" type="primary" onClick={submit}>{t('train.startTrain')}</Button>,
         ]}>
-        <Steps size="small" current={step} items={[{ title: t('train.stepBase') }, { title: t('train.stepHyper') }, { title: t('train.stepCompute') }]} style={{ margin: '8px 0 20px' }} />
-        <Form form={form} layout="vertical">
-          <div style={{ display: step === 0 ? 'block' : 'none' }}>
-            <Space wrap>
-              <Form.Item name="name" label={t('train.jobName')} rules={[{ required: true }]}><Input style={{ width: 220 }} placeholder={t('train.jobNamePh')} /></Form.Item>
-              <Form.Item name="stage" label={t('train.stage')} rules={[{ required: true }]}>
-                <Select style={{ width: 200 }} options={Object.entries(STAGE_LABEL).map(([v, l]) => ({ value: v, label: l }))} onChange={(v) => setStage(v)} />
-              </Form.Item>
-            </Space>
-            <Space wrap>
-              <Form.Item name="finetuning_type" label={t('train.method')}>
-                <Select style={{ width: 140 }} options={[{ value: 'lora', label: t('train.ftLora') }, { value: 'full', label: t('train.ftFull') }, { value: 'freeze', label: t('train.ftFreeze') }]} />
-              </Form.Item>
-              <Form.Item name="base_model_id" label={t('train.baseModel')} rules={[{ required: true }]}>
-                <Select style={{ width: 260 }} options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
-              </Form.Item>
-              <Form.Item name="priority" label={t('train.priority')}><InputNumber min={1} max={9} /></Form.Item>
-            </Space>
-            {stage !== 'export' && (
-              <>
-                <Form.Item label={t('train.trainData')} required>
-                  <Select style={{ width: 320 }} placeholder={t('train.selectData')}
-                    options={datasets.map((d: any) => ({ value: d.id, label: d.name }))}
-                    onChange={pickDataset} />
+        <Row gutter={24}>
+          <Col span={17}>
+            <Form form={form} layout="vertical">
+              <Section title={t('train.secBasic')}>
+                <Row gutter={12}>
+                  <Col span={14}><Form.Item name="name" label={t('train.jobName')} rules={[{ required: true, message: t('data.requiredName') }]}>
+                    <Input placeholder={t('train.jobNamePh')} />
+                  </Form.Item></Col>
+                  <Col span={10}><Form.Item name="priority" label={t('train.priority')}>
+                    <InputNumber min={1} max={9} style={{ width: '100%' }} />
+                  </Form.Item></Col>
+                </Row>
+              </Section>
+              <Section title={t('train.secTrainCfg')}>
+                <Form.Item name="stage" label={t('train.stage')} rules={[{ required: true, message: t('common.required') }]}>
+                  <Radio.Group optionType="button" buttonStyle="solid"
+                    options={Object.entries(STAGE_LABEL).map(([v, l]) => ({ value: v, label: l }))}
+                    onChange={(e) => changeStage(e.target.value)} />
                 </Form.Item>
-                <Form.Item name="dataset_version_ids" label={t('train.dsVersions')} rules={[{ required: true, message: t('train.selectVersion') }]}>
-                  <Select mode="multiple" style={{ width: '100%' }}
-                    options={dsVersions.map((v: any) => ({ value: v.id, label: `v${v.version} · ${v.sample_count} · ${v.status} · ${v.note || ''}` }))} />
-                </Form.Item>
-              </>
-            )}
-            {stage === 'export' && (
-              <>
-                <p style={{ color: '#888' }}>{t('train.exportIntro')}</p>
-                <Form.Item name="adapter_asset_id" label={t('train.loraArtifact')} rules={[{ required: true, message: t('train.selectLoraArtifact') }]}>
-                  <Select style={{ width: 320 }} placeholder={t('train.loraPlaceholder')}
-                    options={models.filter((m: any) => m.type === 'lora').map((m: any) => ({ value: m.id, label: m.name }))} />
-                </Form.Item>
-              </>
-            )}
-          </div>
-          <div style={{ display: step === 1 ? 'block' : 'none' }}>
-            {/* 超参数：由 GET /api/training/params 的 spec 动态渲染，覆盖 LLaMA-Factory WebUI 全量参数 */}
-            <Collapse size="small"
-              defaultActiveKey={paramSpec.filter((g) => groupVisible(g) && g.open).map((g) => g.key)}
-              items={paramSpec.filter((g) => groupVisible(g)).map((g) => ({
-                key: g.key,
-                label: t('pg.' + g.key, g.label) as string,
-                children: (
-                  <Space wrap>
-                    {g.params.map((p: any) => (
-                      <Form.Item key={p.key} name={p.key} label={t('pp.' + p.key, p.label) as string}
-                        style={{ marginBottom: 12, maxWidth: p.key === 'extra_args' ? 520 : undefined }}>
-                        <ParamControl p={p} />
+                <Row gutter={12}>
+                  <Col span={10}><Form.Item name="finetuning_type" label={t('train.cfgMethod')}>
+                    <Radio.Group options={[
+                      { value: 'lora', label: t('train.ftLora') },
+                      { value: 'full', label: t('train.ftFull') },
+                      { value: 'freeze', label: t('train.ftFreeze') },
+                    ]} />
+                  </Form.Item></Col>
+                  <Col span={14}><Form.Item name="base_model_id" label={t('train.baseModel')} rules={[{ required: true, message: t('common.required') }]}>
+                    <Select style={{ width: '100%' }} options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
+                  </Form.Item></Col>
+                </Row>
+              </Section>
+              {stage !== 'export' ? (
+                <Section title={t('train.secData')}>
+                  <Form.Item name="dataset_id" label={t('train.trainData')} rules={[{ required: true, message: t('train.selectData') }]}>
+                    <Select style={{ maxWidth: 360 }} placeholder={t('train.selectData')}
+                      options={datasets.map((d: any) => ({ value: d.id, label: d.name }))}
+                      onChange={pickDataset} />
+                  </Form.Item>
+                  <Form.Item name="dataset_version_ids" label={t('train.dsVersions')} rules={[{ required: true, message: t('train.selectVersion') }]}>
+                    <Select mode="multiple" style={{ maxWidth: 560 }}
+                      options={dsVersions.map((v: any) => ({ value: v.id, label: `v${v.version} · ${v.sample_count} · ${v.status} · ${v.note || ''}` }))} />
+                  </Form.Item>
+                  <Row gutter={12}>
+                    <Col span={8}><Form.Item name="val_size" label={t('train.valRatio')} tooltip={t('train.valRatioTip')}>
+                      <InputNumber style={{ width: '100%' }} min={0} max={1} step={0.01} />
+                    </Form.Item></Col>
+                  </Row>
+                </Section>
+              ) : (
+                <Section title={t('train.secData')}>
+                  <p style={{ color: '#888' }}>{t('train.exportIntro')}</p>
+                  <Form.Item name="adapter_asset_id" label={t('train.loraArtifact')} rules={[{ required: true, message: t('train.selectLoraArtifact') }]}>
+                    <Select style={{ maxWidth: 360 }} placeholder={t('train.loraPlaceholder')}
+                      options={models.filter((m: any) => m.type === 'lora').map((m: any) => ({ value: m.id, label: m.name }))} />
+                  </Form.Item>
+                </Section>
+              )}
+              <Section title={t('train.secHyper')} extra={<Tag color="blue">{t('train.useRecommended')}</Tag>}>
+                <Row gutter={12}>
+                  {mainKeys.map((k) => (
+                    <Col span={6} key={k}>
+                      <Form.Item name={k} label={t('pp.' + k, specIndex[k]?.label) as string}>
+                        <ParamControl p={specIndex[k]} />
                       </Form.Item>
-                    ))}
-                  </Space>
-                ),
-              }))} />
-            {paramSpec.length === 0 && <p style={{ color: '#888' }}>{t('train.paramLoading')}</p>}
-          </div>
-          <div style={{ display: step === 2 ? 'block' : 'none' }}>
-            <Space wrap>
-              <Form.Item name="deepspeed" label={t('train.deepspeed')}>
-                <Select style={{ width: 140 }} options={[{ value: 'none', label: t('train.noDs') }, { value: 'zero2', label: t('train.dsZero2') }, { value: 'zero3', label: t('train.dsZero3') }]} />
-              </Form.Item>
-              <Form.Item name="gpu_count" label={t('train.gpuCount')}><InputNumber min={1} max={4} /></Form.Item>
-            </Space>
-            <Descriptions size="small" column={2} style={{ marginTop: 12 }}
-              items={[
-                { key: 1, label: t('train.summaryName'), children: form.getFieldValue('name') },
-                { key: 2, label: t('train.dStage'), children: STAGE_LABEL[stage] },
-                { key: 3, label: t('train.colBase'), children: models.find((m) => m.id === form.getFieldValue('base_model_id'))?.name },
-                { key: 4, label: t('train.summarySchedule'), children: t('train.scheduleDesc') },
-              ]} />
-          </div>
-        </Form>
+                    </Col>
+                  ))}
+                </Row>
+                {advancedGroups.length > 0 && (
+                  <Collapse ghost size="small"
+                    items={advancedGroups.map((g: any) => ({
+                      key: g.key, label: g.label,
+                      children: (
+                        <Space wrap>
+                          {g.params.map((p: any) => (
+                            <Form.Item key={p.key} name={p.key} label={t('pp.' + p.key, p.label) as string}
+                              style={{ marginBottom: 12, maxWidth: p.key === 'extra_args' ? 520 : undefined }}>
+                              <ParamControl p={p} />
+                            </Form.Item>
+                          ))}
+                        </Space>
+                      ),
+                    }))} />
+                )}
+              </Section>
+              <Section title={t('train.secOutput')}>
+                <Row gutter={12}>
+                  <Col span={8}><Form.Item name="deepspeed" label={t('train.deepspeed')} rules={[{ required: true, message: t('common.required') }]}>
+                    <Select style={{ width: '100%' }} options={[{ value: 'none', label: t('train.noDs') }, { value: 'zero2', label: t('train.dsZero2') }, { value: 'zero3', label: t('train.dsZero3') }]} />
+                  </Form.Item></Col>
+                  <Col span={8}><Form.Item name="gpu_count" label={t('train.gpuCount')} rules={[{ required: true, message: t('common.required') }]}>
+                    <InputNumber min={1} max={4} style={{ width: '100%' }} />
+                  </Form.Item></Col>
+                  <Col span={8}><Form.Item name="save_steps" label={t('pp.save_steps', '保存间隔 save_steps')}>
+                    <InputNumber min={1} style={{ width: '100%' }} />
+                  </Form.Item></Col>
+                  <Col span={8}><Form.Item name="save_total_limit" label={t('pp.save_total_limit', 'checkpoint 保留数')}>
+                    <InputNumber min={1} style={{ width: '100%' }} />
+                  </Form.Item></Col>
+                </Row>
+              </Section>
+            </Form>
+          </Col>
+          <Col span={7}>
+            <Card size="small" title={t('train.summaryTitle')} style={{ position: 'sticky', top: 16 }}>
+              <Descriptions size="small" column={1}
+                items={[
+                  { key: 1, label: t('train.summaryName'), children: wName || '-' },
+                  { key: 2, label: t('train.dStage'), children: `${STAGE_LABEL[stage]} · ${finetuningType}` },
+                  { key: 3, label: t('train.colBase'), children: models.find((m) => m.id === wBase)?.name || '-' },
+                  { key: 4, label: t('train.summaryData'), children: stage === 'export'
+                    ? (models.find((m) => m.id === wAdapter)?.name || '-')
+                    : `${datasets.find((d) => d.id === wDsId)?.name || '-'} (${(wVerIds || []).length})` },
+                  ...(stage !== 'export' ? [{ key: 5, label: t('train.summaryVal'), children: `${((wVal || 0) * 100).toFixed(0)}%` }] : []),
+                  { key: 6, label: t('train.summaryGpu'), children: `${wGpu ?? 1} GPU · ${wDeep}` },
+                  { key: 7, label: t('train.summaryPriority'), children: wPriority ?? 5 },
+                ]} />
+            </Card>
+          </Col>
+        </Row>
       </Modal>
 
       <Drawer title={detail ? t('train.detailTitleWith', { id: detail.id, name: detail.name }) : t('train.detailTitle')} width={760}
@@ -263,6 +365,15 @@ export default function TrainCenter() {
                 { key: 6, label: t('train.deepspeed'), children: detail.deepspeed },
               ]} />
             {detail.error && <p style={{ color: '#cf1322', whiteSpace: 'pre-wrap' }}>{detail.error}</p>}
+            {Object.keys(detail.config || {}).length > 0 && (
+              <>
+                <h4>{t('train.paramsTitle')}</h4>
+                <Descriptions size="small" column={2} bordered
+                  items={Object.entries(detail.config).map(([k, v]: any) => ({
+                    key: k, label: k, children: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{String(v)}</span>,
+                  }))} />
+              </>
+            )}
             <h4>{t('train.lossTitle')}</h4>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={lossData}>

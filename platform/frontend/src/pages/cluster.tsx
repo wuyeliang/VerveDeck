@@ -40,12 +40,34 @@ export default function ClusterOps() {
                 <Col span={8}><Statistic title={t('cluster.gpuUsed')} value={n.gpu_in_use} valueStyle={{ color: '#cf1322' }} /></Col>
                 <Col span={8}><Statistic title={t('cluster.gpuFree')} value={Math.max(0, n.gpu_count - n.gpu_in_use)} valueStyle={{ color: '#3f8600' }} /></Col>
               </Row>
-              {(n.gpus || []).map((g: any) => (
-                <div key={g.index} style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 12, color: '#666' }}>{t('cluster.gpuLine', { idx: g.index, util: g.util, u: (g.mem_used / 1024).toFixed(1), t: (g.mem_total / 1024).toFixed(0), p: g.power, c: g.temp })}</div>
-                  <Progress percent={g.util} size="small" showInfo={false} />
-                </div>
-              ))}
+              {(n.gpus || []).map((g: any) => {
+                const ex = g.extra || {}
+                const thr = ['thermal_slowdown', 'hw_slowdown', 'hw_thermal_slowdown',
+                  'hw_power_brake_slowdown', 'sw_thermal_slowdown']
+                  .filter((k) => Number(ex[k]) > 0).length
+                const health = Number(ex.health) || 0
+                return (
+                  <div key={g.index} style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 12, color: '#666' }}>{g.name ? `${g.name} · ` : ''}{t('cluster.gpuLine', { idx: g.index, util: g.util, u: (g.mem_used / 1024).toFixed(1), t: (g.mem_total / 1024).toFixed(0), p: g.power, c: g.temp })}</div>
+                    <Progress percent={g.util} size="small" showInfo={false} />
+                    <div style={{ fontSize: 11, color: '#999', marginTop: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {t('cluster.gpuDetail', {
+                          mt: ex.mem_temp ? Math.round(ex.mem_temp) : '-',
+                          sm: Math.round(ex.sm_clock || 0), mc: Math.round(ex.mem_clock || 0),
+                          mu: Math.round(ex.mem_util || 0),
+                          ecc: `${Math.round(ex.ecc_dbe_agg || 0)}/${Math.round(ex.ecc_sbe_agg || 0)}`,
+                          xid: Math.round(ex.xid_error_count || 0), thr,
+                        })}
+                      </span>
+                      <Tag color={health >= 2 ? 'error' : health === 1 ? 'warning' : 'success'}
+                        style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px', padding: '0 5px' }}>
+                        {health >= 2 ? t('cluster.healthErr') : health === 1 ? t('cluster.healthWarn') : t('cluster.healthOk')}
+                      </Tag>
+                    </div>
+                  </div>
+                )
+              })}
             </Card>
           </Col>
         ))}
