@@ -127,8 +127,9 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       INFER_PORT_BASE: "8100"
       # 推理引擎用官方开源镜像（CUDA 随镜像内置，不装宿主机）；
-      # llamafactory 官方无预构建镜像，自构（deploy/build-images.sh）
-      IMAGES_TRAIN: fintune/llama-factory:1.0
+      # llamafactory 用 LLaMA-Factory 官方预构建镜像（hiyouga/llamafactory，免本地编译；
+      # 离线/气隔环境可用 images/llama-factory 的自构 Dockerfile 兜底）
+      IMAGES_TRAIN: hiyouga/llamafactory:0.9.5
       IMAGES_VLLM: vllm/vllm-openai:v0.33.0
       IMAGES_SGLANG: lmsysorg/sglang:v0.5.23
       IMAGES_EVAL: fintune/evalscope:1.0
@@ -140,6 +141,14 @@ services:
       S3_BUCKET: ${S3_BUCKET:-vervedeck-datasets}
       # 宿主源码树（只读）：镜像管理页在线重建自构镜像的构建上下文
       VERVEDECK_REPO: /repo
+      # 告警通知通道（留空=不启用对应通道；告警规则在 系统管理→告警 页配置）
+      WECOM_WEBHOOK: ${WECOM_WEBHOOK:-}            # 企业微信群机器人 webhook
+      SMTP_HOST: ${SMTP_HOST:-}                    # 如 smtp.qq.com / smtp.exmail.qq.com
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}            # 邮箱授权码
+      SMTP_FROM: ${SMTP_FROM:-}                    # 发件人（默认同 SMTP_USER）
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}          # 告警收件人，逗号分隔
     volumes:
       - /data:/data
       - /var/run/docker.sock:/var/run/docker.sock
@@ -171,14 +180,19 @@ services:
       - backend
     networks: [fintune]
 
-  # GPU 监控 Agent：DCGM 采集（温度/功耗/时钟/ECC/降频/健康度/XID 等 28 项扩展指标，5s 周期）
+  # GPU 监控 Agent：直接用 NVIDIA 开源 nvidia/dcgm 镜像（DCGM 全套官方预装，本地零构建），
+  # 只读挂载 collect.sh 采集脚本并覆盖 entrypoint：后台拉起 nv-hostengine 后进入 5s 周期
+  # 采集循环（温度/功耗/时钟/ECC/降频/健康度/XID 等 28 项扩展指标 + 宿主机系统指标）
   gpu-agent:
-    image: fintune/gpu-agent:1.0
-    build: ../images/gpu-agent
+    image: nvidia/dcgm:4.7.1-ubuntu24.04
+    entrypoint: ["bash", "-lc"]
+    command: ["nv-hostengine -n >/tmp/hostengine.log 2>&1 & sleep 2; exec bash /usr/local/bin/collect.sh"]
     restart: unless-stopped
     ipc: host   # DCGM hostengine 需要宿主共享内存
+    network_mode: host   # 采集宿主网卡流量（/proc/net/dev 随网络命名空间隔离，bridge 下只能看到容器自身）
     volumes:
       - /data/gpu:/data/gpu
+      - ../images/gpu-agent/collect.sh:/usr/local/bin/collect.sh:ro
     deploy:
       resources:
         reservations:
@@ -186,7 +200,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    networks: [fintune]
 
 networks:
   fintune:

@@ -184,7 +184,10 @@
     "chatPh": "Type a message, Enter to send", "send": "Send", "selectLora": "Select LoRA artifact", "hotload": "Hot-load",
     "loaded": "LoRA hot-loaded", "loadFail": "Load failed", "unload": "Unload", "noLogs": "(empty)",
     "curReplicas": "Current replicas: {{n}}", "scaleUp": "+1 replica", "scaleDown": "-1 replica",
-    "scaledUp": "Scaled up (needs free GPU)", "scaledDown": "Scaled down"
+    "scaledUp": "Scaled up (needs free GPU)", "scaledDown": "Scaled down",
+    "tabMonitor": "Monitor", "kvCache": "KV cache", "runReqs": "Running reqs",
+    "waitReqs": "Waiting reqs", "avgLatency": "Avg latency", "monEmpty": "No monitoring data yet (scraped every 30s after start)",
+    "monHint": "Source: engine metrics endpoint, ~30s scrape interval, kept 24h"
   },
   "cluster": {
     "title": "Compute Scheduling & Ops", "heartbeat": "Heartbeat {{ts}}", "gpuTotal": "GPUs", "gpuUsed": "In use", "gpuFree": "Free",
@@ -196,7 +199,11 @@
     "colPriority": "Priority", "top": "Promote", "emptyQueue": "Queue is empty",
     "runningTitle": "Running Jobs", "emptyRunning": "No running jobs", "colStart": "Started",
     "nodeInfo": "Node {{node}} · Live deployments {{d}} · Training {{j}} · Self-healing: GPU agent heartbeat timeout (60s) marks the node offline, related jobs are failed and resumable",
-    "tabNodes": "Compute Nodes", "tabGpus": "GPU Devices", "tabMonitor": "Monitoring", "colNode": "Node", "colIdx": "Idx", "colMemTemp": "Mem Temp", "colClocks": "SM/Mem Clock", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Throttle", "colHealth": "Health", "colName": "GPU", "colTemp": "Temp (°C)"
+    "tabNodes": "Compute Nodes", "tabGpus": "GPU Devices", "tabMonitor": "Monitoring", "colNode": "Node", "colIdx": "Idx", "colMemTemp": "Mem Temp", "colClocks": "SM/Mem Clock", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Throttle", "colHealth": "Health", "colName": "GPU", "colTemp": "Temp (°C)",
+    "systemTitle": "Host system metrics (last 1h)", "noSysData": "No system metrics yet (gpu-agent collecting…)", "sysCpu": "CPU",
+    "sysMem": "Memory", "sysDisk": "Disk", "sysLoad": "Load (1min)",
+    "sysNetRx": "Net rx", "sysNetTx": "Net tx", "sysMemDetail": "Memory used {{u}}/{{tgb}}GB",
+    "sysDiskDetail": "Disk used {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} cores"
   },
   "logs": { "title": "Logs", "service": "Service", "tail": "Lines", "auto": "Auto refresh", "searchPh": "Filter keywords", "level": "Level", "all": "All", "warn": "Warning", "error": "Error", "empty": "No logs", "copy": "Copy", "copied": "Copied", "download": "Download", "running": "Running", "stopped": "Stopped", "tabAudit": "Audit Log", "tabContainer": "Container Logs" },
   "storage": { "title": "Object Storage", "statusTitle": "Storage Status", "enabled": "Enabled", "disabled": "Disabled (local only)", "endpoint": "Endpoint", "bucket": "Bucket", "objCount": "Objects", "totalBytes": "Total size", "disk": "Data disk usage", "diskUsed": "Used", "browser": "Object browser", "queue": "Sync queue", "queueEmpty": "Queue is empty", "colOp": "Op", "colKey": "Key/Prefix", "colStatus": "Status", "colError": "Error", "colCreated": "Created", "retry": "Retry", "retriedOk": "Retry ok", "retriedFail": "Retry failed", "clearDone": "Clear done", "clearFail": "Clear failed", "delete": "Delete", "delConfirm": "Delete all objects under this prefix?", "delOk": "Deleted", "delFail": "Delete failed", "empty": "(empty)", "updated": "Updated", "back": "Up", "goRoot": "Root", "disabledTip": "S3 disabled: data stays on local disk only", "opPut": "Upload", "opGet": "Download", "opDelete": "Delete", "stDone": "Done", "stFailed": "Failed", "colSize": "Size", "colTime": "Modified" , "addBackend": "Add Backend", "backends": "Storage Backends", "backendEmpty": "No storage backends yet", "addOk": "Added", "colType": "Type", "colConfig": "Config", "colCapacity": "Capacity", "test": "Test", "delBackendConfirm": "Remove this storage backend?", "pathHost": "Host path (visible inside container)", "device": "Block device", "primaryObject": "Primary object storage", "typeObject": "Object", "typeLocal": "Local", "typeNfs": "NFS", "typeBlock": "Block" , "endpointPh": "http://rustfs:9000 or an S3 endpoint" },
@@ -218,7 +225,21 @@
     "colPattern": "Pattern", "colScope": "Scope", "colEnabled": "Enabled", "del": "Delete?",
     "auditFilter": "Filter by username", "colTime": "Time", "colUser": "User", "colMethod": "Method",
     "colPath": "Path", "colIp": "IP", "colCode": "Status",
-    "auditColAction": "Action", "auditFilterAction": "By action", "auditFilterStatus": "Result", "auditFilterMethod": "Method", "auditFilterPath": "Path", "auditOk": "OK", "auditErr": "Failed", "auditAll": "All", "tabSettings": "Settings", "langLabel": "Language", "keyModels": "Restrict to models", "keyModelsHint": "Leave empty to allow access to all models in the project", "keyScopeAll": "All models", "keyScopeN": "Limited to {{n}} model(s)"
+    "auditColAction": "Action", "auditFilterAction": "By action", "auditFilterStatus": "Result", "auditFilterMethod": "Method", "auditFilterPath": "Path", "auditOk": "OK", "auditErr": "Failed", "auditAll": "All", "tabSettings": "Settings", "langLabel": "Language", "keyModels": "Restrict to models", "keyModelsHint": "Leave empty to allow access to all models in the project", "keyScopeAll": "All models", "keyScopeN": "Limited to {{n}} model(s)",
+    "tabAlerts": "Alerts", "alertRules": "Alert rules", "newRule": "New rule",
+    "editRule": "Edit rule", "ruleName": "Rule name", "colKind": "Type",
+    "kindThreshold": "Threshold", "kindEvent": "Event", "colMetric": "Metric",
+    "colEvent": "Event", "colCond": "Condition", "colSeverity": "Severity",
+    "sevWarning": "Warning", "sevCritical": "Critical", "colCooldown": "Cooldown (s)",
+    "colChannels": "Channels", "mHostCpu": "Host CPU", "mHostMem": "Host memory",
+    "mHostDisk": "Host disk", "mGpuUtil": "GPU utilization", "mGpuTemp": "GPU temperature",
+    "mGpuMem": "GPU memory usage", "mKvCache": "Inference KV cache", "evNodeOffline": "Compute node offline",
+    "evNodeOnline": "Compute node back online", "evTrainFailed": "Training job failed", "evEvalFailed": "Eval task failed",
+    "evQuantFailed": "Quant task failed", "evInferDown": "Inference service unavailable", "eventsTitle": "Alert events (last 100)",
+    "colLevel": "Level", "colTarget": "Target", "colTitle": "Title",
+    "colNotified": "Notified", "testNotify": "Test", "testSent": "Test message sent, check your channel",
+    "testFail": "Send failed", "chWecom": "WeCom bot", "chEmail": "Email",
+    "chAuto": "Auto (all configured)"
   },
   "quant": {
     "title": "Model Compression",

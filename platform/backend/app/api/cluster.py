@@ -9,7 +9,7 @@ from sqlalchemy import func
 from ..config import settings
 from ..database import get_db
 from ..security import get_current_user
-from ..models import (GpuNode, GpuMetric, TrainingJob, Deployment, User, Project)
+from ..models import (GpuNode, GpuMetric, SystemMetric, TrainingJob, Deployment, User, Project)
 from .. import scheduler
 
 router = APIRouter(prefix="/api/cluster", tags=["cluster"])
@@ -66,6 +66,32 @@ def node_metrics(nid: int, minutes: int = 60, db=Depends(get_db), user=Depends(g
             "power": r.power, "temp": r.temp,
         })
     return {"node": n.name, "series": series}
+
+
+@router.get("/system")
+def system_metrics(minutes: int = 60, db=Depends(get_db), user=Depends(get_current_user)):
+    """宿主 Linux 系统指标（CPU/内存/磁盘/负载/网络）：最新快照 + 时间序列（gpu-agent 5s 采集）"""
+    node = db.query(GpuNode).filter_by(name=settings.node_name).first()
+    if not node:
+        return {"node": "", "latest": None, "series": []}
+    since = int(time.time()) - minutes * 60
+    rows = (db.query(SystemMetric)
+            .filter(SystemMetric.node_id == node.id, SystemMetric.ts >= since)
+            .order_by(SystemMetric.ts.asc()).all())
+    last = rows[-1] if rows else None
+    return {
+        "node": node.name,
+        "latest": (None if not last else {
+            "ts": last.ts, "cpu_pct": last.cpu_pct, "cpu_count": last.cpu_count,
+            "load1": last.load1, "load5": last.load5, "load15": last.load15,
+            "mem_total_mb": last.mem_total_mb, "mem_used_mb": last.mem_used_mb, "mem_pct": last.mem_pct,
+            "disk_total_mb": last.disk_total_mb, "disk_used_mb": last.disk_used_mb, "disk_pct": last.disk_pct,
+            "net_rx_mbps": last.net_rx_mbps, "net_tx_mbps": last.net_tx_mbps,
+        }),
+        "series": [{"ts": r.ts, "cpu": r.cpu_pct, "mem": r.mem_pct, "disk": r.disk_pct,
+                    "load1": r.load1, "net_rx": r.net_rx_mbps, "net_tx": r.net_tx_mbps}
+                   for r in rows],
+    }
 
 
 class PriorityReq(BaseModel):

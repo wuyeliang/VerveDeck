@@ -309,6 +309,23 @@ def deploy_logs(did: int, tail: int = 200, replica: int = 0, db=Depends(get_db),
     return {"logs": "\n".join(data.splitlines()[-tail:])}
 
 
+@router.get("/api/inference/deployments/{did}/metrics")
+def deploy_metrics(did: int, minutes: int = 60, db=Depends(get_db), user=Depends(get_current_user)):
+    """推理引擎监控（KV 缓存占用 / 运行中·排队请求 / 平均延迟；约 30s 抓取一次，保留 24h）"""
+    d = db.get(Deployment, did)
+    if not d:
+        raise HTTPException(404, "部署不存在")
+    _check(db, d.project_id, user)
+    from ..models import InferenceMetric
+    since = int(time.time()) - minutes * 60
+    rows = (db.query(InferenceMetric)
+            .filter(InferenceMetric.deployment_id == did, InferenceMetric.ts >= since)
+            .order_by(InferenceMetric.ts.asc()).all())
+    return {"engine": d.engine,
+            "series": [{"ts": r.ts, "kv": r.kv_cache_pct, "running": r.num_running,
+                        "waiting": r.num_waiting, "latency_ms": r.avg_latency_ms} for r in rows]}
+
+
 # ---------- 多 LoRA 动态热加载 ----------
 
 @router.post("/api/inference/deployments/{did}/adapters")

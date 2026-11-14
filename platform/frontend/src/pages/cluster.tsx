@@ -21,6 +21,7 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
   const [metrics, setMetrics] = useState<any[]>([])
   const [queue, setQueue] = useState<any>(null)
   const [util, setUtil] = useState<any>(null)
+  const [system, setSystem] = useState<any>(null)
 
   const load = () => {
     api.get('/api/cluster/nodes').then((r) => {
@@ -35,6 +36,7 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
     }).catch(() => {})
     api.get('/api/cluster/queue').then((r) => setQueue(r.data)).catch(() => {})
     api.get('/api/cluster/utilization').then((r) => setUtil(r.data)).catch(() => {})
+    api.get('/api/cluster/system?minutes=60').then((r) => setSystem(r.data)).catch(() => {})
   }
   useEffect(() => { load(); const x = setInterval(load, 5000); return () => clearInterval(x) }, [])
 
@@ -46,9 +48,54 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
       <Tabs activeKey={tab} onChange={(k) => nav(`/cluster/${k}`)} items={[
         { key: 'nodes', label: t('cluster.tabNodes'), children: <NodesView nodes={nodes} queue={queue} load={load} /> },
         { key: 'gpus', label: t('cluster.tabGpus'), children: <GpusView gpus={gpus} /> },
-        { key: 'monitor', label: t('cluster.tabMonitor'), children: <MonitorView metrics={metrics} queue={queue} util={util} /> },
+        { key: 'monitor', label: t('cluster.tabMonitor'), children: <MonitorView metrics={metrics} system={system} queue={queue} util={util} /> },
       ]} />
     </div>
+  )
+}
+
+/** 宿主 Linux 系统指标：CPU/内存/磁盘/负载/网络 实时值 + 近 1 小时趋势 */
+function SystemCard({ system }: { system: any }) {
+  const { t, i18n: ti18n } = useTranslation()
+  const last = system?.latest
+  const data = (system?.series || []).map((x: any) => ({
+    t: new Date(x.ts * 1000).toLocaleTimeString(ti18n.language, { hour: '2-digit', minute: '2-digit' }),
+    cpu: x.cpu, mem: x.mem, disk: x.disk,
+  }))
+  return (
+    <Card size="small" title={t('cluster.systemTitle')} style={{ marginBottom: 16 }}>
+      {!last ? (
+        <span style={{ color: '#999' }}>{t('cluster.noSysData')}</span>
+      ) : (
+        <>
+          <Row gutter={16}>
+            <Col span={4}><Statistic title={t('cluster.sysCpu')} value={last.cpu_pct} suffix="%" precision={0} valueStyle={{ color: last.cpu_pct > 90 ? '#cf1322' : undefined }} /></Col>
+            <Col span={4}><Statistic title={t('cluster.sysMem')} value={last.mem_pct} suffix="%" precision={0} valueStyle={{ color: last.mem_pct > 90 ? '#cf1322' : undefined }} /></Col>
+            <Col span={4}><Statistic title={t('cluster.sysDisk')} value={last.disk_pct} suffix="%" precision={0} valueStyle={{ color: last.disk_pct > 85 ? '#cf1322' : undefined }} /></Col>
+            <Col span={4}><Statistic title={t('cluster.sysLoad')} value={last.load1} precision={2} /></Col>
+            <Col span={4}><Statistic title={t('cluster.sysNetRx')} value={Math.round((last.net_rx_mbps || 0) / 8 * 10) / 10} suffix="MB/s" /></Col>
+            <Col span={4}><Statistic title={t('cluster.sysNetTx')} value={Math.round((last.net_tx_mbps || 0) / 8 * 10) / 10} suffix="MB/s" /></Col>
+          </Row>
+          <div style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
+            {t('cluster.sysMemDetail', { u: (last.mem_used_mb / 1024).toFixed(1), tgb: (last.mem_total_mb / 1024).toFixed(1) })}
+            {' · '}{t('cluster.sysDiskDetail', { u: (last.disk_used_mb / 1024 / 1024).toFixed(1), tg: (last.disk_total_mb / 1024 / 1024).toFixed(1) })}
+            {' · '}{t('cluster.sysCpuCores', { n: last.cpu_count })}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={data}>
+                <XAxis dataKey="t" fontSize={11} />
+                <YAxis domain={[0, 100]} fontSize={11} />
+                <RTooltip /><Legend />
+                <Line dataKey="cpu" name={t('cluster.sysCpu')} stroke="#1677ff" dot={false} />
+                <Line dataKey="mem" name={t('cluster.sysMem')} stroke="#52c41a" dot={false} />
+                <Line dataKey="disk" name={t('cluster.sysDisk')} stroke="#fa8c16" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+    </Card>
   )
 }
 
@@ -173,11 +220,12 @@ function GpusView({ gpus }: { gpus: any[] }) {
   )
 }
 
-/** 监控大屏：趋势图 + 运行中 + 利用率统计 */
-function MonitorView({ metrics, queue, util }: { metrics: any[]; queue: any; util: any }) {
+/** 监控大屏：宿主系统指标 + GPU 趋势图 + 运行中 + 利用率统计 */
+function MonitorView({ metrics, system, queue, util }: { metrics: any[]; system: any; queue: any; util: any }) {
   const { t } = useTranslation()
   return (
     <div>
+      <SystemCard system={system} />
       <Card size="small" title={t('cluster.trend')}>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={metrics}>

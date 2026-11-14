@@ -184,7 +184,10 @@
     "chatPh": "Saisissez un message, Entrée pour envoyer", "send": "Envoyer", "selectLora": "Choisir l'artefact LoRA", "hotload": "Recharge à chaud",
     "loaded": "LoRA rechargé à chaud", "loadFail": "Échec du chargement", "unload": "Désinstaller", "noLogs": "(vide)",
     "curReplicas": "Répliques actuelles : {{n}}", "scaleUp": "+1 réplique", "scaleDown": "-1 réplique",
-    "scaledUp": "Extension effectuée (GPU libre requis)", "scaledDown": "Réduction effectuée"
+    "scaledUp": "Extension effectuée (GPU libre requis)", "scaledDown": "Réduction effectuée",
+    "tabMonitor": "Surveillance", "kvCache": "Cache KV", "runReqs": "Req. en cours",
+    "waitReqs": "Req. en attente", "avgLatency": "Latence moy.", "monEmpty": "Pas encore de données (recueillies toutes les 30 s)",
+    "monHint": "Source : point de terminaison metrics du moteur, ~30 s, conservé 24 h"
   },
   "cluster": {
     "title": "Ordonnancement et exploitation", "heartbeat": "Cœur {{ts}}", "gpuTotal": "GPU au total", "gpuUsed": "Occupés", "gpuFree": "Libres",
@@ -196,7 +199,11 @@
     "colPriority": "Priorité", "top": "Promouvoir", "emptyQueue": "File vide",
     "runningTitle": "Tâches en cours", "emptyRunning": "Aucune tâche en cours", "colStart": "Début",
     "nodeInfo": "Nœud {{node}} · Déploiements actifs {{d}} · En formation {{j}} · Auto-guérison : timeout du cœur GPU (60 s) → nœud hors ligne, tâches associées marquées en échec et reprenables",
-    "tabNodes": "Nœuds de calcul", "tabGpus": "Périphériques GPU", "tabMonitor": "Supervision", "colNode": "Nœud", "colIdx": "Idx", "colMemTemp": "Temp. mémoire", "colClocks": "Horloge SM/mém", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Videm", "colHealth": "Santé", "colName": "GPU", "colTemp": "Temp. (°C)"
+    "tabNodes": "Nœuds de calcul", "tabGpus": "Périphériques GPU", "tabMonitor": "Supervision", "colNode": "Nœud", "colIdx": "Idx", "colMemTemp": "Temp. mémoire", "colClocks": "Horloge SM/mém", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Videm", "colHealth": "Santé", "colName": "GPU", "colTemp": "Temp. (°C)",
+    "systemTitle": "Métriques du système hôte (1h)", "noSysData": "Pas encore de métriques (collecte gpu-agent…)", "sysCpu": "CPU",
+    "sysMem": "Mémoire", "sysDisk": "Disque", "sysLoad": "Charge (1min)",
+    "sysNetRx": "Réseau rx", "sysNetTx": "Réseau tx", "sysMemDetail": "Mémoire utilisée {{u}}/{{tgb}}Go",
+    "sysDiskDetail": "Disque utilisé {{u}}/{{tg}}Go", "sysCpuCores": "{{n}} cœurs"
   },
   "logs": { "title": "Journaux", "service": "Service", "tail": "Lignes", "auto": "Autoactualisation", "searchPh": "Filtrer les mots-clés", "level": "Niveau", "all": "Tout", "warn": "Avertissement", "error": "Erreur", "empty": "Aucun journal", "copy": "Copier", "copied": "Copié", "download": "Télécharger", "running": "En cours", "stopped": "Arrêté", "tabAudit": "Journal d'audit", "tabContainer": "Journaux de conteneurs" },
   "storage": { "title": "Stockage d'objets", "statusTitle": "État du stockage", "enabled": "Activé", "disabled": "Désactivé (local uniquement)", "endpoint": "Endpoint", "bucket": "Seau", "objCount": "Objets", "totalBytes": "Taille totale", "disk": "Utilisation du disque", "diskUsed": "Utilisé", "browser": "Explorateur d'objets", "queue": "File de synchronisation", "queueEmpty": "File vide", "colOp": "Op.", "colKey": "Clé/préfixe", "colStatus": "État", "colError": "Erreur", "colCreated": "Créé", "retry": "Réessayer", "retriedOk": "Réessai ok", "retriedFail": "Réessai échoué", "clearDone": "Nettoyer terminés", "clearFail": "Nettoyer échecs", "delete": "Supprimer", "delConfirm": "Supprimer tous les objets sous ce préfixe ?", "delOk": "Supprimé", "delFail": "Échec de la suppression", "empty": "(vide)", "updated": "Modifié", "back": "Remonter", "goRoot": "Racine", "disabledTip": "S3 désactivé : les données restent uniquement sur le disque local", "opPut": "Téléverser", "opGet": "Télécharger", "opDelete": "Supprimer", "stDone": "Terminé", "stFailed": "Échec", "colSize": "Taille", "colTime": "Modifié" , "addBackend": "Ajouter un backend", "backends": "Backends de stockage", "backendEmpty": "Aucun backend de stockage", "addOk": "Ajouté", "colType": "Type", "colConfig": "Config", "colCapacity": "Capacité", "test": "Tester", "delBackendConfirm": "Supprimer ce backend de stockage ?", "pathHost": "Chemin hôte (visible dans le conteneur)", "device": "Périphérique bloc", "primaryObject": "Objets principal", "typeObject": "Objets", "typeLocal": "Local", "typeNfs": "NFS", "typeBlock": "Blocs" , "endpointPh": "http://rustfs:9000 ou un endpoint S3" },
@@ -218,7 +225,21 @@
     "colPattern": "Regex", "colScope": "Portée", "colEnabled": "Activé", "del": "Supprimer ?",
     "auditFilter": "Filtrer par nom d'utilisateur", "colTime": "Heure", "colUser": "Utilisateur", "colMethod": "Méthode",
     "colPath": "Chemin", "colIp": "IP", "colCode": "Statut",
-    "auditColAction": "Action", "auditFilterAction": "Par action", "auditFilterStatus": "Résultat", "auditFilterMethod": "Méthode", "auditFilterPath": "Chemin", "auditOk": "OK", "auditErr": "Échec", "auditAll": "Tout", "tabSettings": "Paramètres", "langLabel": "Langue", "keyModels": "Limiter aux modèles", "keyModelsHint": "Laisser vide pour autoriser l'accès à tous les modèles du projet", "keyScopeAll": "Tous les modèles", "keyScopeN": "Limité à {{n}} modèle(s)"
+    "auditColAction": "Action", "auditFilterAction": "Par action", "auditFilterStatus": "Résultat", "auditFilterMethod": "Méthode", "auditFilterPath": "Chemin", "auditOk": "OK", "auditErr": "Échec", "auditAll": "Tout", "tabSettings": "Paramètres", "langLabel": "Langue", "keyModels": "Limiter aux modèles", "keyModelsHint": "Laisser vide pour autoriser l'accès à tous les modèles du projet", "keyScopeAll": "Tous les modèles", "keyScopeN": "Limité à {{n}} modèle(s)",
+    "tabAlerts": "Alertes", "alertRules": "Règles d'alerte", "newRule": "Nouvelle règle",
+    "editRule": "Modifier la règle", "ruleName": "Nom de la règle", "colKind": "Type",
+    "kindThreshold": "Seuil", "kindEvent": "Événement", "colMetric": "Métrique",
+    "colEvent": "Événement", "colCond": "Condition", "colSeverity": "Gravité",
+    "sevWarning": "Avertissement", "sevCritical": "Critique", "colCooldown": "Refroid. (s)",
+    "colChannels": "Canaux", "mHostCpu": "CPU hôte", "mHostMem": "Mémoire hôte",
+    "mHostDisk": "Disque hôte", "mGpuUtil": "Utilisation GPU", "mGpuTemp": "Température GPU",
+    "mGpuMem": "Mémoire GPU", "mKvCache": "Cache KV d'inférence", "evNodeOffline": "Nœud hors ligne",
+    "evNodeOnline": "Nœud rétabli", "evTrainFailed": "Échec de l'entraînement", "evEvalFailed": "Échec de l'évaluation",
+    "evQuantFailed": "Échec de la quantification", "evInferDown": "Service d'inférence indisponible", "eventsTitle": "Événements d'alerte (100 derniers)",
+    "colLevel": "Niveau", "colTarget": "Cible", "colTitle": "Titre",
+    "colNotified": "Notifié", "testNotify": "Test", "testSent": "Message de test envoyé, vérifiez le canal",
+    "testFail": "Échec de l'envoi", "chWecom": "Bot WeCom", "chEmail": "E-mail",
+    "chAuto": "Auto (tous les canaux configurés)"
   },
   "quant": {
     "title": "Compression de modèles",

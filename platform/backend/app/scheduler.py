@@ -18,11 +18,13 @@ from sqlalchemy import func
 
 from .config import settings
 from .database import SessionLocal
-from .models import TrainingJob, EvalTask, Deployment, ModelAsset, GpuNode, GpuMetric, QuantTask
+from .models import (TrainingJob, EvalTask, Deployment, ModelAsset, GpuNode, GpuMetric,
+                     QuantTask, SystemMetric, InferenceMetric, AlertEvent)
 from .services import gpu_service
 from .services import taskcontainer as tc
 from .services import training_service, eval_service, inference_service, quantize_service
 from .services import image_ops
+from .services import alert_service
 
 log = logging.getLogger("scheduler")
 
@@ -61,6 +63,10 @@ def _finalize_training(db, job: TrainingJob, success: bool, error: str = ""):
     job.finished_at = datetime.utcnow()
     if success:
         training_service.register_artifact(job)
+    else:
+        alert_service.trigger_event(db, "train_failed", f"train:{job.id}",
+                                    f"训练任务失败：{job.name}",
+                                    f"ID {job.id} · 阶段 {job.stage} · {job.error[:300]}")
     tc.remove_container(job.container_name, force=True)
     db.commit()
 
@@ -76,6 +82,10 @@ def _finalize_eval(db, task: EvalTask, success: bool, error: str = ""):
             task.summary = res.get("summary", {})
             if "details" in res:
                 task.summary["detail_count"] = len(res["details"])
+    else:
+        alert_service.trigger_event(db, "eval_failed", f"eval:{task.id}",
+                                    f"评测任务失败：{task.name}",
+                                    f"ID {task.id} · {task.error[:300]}")
     eval_service.cleanup(task)
     db.commit()
 
@@ -109,6 +119,10 @@ def _finalize_quant(db, task: QuantTask, success: bool, error: str = ""):
         if not asset:
             task.status = "failed"
             task.error = "量化执行完成但未找到产物（out 目录为空），请查看日志"
+    if task.status == "failed":
+        alert_service.trigger_event(db, "quant_failed", f"quant:{task.id}",
+                                    f"量化任务失败：{task.name}",
+                                    f"ID {task.id} · {task.error[:300]}")
     quantize_service.cleanup(task)
     db.commit()
 
@@ -156,10 +170,15 @@ def _reconcile_deployments(db):
         alive = all(tc.container_alive(n) for n in
                     (dep.container_ids or [f"ft-infer-{dep.id}"]))
         if not alive:
+            was_running = dep.status == "running"
             dep.status = "failed"
             dep.error = "推理容器异常退出（节点故障或 OOM），请重新启动"
             db.commit()
             log.warning("deployment %s lost", dep.name)
+            if was_running:
+                alert_service.trigger_event(db, "infer_down", f"deploy:{dep.id}",
+                                            f"推理服务不可用：{dep.name}",
+                                            "推理容器异常退出（节点故障或 OOM），服务已中断，请重新启动")
             continue
         if dep.status == "creating":
             ok = inference_service.wait_ready(dep, timeout=10)
@@ -274,9 +293,13 @@ def _model_downloads(db):
 
 
 def _gc_metrics(db):
-    cutoff = int(time.time()) - 6 * 3600
+    """指标保留策略：GPU/系统指标 6h、推理指标 24h、告警事件 7d"""
+    now = int(time.time())
     try:
-        db.query(GpuMetric).filter(GpuMetric.ts < cutoff).delete()
+        db.query(GpuMetric).filter(GpuMetric.ts < now - 6 * 3600).delete()
+        db.query(SystemMetric).filter(SystemMetric.ts < now - 6 * 3600).delete()
+        db.query(InferenceMetric).filter(InferenceMetric.ts < now - 24 * 3600).delete()
+        db.query(AlertEvent).filter(AlertEvent.ts < now - 7 * 24 * 3600).delete()
         db.commit()
     except Exception:
         db.rollback()
@@ -292,13 +315,15 @@ class SchedulerThread(threading.Thread):
         while not self._stop.is_set():
             db = SessionLocal()
             try:
-                gpu_service.tick()
+                gpu_service.tick()          # 节点心跳 + GPU/宿主系统指标入库（内部含 node_offline/online 事件）
                 _reconcile_training(db)
                 _reconcile_quant(db)
                 _reconcile_eval(db)
-                _reconcile_deployments(db)
+                _reconcile_deployments(db)  # 容器丢失判 failed（含 infer_down 事件）
                 _admit_jobs(db)
                 _model_downloads(db)
+                inference_service.scrape_metrics(db)  # 推理引擎指标（约 30s 一次，内部自节流）
+                alert_service.evaluate(db)            # 阈值规则告警（系统/GPU/推理 KV）
                 if int(time.time()) % 3600 < 10:
                     _gc_metrics(db)
             except Exception:

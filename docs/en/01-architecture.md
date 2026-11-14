@@ -53,7 +53,7 @@ All GPU tasks (training/eval/inference) are **not** statically orchestrated by
 compose; the backend creates them dynamically via the Docker API:
 
 1. **Create a placeholder container** (`taskcontainer.create_container`):
-   - The image is the real task image (e.g. `fintune/llama-factory:1.0`) but with
+   - The image is the real task image (e.g. `hiyouga/llamafactory:0.9.5`) but with
      `command=["sleep","infinity"]` — the main process only "holds" the GPU;
    - **GPUs are bound exclusively at creation time**:
      `HostConfig.DeviceRequest(count=gpu_count, capabilities=["gpu"])` —
@@ -141,10 +141,12 @@ hard isolation is guaranteed by the nvidia runtime.
 | `fintune/web:1.0` | platform/frontend | React + AntD (nginx, compose service) |
 | `fintune/argilla:1.0` | images/argilla | Data annotation (compose service) |
 | `fintune/mineru:1.0` | images/mineru | PDF parsing (compose service, 1 GPU) |
-| `fintune/llama-factory:1.0` | images/llama-factory | **Task image**: LF 0.9.3 + torch 2.5.1 + ZeRO configs |
-| `fintune/vllm:1.0` / `fintune/sglang:1.0` | images/vllm / images/sglang | **Task images**: inference engines |
+| `hiyouga/llamafactory:0.9.5` | official (hiyouga) | **Task image**: LLaMA-Factory 0.9.5 official prebuilt (CUDA 12.4 + torch); offline fallback self-build in images/llama-factory |
+| `vllm/vllm-openai:v0.33.0` | official | **Task image**: vLLM inference engine (CUDA 13.5 built-in) |
+| `lmsysorg/sglang:v0.5.23` | official | **Task image**: SGLang inference engine (CUDA 13.0 built-in) |
 | `fintune/evalscope:1.0` | images/evalscope | **Task image**: eval engine + runner.py |
+| `nvidia/dcgm:4.7.1-ubuntu24.04` | official (NVIDIA) | GPU monitoring (open-source image + mounted collect.sh, zero local build) |
 | `rustfs/rustfs:latest` | official | S3 object storage (compose service) |
 
-The task images (last 5) are not compose services; `deploy/build-images.sh`
-builds them all.
+The task images (llamafactory/vllm/sglang/evalscope) are not compose services;
+they are loaded lazily on demand (official images pulled, evalscope self-built).

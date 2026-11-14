@@ -184,7 +184,10 @@
     "chatPh": "输入消息，Enter 发送", "send": "发送", "selectLora": "选择 LoRA 产物", "hotload": "热加载",
     "loaded": "LoRA 已热加载", "loadFail": "加载失败", "unload": "卸载", "noLogs": "(暂无)",
     "curReplicas": "当前副本：{{n}}", "scaleUp": "+1 副本", "scaleDown": "-1 副本",
-    "scaledUp": "已扩容（需空闲 GPU）", "scaledDown": "已缩容"
+    "scaledUp": "已扩容（需空闲 GPU）", "scaledDown": "已缩容",
+    "tabMonitor": "监控", "kvCache": "KV 缓存", "runReqs": "运行中请求",
+    "waitReqs": "排队请求", "avgLatency": "平均延迟", "monEmpty": "暂无监控数据（服务启动后每 30 秒采集一次）",
+    "monHint": "数据来源：引擎指标端点，约 30 秒采集一次，保留 24 小时"
   },
   "cluster": {
     "title": "算力调度与运维", "heartbeat": "心跳 {{ts}}", "gpuTotal": "GPU 总数", "gpuUsed": "占用", "gpuFree": "空闲",
@@ -196,7 +199,11 @@
     "colPriority": "优先级", "top": "置顶", "emptyQueue": "队列为空",
     "runningTitle": "运行中任务", "emptyRunning": "无运行任务", "colStart": "开始",
     "nodeInfo": "节点 {{node}} · 在线部署 {{d}} · 训练中 {{j}} · 故障自愈：GPU agent 心跳 60s 超时自动判离线，关联任务标记失败并可断点续训",
-    "tabNodes": "计算节点", "tabGpus": "GPU 设备", "tabMonitor": "监控大屏", "colNode": "节点", "colIdx": "编号", "colMemTemp": "显存温度", "colClocks": "SM/显存时钟", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降频", "colHealth": "健康度", "colName": "型号", "colTemp": "温度"
+    "tabNodes": "计算节点", "tabGpus": "GPU 设备", "tabMonitor": "监控大屏", "colNode": "节点", "colIdx": "编号", "colMemTemp": "显存温度", "colClocks": "SM/显存时钟", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降频", "colHealth": "健康度", "colName": "型号", "colTemp": "温度",
+    "systemTitle": "宿主系统指标（近 1 小时）", "noSysData": "暂无系统指标数据（gpu-agent 采集中…）", "sysCpu": "CPU",
+    "sysMem": "内存", "sysDisk": "磁盘", "sysLoad": "负载(1分)",
+    "sysNetRx": "网络收", "sysNetTx": "网络发", "sysMemDetail": "内存已用 {{u}}/{{tgb}}GB",
+    "sysDiskDetail": "磁盘已用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} 核"
   },
   "logs": { "title": "日志", "service": "服务", "tail": "行数", "auto": "自动刷新", "searchPh": "过滤关键词", "level": "级别", "all": "全部", "warn": "警告", "error": "错误", "empty": "无日志", "copy": "复制", "copied": "已复制", "download": "下载", "running": "运行中", "stopped": "已停止", "tabAudit": "审计日志", "tabContainer": "运行日志" },
   "storage": { "title": "对象存储", "statusTitle": "存储状态", "enabled": "已启用", "disabled": "未启用（纯本地）", "endpoint": "端点", "bucket": "桶", "objCount": "对象数", "totalBytes": "对象总量", "disk": "数据盘占用", "diskUsed": "已用", "browser": "对象浏览", "queue": "同步队列", "queueEmpty": "队列为空", "colOp": "操作", "colKey": "Key/前缀", "colStatus": "状态", "colError": "错误", "colCreated": "时间", "retry": "重试", "retriedOk": "重试完成", "retriedFail": "重试失败", "clearDone": "清理已完成", "clearFail": "清理失败记录", "delete": "删除", "delConfirm": "删除该前缀下全部对象？", "delOk": "已删除", "delFail": "删除失败", "empty": "（空）", "updated": "更新时间", "back": "上级", "goRoot": "根目录", "disabledTip": "S3 未启用：数据仅存本地磁盘", "opPut": "上传", "opGet": "下载", "opDelete": "删除", "stDone": "成功", "stFailed": "失败", "colSize": "大小", "colTime": "修改时间" , "addBackend": "添加存储后端", "backends": "存储后端", "backendEmpty": "暂无存储后端", "addOk": "已添加", "colType": "类型", "colConfig": "配置", "colCapacity": "容量", "test": "测试", "delBackendConfirm": "确定移除该存储后端？", "pathHost": "宿主路径（容器内可见）", "device": "块设备", "primaryObject": "主对象存储", "typeObject": "对象存储", "typeLocal": "本地", "typeNfs": "NFS", "typeBlock": "块存储" , "endpointPh": "http://rustfs:9000 或 s3 端点" },
@@ -218,7 +225,21 @@
     "colPattern": "正则", "colScope": "作用域", "colEnabled": "启用", "del": "删除？",
     "auditFilter": "按用户名过滤", "colTime": "时间", "colUser": "用户", "colMethod": "方法",
     "colPath": "路径", "colIp": "IP", "colCode": "状态码",
-    "auditColAction": "动作", "auditFilterAction": "按动作", "auditFilterStatus": "结果", "auditFilterMethod": "方法", "auditFilterPath": "路径", "auditOk": "成功", "auditErr": "失败", "auditAll": "全部", "tabSettings": "设置", "langLabel": "语言", "keyModels": "限定模型", "keyModelsHint": "不选表示该 Key 可访问项目内全部模型", "keyScopeAll": "全部模型", "keyScopeN": "限定 {{n}} 个模型"
+    "auditColAction": "动作", "auditFilterAction": "按动作", "auditFilterStatus": "结果", "auditFilterMethod": "方法", "auditFilterPath": "路径", "auditOk": "成功", "auditErr": "失败", "auditAll": "全部", "tabSettings": "设置", "langLabel": "语言", "keyModels": "限定模型", "keyModelsHint": "不选表示该 Key 可访问项目内全部模型", "keyScopeAll": "全部模型", "keyScopeN": "限定 {{n}} 个模型",
+    "tabAlerts": "告警", "alertRules": "告警规则", "newRule": "新建规则",
+    "editRule": "编辑规则", "ruleName": "规则名称", "colKind": "类型",
+    "kindThreshold": "阈值", "kindEvent": "事件", "colMetric": "指标",
+    "colEvent": "事件", "colCond": "条件", "colSeverity": "级别",
+    "sevWarning": "警告", "sevCritical": "严重", "colCooldown": "冷却(秒)",
+    "colChannels": "通道", "mHostCpu": "宿主 CPU", "mHostMem": "宿主内存",
+    "mHostDisk": "宿主磁盘", "mGpuUtil": "GPU 利用率", "mGpuTemp": "GPU 温度",
+    "mGpuMem": "GPU 显存占用", "mKvCache": "推理 KV 缓存", "evNodeOffline": "计算节点离线",
+    "evNodeOnline": "计算节点恢复在线", "evTrainFailed": "训练任务失败", "evEvalFailed": "评测任务失败",
+    "evQuantFailed": "量化任务失败", "evInferDown": "推理服务不可用", "eventsTitle": "告警事件（近 100 条）",
+    "colLevel": "级别", "colTarget": "目标", "colTitle": "标题",
+    "colNotified": "已通知", "testNotify": "测试", "testSent": "测试消息已发送，请查看通道",
+    "testFail": "发送失败", "chWecom": "企业微信机器人", "chEmail": "邮件",
+    "chAuto": "自动（全部已配置通道）"
   },
   "quant": {
     "title": "模型压缩",

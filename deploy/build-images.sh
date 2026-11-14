@@ -24,13 +24,17 @@ build images/evalscope    fintune/evalscope:1.0
 build images/argilla      fintune/argilla:1.0
 # PDF 解析（compose 服务，占 1 张 GPU）
 build images/mineru       fintune/mineru:1.0
-# GPU 监控 Agent（DCGM 容器内采集，compose 服务）
-build images/gpu-agent    fintune/gpu-agent:1.0
+# GPU 监控 Agent：直接用 NVIDIA 开源 nvidia/dcgm 镜像（本地零构建），部署时确保已拉取
+if ! docker image inspect nvidia/dcgm:4.7.1-ubuntu24.04 >/dev/null 2>&1; then
+  echo "==> 拉取 nvidia/dcgm:4.7.1-ubuntu24.04"
+  docker pull nvidia/dcgm:4.7.1-ubuntu24.04
+fi
 
 # 任务引擎镜像（按需，部署时不下载）：
-#   vllm/vllm-openai:v0.33.0      官方开源（CUDA 13.5 内置）
-#   lmsysorg/sglang:v0.5.23       官方开源（CUDA 13.0 内置）
-#   fintune/llama-factory:1.0     自构（images/llama-factory，首次训练任务时构建）
+#   vllm/vllm-openai:v0.33.0        官方开源（CUDA 13.5 内置）
+#   lmsysorg/sglang:v0.5.23         官方开源（CUDA 13.0 内置）
+#   hiyouga/llamafactory:0.9.5      LLaMA-Factory 官方预构建（首次训练任务时拉取；
+#                                   离线/气隔环境可用 images/llama-factory 自构兜底）
 
 echo ""
 echo "平台镜像就绪："

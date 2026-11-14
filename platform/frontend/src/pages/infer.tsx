@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, Drawer,
-  Descriptions, message, Popconfirm, Card, Tabs,
+  Descriptions, message, Popconfirm, Card, Tabs, Row, Col, Statistic,
 } from 'antd'
 import {
   PlusOutlined, PoweroffOutlined, PlayCircleOutlined, CopyOutlined,
   CodeOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
+import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
@@ -26,6 +27,7 @@ export default function Inference() {
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [addAda, setAddAda] = useState<any>(null)
+  const [mon, setMon] = useState<any>(null)
   const tp = Form.useWatch('tensor_parallel', form) || 1
   const rep = Form.useWatch('replicas', form) || 1
 
@@ -52,6 +54,17 @@ export default function Inference() {
       api.get(`/api/inference/deployments/${detail.id}`).then((r) => setDetail(r.data)).catch(() => {})
     }, 4000)
     return () => clearInterval(t)
+  }, [detail?.id])
+
+  // 引擎监控（KV 缓存 / 请求数 / 延迟）：15s 轮询
+  useEffect(() => {
+    if (!detail) { setMon(null); return }
+    let stop = false
+    const loadMon = () => api.get(`/api/inference/deployments/${detail.id}/metrics?minutes=60`)
+      .then((r) => { if (!stop) setMon(r.data) }).catch(() => {})
+    loadMon()
+    const x = setInterval(loadMon, 15000)
+    return () => { stop = true; clearInterval(x) }
   }, [detail?.id])
 
   const sendChat = async () => {
@@ -265,6 +278,13 @@ console.log(resp.choices[0].message.content)`
               ),
             },
             {
+              key: 'monitor', label: t('infer.tabMonitor'), children: (
+                <div>
+                  <MonitorPanel mon={mon} />
+                </div>
+              ),
+            },
+            {
               key: 'lora', label: t('infer.tabLora', { n: detail.lora_adapters?.length || 0 }), children: (
                 <div>
                   <Space style={{ marginBottom: 12 }}>
@@ -322,6 +342,42 @@ function InferSection({ title, children }: { title: string, children: React.Reac
         <span style={{ fontWeight: 600 }}>{title}</span>
       </div>
       {children}
+    </div>
+  )
+}
+
+/** 引擎监控：KV 缓存 / 运行中·排队请求 / 平均延迟（约 30s 采集一次，保留 24h） */
+function MonitorPanel({ mon }: { mon: any }) {
+  const { t, i18n: ti18n } = useTranslation()
+  const ser = mon?.series || []
+  const last = ser[ser.length - 1]
+  const data = ser.map((x: any) => ({
+    t: new Date(x.ts * 1000).toLocaleTimeString(ti18n.language, { hour: '2-digit', minute: '2-digit' }),
+    kv: Math.round(x.kv * 10) / 10, running: x.running, waiting: x.waiting,
+  }))
+  if (!last) return <span style={{ color: '#999' }}>{t('infer.monEmpty')}</span>
+  return (
+    <div>
+      <p style={{ color: '#888', fontSize: 12, marginTop: 0 }}>{t('infer.monHint')}</p>
+      <Row gutter={16}>
+        <Col span={6}><Statistic title={t('infer.kvCache')} value={last.kv} suffix="%" precision={1} valueStyle={{ color: last.kv > 90 ? '#cf1322' : undefined }} /></Col>
+        <Col span={6}><Statistic title={t('infer.runReqs')} value={last.running} /></Col>
+        <Col span={6}><Statistic title={t('infer.waitReqs')} value={last.waiting} valueStyle={{ color: last.waiting > 0 ? '#fa8c16' : undefined }} /></Col>
+        <Col span={6}><Statistic title={t('infer.avgLatency')} value={last.latency_ms} suffix="ms" precision={0} /></Col>
+      </Row>
+      <div style={{ marginTop: 12 }}>
+        <ResponsiveContainer width="100%" height={240}>
+          <LineChart data={data}>
+            <XAxis dataKey="t" fontSize={11} />
+            <YAxis yAxisId="l" domain={[0, 100]} fontSize={11} />
+            <YAxis yAxisId="r" orientation="right" allowDecimals={false} fontSize={11} />
+            <RTooltip /><Legend />
+            <Line yAxisId="l" dataKey="kv" name={t('infer.kvCache')} stroke="#1677ff" dot={false} />
+            <Line yAxisId="r" dataKey="running" name={t('infer.runReqs')} stroke="#52c41a" dot={false} />
+            <Line yAxisId="r" dataKey="waiting" name={t('infer.waitReqs')} stroke="#fa8c16" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   )
 }

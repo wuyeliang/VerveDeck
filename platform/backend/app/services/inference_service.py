@@ -8,6 +8,7 @@
 """
 import json
 import os
+import re
 import time
 import logging
 import threading
@@ -15,7 +16,7 @@ import threading
 import requests
 
 from ..config import settings
-from ..models import Deployment, ModelAsset
+from ..models import Deployment, ModelAsset, InferenceMetric
 from ..database import SessionLocal
 from . import taskcontainer as tc
 
@@ -229,3 +230,133 @@ def _resolve_model_path(asset: ModelAsset, db) -> str:
         base = db.get(ModelAsset, asset.parent_asset_id) if asset.parent_asset_id else None
         return base.path if base else asset.path
     return asset.path
+
+
+# ---------- 引擎指标抓取（vLLM /metrics、SGLang /metrics 或 /get_server_info 兜底） ----------
+
+_last_scrape = 0.0
+_infer_fail: dict[int, int] = {}
+
+
+def _parse_prom(text: str) -> dict:
+    """Prometheus 文本 → {metric_name: 数值和}（histogram 桶/和/计数字段除外，另行解析）"""
+    out: dict[str, float] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        name = line.split("{")[0].split(" ")[0].strip()
+        if not name or name.endswith(("_bucket", "_sum", "_count", "_created")):
+            continue
+        try:
+            val = float(line.rsplit(" ", 1)[-1])
+        except ValueError:
+            continue
+        out[name] = out.get(name, 0.0) + val
+    return out
+
+
+def _hist_avg(text: str, prefix: str) -> float:
+    """histogram 平均（sum/count），秒 → 毫秒。指标名后直接跟 {labels}，中间无空格"""
+    p = re.escape(prefix)
+    sums = [float(x) for x in re.findall(rf"^{p}_sum\{{[^}}]*\}}\s+([0-9.eE+nan-]+)", text, re.M)]
+    counts = [float(x) for x in re.findall(rf"^{p}_count\{{[^}}]*\}}\s+([0-9.eE+nan-]+)", text, re.M)]
+    if sums and counts and sum(counts) > 0:
+        return sum(sums) / sum(counts) * 1000
+    return 0.0
+
+
+def _find_keys(obj, mapping: dict[str, str]) -> dict:
+    """递归遍历 JSON 取指定 key（SGLang /get_server_info 结构随版本变化，按 key 名兜底）"""
+    out: dict[str, float] = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in mapping and isinstance(v, (int, float)) and not isinstance(v, bool):
+                    out.setdefault(mapping[k], float(v))
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+
+    walk(obj)
+    return out
+
+
+def _scrape_one(dep: Deployment) -> dict | None:
+    """抓取单个部署的引擎指标 → {kv, running, waiting, latency_ms}；失败返回 None"""
+    base = _ep_url(dep, "")  # http://ip:8000
+    try:
+        r = requests.get(base + "/metrics", timeout=5)
+        if r.status_code == 200 and r.text:
+            vals = _parse_prom(r.text)
+            if dep.engine == "vllm":
+                kv = vals.get("vllm:kv_cache_usage_perc")
+                if kv is None:
+                    kv = vals.get("vllm_gpu_cache_usage")  # 旧版 vLLM 指标名
+                if kv is None:
+                    kv = 0.0
+                return {
+                    "kv": min(100.0, max(0.0, kv) * 100),
+                    "running": vals.get("vllm:num_requests_running", 0),
+                    "waiting": vals.get("vllm:num_requests_waiting", 0),
+                    "latency_ms": _hist_avg(r.text, "vllm:e2e_request_latency_seconds"),
+                }
+            kv = vals.get("sglang:token_usage")
+            if kv is not None:
+                return {
+                    "kv": min(100.0, max(0.0, kv) * 100),
+                    "running": vals.get("sglang:num_running_requests", 0),
+                    "waiting": vals.get("sglang:num_queue_requests", 0),
+                    "latency_ms": 0,
+                }
+    except Exception:
+        pass
+    # SGLang 兜底：/metrics 不可用或指标名变化时查 /get_server_info
+    if dep.engine == "sglang":
+        try:
+            r = requests.get(base + "/get_server_info", timeout=5)
+            if r.status_code == 200:
+                found = _find_keys(r.json(), {
+                    "token_usage": "kv", "num_running_reqs": "running", "num_queue_reqs": "waiting",
+                })
+                if found.get("kv") is not None:
+                    return {
+                        "kv": min(100.0, max(0.0, found["kv"]) * 100),
+                        "running": found.get("running", 0),
+                        "waiting": found.get("waiting", 0),
+                        "latency_ms": 0,
+                    }
+        except Exception:
+            pass
+    return None
+
+
+def scrape_metrics(db, force: bool = False):
+    """调度器每 tick 调用：约 30s 抓取一次运行中部署的引擎指标入库；
+    连续 3 次抓取失败触发 infer_down 事件（引擎挂死但容器存活时容器探活发现不了）。"""
+    global _last_scrape
+    now = time.time()
+    if not force and now - _last_scrape < 30:
+        return
+    _last_scrape = now
+    from . import alert_service
+    deps = db.query(Deployment).filter(Deployment.status == "running").all()
+    for dep in deps:
+        if not dep.endpoint:
+            continue
+        m = _scrape_one(dep)
+        if m is None:
+            n = _infer_fail.get(dep.id, 0) + 1
+            _infer_fail[dep.id] = n
+            if n == 3:
+                alert_service.trigger_event(db, "infer_down", f"deploy:{dep.id}",
+                                            f"推理服务不可用：{dep.name}",
+                                            f"引擎指标端点 {dep.endpoint} 连续 3 次不可达（引擎可能挂死），请查看部署日志")
+            continue
+        _infer_fail[dep.id] = 0
+        db.add(InferenceMetric(deployment_id=dep.id, ts=int(now), engine=dep.engine,
+                               kv_cache_pct=m["kv"], num_running=int(m["running"]),
+                               num_waiting=int(m["waiting"]), avg_latency_ms=m["latency_ms"]))
+    db.commit()

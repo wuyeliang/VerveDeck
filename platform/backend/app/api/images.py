@@ -1,6 +1,7 @@
 """镜像管理：平台引擎镜像清单 + 版本探测 + 拉取/重建 + 自定义镜像（国产芯片等）
 
-- 官方开源镜像（vllm/vllm-openai、lmsysorg/sglang）：refresh = docker pull
+- 官方开源镜像（vllm/vllm-openai、lmsysorg/sglang、hiyouga/llamafactory、
+  nvidia/dcgm）：refresh = docker pull
 - 自构镜像（fintune/*）：refresh = 以 compose 挂载的 /repo（宿主源码树，只读）
   为上下文通过 docker socket 流式构建
 - 版本探测：一次性容器内 import 关键包读版本号，结果缓存 5 分钟
@@ -29,9 +30,10 @@ PLATFORM = [
      'python3 -c "import sglang,torch;print(sglang.__version__+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'),
     ("llamafactory", lambda: settings.images_train, "LLaMA-Factory 训练引擎", "SFT/DPO/RLHF/导出",
      'python3 -c "import importlib.metadata as m,torch;print(m.version(\'llamafactory\')+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'),
-    ("gpu-agent", lambda: "fintune/gpu-agent:1.0", "GPU 监控 Agent", "DCGM 采集（温度/功耗/ECC/XID）",
-     # dcgmi 非 TTY 下不输出版本，改查 dpkg 包版本（内层单引号防 shell 展开 ${Version}）
-     "dpkg-query -W -f 'DCGM ${Version}' datacenter-gpu-manager 2>/dev/null"),
+    ("gpu-agent", lambda: "nvidia/dcgm:4.7.1-ubuntu24.04", "GPU 监控 Agent", "DCGM 采集（开源 nvidia/dcgm 镜像 + collect.sh 挂载）",
+     # dcgmi 非 TTY 下不输出版本，改查 dpkg 包版本（内层单引号防 shell 展开 ${Version}）；
+     # DCGM 4.x 包拆分为 nv-hostengine/dcgmi（3.x 为 datacenter-gpu-manager），双查兜底
+     "dpkg-query -W -f 'DCGM ${Version}' nv-hostengine 2>/dev/null || dpkg-query -W -f 'DCGM ${Version}' datacenter-gpu-manager 2>/dev/null"),
 ]
 
 _probe_cache: dict[str, tuple[float, str]] = {}
@@ -95,7 +97,7 @@ def list_images(user=Depends(_admin)):
     for key, img_fn, comp, desc, cmd in PLATFORM:
         image = img_fn()
         info = _image_info(image)
-        source = "official" if image.split("/")[0] in ("vllm", "lmsysorg") else "selfbuilt"
+        source = "official" if image.split("/")[0] in ("vllm", "lmsysorg", "hiyouga", "nvidia") else "selfbuilt"
         items.append({
             "key": key, "image": image, "component": comp, "desc": desc,
             "source": source, "exists": info["exists"], "size": info["size"],

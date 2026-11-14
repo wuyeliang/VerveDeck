@@ -184,7 +184,10 @@
     "chatPh": "メッセージを入力、Enter で送信", "send": "送信", "selectLora": "LoRA 成果物を選択", "hotload": "ホットロード",
     "loaded": "LoRA をホットロードしました", "loadFail": "ロードに失敗しました", "unload": "アンロード", "noLogs": "(なし)",
     "curReplicas": "現在のレプリカ：{{n}}", "scaleUp": "+1 レプリカ", "scaleDown": "-1 レプリカ",
-    "scaledUp": "スケールアウトしました（空き GPU が必要）", "scaledDown": "スケールインしました"
+    "scaledUp": "スケールアウトしました（空き GPU が必要）", "scaledDown": "スケールインしました",
+    "tabMonitor": "監視", "kvCache": "KVキャッシュ", "runReqs": "実行中リクエスト",
+    "waitReqs": "待ちリクエスト", "avgLatency": "平均遅延", "monEmpty": "監視データなし（サービス起動後 30 秒ごとに収集）",
+    "monHint": "出典：エンジン metrics エンドポイント、約 30 秒間隔、24 時間保持"
   },
   "cluster": {
     "title": "計算スケジューリングと運用", "heartbeat": "ハートビート {{ts}}", "gpuTotal": "GPU 総数", "gpuUsed": "使用中", "gpuFree": "空き",
@@ -196,7 +199,11 @@
     "colPriority": "優先度", "top": "最上位", "emptyQueue": "キューは空です",
     "runningTitle": "実行中ジョブ", "emptyRunning": "実行中ジョブなし", "colStart": "開始",
     "nodeInfo": "ノード {{node}} · オンラインデプロイ {{d}} · トレーニング中 {{j}} · 自動修復：GPU agent ハートビート 60s 超過でオフライン判定、関連ジョブは失敗扱いで再開可能",
-    "tabNodes": "計算ノード", "tabGpus": "GPU デバイス", "tabMonitor": "モニター", "colNode": "ノード", "colIdx": "No.", "colMemTemp": "メモリ温度", "colClocks": "SM/メモリクロック", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "スロットル", "colHealth": "健全性", "colName": "GPU", "colTemp": "温度 (°C)"
+    "tabNodes": "計算ノード", "tabGpus": "GPU デバイス", "tabMonitor": "モニター", "colNode": "ノード", "colIdx": "No.", "colMemTemp": "メモリ温度", "colClocks": "SM/メモリクロック", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "スロットル", "colHealth": "健全性", "colName": "GPU", "colTemp": "温度 (°C)",
+    "systemTitle": "ホストシステム指標（過去1時間）", "noSysData": "システム指標なし（gpu-agent 収集中…）", "sysCpu": "CPU",
+    "sysMem": "メモリ", "sysDisk": "ディスク", "sysLoad": "負荷(1分)",
+    "sysNetRx": "受信", "sysNetTx": "送信", "sysMemDetail": "メモリ使用 {{u}}/{{tgb}}GB",
+    "sysDiskDetail": "ディスク使用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} コア"
   },
   "logs": { "title": "ログ", "service": "サービス", "tail": "行数", "auto": "自動更新", "searchPh": "キーワードで絞り込み", "level": "レベル", "all": "すべて", "warn": "警告", "error": "エラー", "empty": "ログなし", "copy": "コピー", "copied": "コピーしました", "download": "ダウンロード", "running": "実行中", "stopped": "停止中", "tabAudit": "監査ログ", "tabContainer": "コンテナログ" },
   "storage": { "title": "オブジェクトストレージ", "statusTitle": "ストレージ状態", "enabled": "有効", "disabled": "無効（ローカルのみ）", "endpoint": "エンドポイント", "bucket": "バケット", "objCount": "オブジェクト数", "totalBytes": "合計サイズ", "disk": "データディスク使用量", "diskUsed": "使用中", "browser": "オブジェクトブラウザ", "queue": "同期キュー", "queueEmpty": "キューは空です", "colOp": "操作", "colKey": "Key/プレフィックス", "colStatus": "状態", "colError": "エラー", "colCreated": "作成", "retry": "再試行", "retriedOk": "再試行完了", "retriedFail": "再試行失敗", "clearDone": "完了を削除", "clearFail": "失敗を削除", "delete": "削除", "delConfirm": "このプレフィックス配下の全オブジェクトを削除しますか？", "delOk": "削除しました", "delFail": "削除失敗", "empty": "（空）", "updated": "更新日時", "back": "上へ", "goRoot": "ルート", "disabledTip": "S3 無効：データはローカルディスクのみに保存", "opPut": "アップロード", "opGet": "ダウンロード", "opDelete": "削除", "stDone": "完了", "stFailed": "失敗", "colSize": "サイズ", "colTime": "修正日時" , "addBackend": "バックエンドを追加", "backends": "ストレージバックエンド", "backendEmpty": "ストレージバックエンドはまだありません", "addOk": "追加しました", "colType": "種類", "colConfig": "設定", "colCapacity": "容量", "test": "テスト", "delBackendConfirm": "このストレージバックエンドを削除しますか？", "pathHost": "ホストパス（コンテナ内で表示可能）", "device": "ブロックデバイス", "primaryObject": "メインオブジェクトストレージ", "typeObject": "オブジェクト", "typeLocal": "ローカル", "typeNfs": "NFS", "typeBlock": "ブロック" , "endpointPh": "http://rustfs:9000 または S3 エンドポイント" },
@@ -218,7 +225,21 @@
     "colPattern": "正規表現", "colScope": "スコープ", "colEnabled": "有効", "del": "削除しますか？",
     "auditFilter": "ユーザー名で絞り込み", "colTime": "時間", "colUser": "ユーザー", "colMethod": "メソッド",
     "colPath": "パス", "colIp": "IP", "colCode": "ステータス",
-    "auditColAction": "アクション", "auditFilterAction": "アクションで", "auditFilterStatus": "結果", "auditFilterMethod": "メソッド", "auditFilterPath": "パス", "auditOk": "成功", "auditErr": "失敗", "auditAll": "すべて", "tabSettings": "設定", "langLabel": "言語", "keyModels": "モデルを限定", "keyModelsHint": "空欄の場合、プロジェクト内の全モデルにアクセス可能", "keyScopeAll": "全モデル", "keyScopeN": "{{n}} 件のモデルに限定"
+    "auditColAction": "アクション", "auditFilterAction": "アクションで", "auditFilterStatus": "結果", "auditFilterMethod": "メソッド", "auditFilterPath": "パス", "auditOk": "成功", "auditErr": "失敗", "auditAll": "すべて", "tabSettings": "設定", "langLabel": "言語", "keyModels": "モデルを限定", "keyModelsHint": "空欄の場合、プロジェクト内の全モデルにアクセス可能", "keyScopeAll": "全モデル", "keyScopeN": "{{n}} 件のモデルに限定",
+    "tabAlerts": "アラート", "alertRules": "アラートルール", "newRule": "ルール新規",
+    "editRule": "ルール編集", "ruleName": "ルール名", "colKind": "タイプ",
+    "kindThreshold": "しきい値", "kindEvent": "イベント", "colMetric": "指標",
+    "colEvent": "イベント", "colCond": "条件", "colSeverity": "重要度",
+    "sevWarning": "警告", "sevCritical": "重大", "colCooldown": "クールダウン(秒)",
+    "colChannels": "チャネル", "mHostCpu": "ホストCPU", "mHostMem": "ホストメモリ",
+    "mHostDisk": "ホストディスク", "mGpuUtil": "GPU使用率", "mGpuTemp": "GPU温度",
+    "mGpuMem": "GPUメモリ使用", "mKvCache": "推論KVキャッシュ", "evNodeOffline": "ノードオフライン",
+    "evNodeOnline": "ノード復旧", "evTrainFailed": "学習タスク失敗", "evEvalFailed": "評価タスク失敗",
+    "evQuantFailed": "量子化タスク失敗", "evInferDown": "推論サービス利用不可", "eventsTitle": "アラートイベント（直近100件）",
+    "colLevel": "レベル", "colTarget": "対象", "colTitle": "タイトル",
+    "colNotified": "通知済み", "testNotify": "テスト", "testSent": "テストメッセージを送信しました",
+    "testFail": "送信失敗", "chWecom": "WeComボット", "chEmail": "メール",
+    "chAuto": "自動（設定済みすべて）"
   },
   "quant": {
     "title": "モデル量子化",

@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     infer_port_base: int = 8100
     # 推理引擎优先用官方开源镜像（CUDA 随镜像内置，不装宿主机）：
     # vllm/vllm-openai = CUDA 13.5 + vLLM 0.33.0；lmsysorg/sglang = CUDA 13.0 + SGLang 0.5.23
-    images_train: str = "fintune/llama-factory:1.0"  # 官方无预构建镜像，自构（repo Dockerfile）
+    # 训练引擎用 LLaMA-Factory 官方预构建镜像（CUDA 12.4 + torch，免本地编译；
+    # 离线/气隔环境可用 images/llama-factory 的自构 Dockerfile 兜底）
+    images_train: str = "hiyouga/llamafactory:0.9.5"
     images_vllm: str = "vllm/vllm-openai:v0.33.0"
     images_sglang: str = "lmsysorg/sglang:v0.5.23"
     images_eval: str = "fintune/evalscope:1.0"
@@ -25,6 +27,14 @@ class Settings(BaseSettings):
     s3_access_key: str = "rustfsadmin"
     s3_secret_key: str = "rustfsadmin"
     s3_bucket: str = "vervedeck-datasets"
+    # 告警通知通道（留空 = 不启用该通道；规则与收件配置见 系统管理→告警）
+    wecom_webhook: str = ""  # 企业微信群机器人 webhook（https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...）
+    smtp_host: str = ""      # 如 smtp.exmail.qq.com
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""  # 邮箱授权码（非登录密码）
+    smtp_from: str = ""      # 发件人地址（默认同 smtp_user）
+    alert_email_to: str = ""  # 告警收件人，逗号分隔
 
     class Config:
         env_file = ".env"

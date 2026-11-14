@@ -184,7 +184,10 @@
     "chatPh": "輸入訊息，Enter 發送", "send": "發送", "selectLora": "選擇 LoRA 產物", "hotload": "熱加載",
     "loaded": "LoRA 已熱加載", "loadFail": "加載失敗", "unload": "卸載", "noLogs": "(暫無)",
     "curReplicas": "當前副本：{{n}}", "scaleUp": "+1 副本", "scaleDown": "-1 副本",
-    "scaledUp": "已擴容（需空閒 GPU）", "scaledDown": "已縮容"
+    "scaledUp": "已擴容（需空閒 GPU）", "scaledDown": "已縮容",
+    "tabMonitor": "監控", "kvCache": "KV 快取", "runReqs": "執行中請求",
+    "waitReqs": "排隊請求", "avgLatency": "平均延遲", "monEmpty": "暫無監控資料（服務啟動後每 30 秒採集一次）",
+    "monHint": "資料來源：引擎指標端點，約 30 秒採集一次，保留 24 小時"
   },
   "cluster": {
     "title": "算力調度與運維", "heartbeat": "心跳 {{ts}}", "gpuTotal": "GPU 總數", "gpuUsed": "佔用", "gpuFree": "空閒",
@@ -196,7 +199,11 @@
     "colPriority": "優先級", "top": "置頂", "emptyQueue": "隊列為空",
     "runningTitle": "運行中任務", "emptyRunning": "無運行任務", "colStart": "開始",
     "nodeInfo": "節點 {{node}} · 在線部署 {{d}} · 訓練中 {{j}} · 故障自愈：GPU agent 心跳 60s 超時自動判離線，關聯任務標記失敗並可斷點續訓",
-    "tabNodes": "計算節點", "tabGpus": "GPU 設備", "tabMonitor": "監控大屏", "colNode": "節點", "colIdx": "編號", "colMemTemp": "顯存溫度", "colClocks": "SM/顯存時鐘", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降頻", "colHealth": "健康度", "colName": "型號", "colTemp": "溫度"
+    "tabNodes": "計算節點", "tabGpus": "GPU 設備", "tabMonitor": "監控大屏", "colNode": "節點", "colIdx": "編號", "colMemTemp": "顯存溫度", "colClocks": "SM/顯存時鐘", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降頻", "colHealth": "健康度", "colName": "型號", "colTemp": "溫度",
+    "systemTitle": "主機系統指標（近 1 小時）", "noSysData": "尚無系統指標資料（gpu-agent 採集中…）", "sysCpu": "CPU",
+    "sysMem": "記憶體", "sysDisk": "磁碟", "sysLoad": "負載(1分)",
+    "sysNetRx": "網路收", "sysNetTx": "網路發", "sysMemDetail": "記憶體已用 {{u}}/{{tgb}}GB",
+    "sysDiskDetail": "磁碟已用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} 核心"
   },
   "logs": { "title": "日誌", "service": "服務", "tail": "行數", "auto": "自動重新整理", "searchPh": "過濾關鍵字", "level": "級別", "all": "全部", "warn": "警告", "error": "錯誤", "empty": "無日誌", "copy": "複製", "copied": "已複製", "download": "下載", "running": "運行中", "stopped": "已停止", "tabAudit": "審計日誌", "tabContainer": "運行日誌" },
   "storage": { "title": "物件儲存", "statusTitle": "儲存狀態", "enabled": "已啟用", "disabled": "未啟用（純本地）", "endpoint": "端點", "bucket": "桶", "objCount": "物件數", "totalBytes": "物件總量", "disk": "資料盤佔用", "diskUsed": "已用", "browser": "物件瀏覽", "queue": "同步佇列", "queueEmpty": "佇列為空", "colOp": "操作", "colKey": "Key/前綴", "colStatus": "狀態", "colError": "錯誤", "colCreated": "時間", "retry": "重試", "retriedOk": "重試完成", "retriedFail": "重試失敗", "clearDone": "清理已完成", "clearFail": "清理失敗記錄", "delete": "刪除", "delConfirm": "刪除該前綴下全部物件？", "delOk": "已刪除", "delFail": "刪除失敗", "empty": "（空）", "updated": "更新時間", "back": "上級", "goRoot": "根目錄", "disabledTip": "S3 未啟用：資料僅存本地磁碟", "opPut": "上傳", "opGet": "下載", "opDelete": "刪除", "stDone": "成功", "stFailed": "失敗", "colSize": "大小", "colTime": "修改時間" , "addBackend": "添加儲存後端", "backends": "儲存後端", "backendEmpty": "暫無儲存後端", "addOk": "已添加", "colType": "類型", "colConfig": "配置", "colCapacity": "容量", "test": "測試", "delBackendConfirm": "確定要移除該儲存後端嗎？", "pathHost": "宿主路徑（容器內可見）", "device": "區塊裝置", "primaryObject": "主物件儲存", "typeObject": "物件儲存", "typeLocal": "本地", "typeNfs": "NFS", "typeBlock": "區塊儲存" , "endpointPh": "http://rustfs:9000 或 s3 端點" },
@@ -218,7 +225,21 @@
     "colPattern": "正則", "colScope": "作用域", "colEnabled": "啟用", "del": "刪除？",
     "auditFilter": "按用戶名過濾", "colTime": "時間", "colUser": "用戶", "colMethod": "方法",
     "colPath": "路徑", "colIp": "IP", "colCode": "狀態碼",
-    "auditColAction": "動作", "auditFilterAction": "依動作", "auditFilterStatus": "結果", "auditFilterMethod": "方法", "auditFilterPath": "路徑", "auditOk": "成功", "auditErr": "失敗", "auditAll": "全部", "tabSettings": "設定", "langLabel": "語言", "keyModels": "限定模型", "keyModelsHint": "不選表示該 Key 可訪問項目內全部模型", "keyScopeAll": "全部模型", "keyScopeN": "限定 {{n}} 個模型"
+    "auditColAction": "動作", "auditFilterAction": "依動作", "auditFilterStatus": "結果", "auditFilterMethod": "方法", "auditFilterPath": "路徑", "auditOk": "成功", "auditErr": "失敗", "auditAll": "全部", "tabSettings": "設定", "langLabel": "語言", "keyModels": "限定模型", "keyModelsHint": "不選表示該 Key 可訪問項目內全部模型", "keyScopeAll": "全部模型", "keyScopeN": "限定 {{n}} 個模型",
+    "tabAlerts": "告警", "alertRules": "告警規則", "newRule": "新建規則",
+    "editRule": "編輯規則", "ruleName": "規則名稱", "colKind": "類型",
+    "kindThreshold": "閾值", "kindEvent": "事件", "colMetric": "指標",
+    "colEvent": "事件", "colCond": "條件", "colSeverity": "級別",
+    "sevWarning": "警告", "sevCritical": "嚴重", "colCooldown": "冷卻(秒)",
+    "colChannels": "通道", "mHostCpu": "主機 CPU", "mHostMem": "主機記憶體",
+    "mHostDisk": "主機磁碟", "mGpuUtil": "GPU 使用率", "mGpuTemp": "GPU 溫度",
+    "mGpuMem": "GPU 顯存佔用", "mKvCache": "推理 KV 快取", "evNodeOffline": "運算節點離線",
+    "evNodeOnline": "運算節點恢復線上", "evTrainFailed": "訓練任務失敗", "evEvalFailed": "評測任務失敗",
+    "evQuantFailed": "量化任務失敗", "evInferDown": "推理服務不可用", "eventsTitle": "告警事件（近 100 筆）",
+    "colLevel": "級別", "colTarget": "目標", "colTitle": "標題",
+    "colNotified": "已通知", "testNotify": "測試", "testSent": "測試訊息已發送，請查看通道",
+    "testFail": "發送失敗", "chWecom": "企業微信機器人", "chEmail": "郵件",
+    "chAuto": "自動（全部已設定通道）"
   },
   "quant": {
     "title": "模型壓縮",

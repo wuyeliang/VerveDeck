@@ -153,6 +153,48 @@ def test_build_config_sft_lora(sdb, tmp_path):
     assert info["ds1"]["formatting"] == "alpaca"
 
 
+def test_write_config_downgrade_report_to(sdb, tmp_path, monkeypatch):
+    """官方镜像无 tensorboard：write_config 降级为 none（build_config 展示值不受影响）"""
+    job = _seed_job(sdb, tmp_path)
+    monkeypatch.setattr(ts, "image_has_tensorboard", lambda image: False)
+    assert ts.build_config(job, sdb)["report_to"] == "tensorboard"
+    import yaml
+    d = yaml.safe_load(open(ts.write_config(job, sdb)))
+    assert d["report_to"] == "none"
+
+
+def test_write_config_keep_report_to(sdb, tmp_path, monkeypatch):
+    """自构镜像装有 tensorboard：上报保持不变"""
+    job = _seed_job(sdb, tmp_path)
+    monkeypatch.setattr(ts, "image_has_tensorboard", lambda image: True)
+    import yaml
+    assert yaml.safe_load(open(ts.write_config(job, sdb)))["report_to"] == "tensorboard"
+
+
+def test_read_metrics_trainer_state_fallback(tmp_path):
+    """无 tfevents 时兜底解析 checkpoint-*/trainer_state.json（取步数最大的）"""
+    from app.tfevents import read_metrics
+    import json as _json
+    jobdir = tmp_path / "job1"
+    (jobdir / "runs").mkdir(parents=True)
+    ck = jobdir / "ckpt"
+    for step in (2, 10):
+        (ck / f"checkpoint-{step}").mkdir(parents=True)
+    (ck / "checkpoint-2" / "trainer_state.json").write_text(_json.dumps(
+        {"log_history": [{"loss": 0.9, "learning_rate": 1e-4, "epoch": 0.1, "step": 2}]}))
+    (ck / "checkpoint-10" / "trainer_state.json").write_text(_json.dumps(
+        {"log_history": [
+            {"loss": 0.9, "learning_rate": 1e-4, "epoch": 0.1, "step": 2},
+            {"loss": 0.5, "learning_rate": 5e-5, "epoch": 0.5, "step": 5},
+            {"loss": 0.3, "learning_rate": 1e-6, "epoch": 0.9, "step": 10},
+        ]}))
+    m = read_metrics(str(jobdir / "runs"))
+    assert m["loss"] == [[2, 0.9], [5, 0.5], [10, 0.3]]
+    assert m["learning_rate"][0][1] == 0.0001
+    assert len(m["epoch"]) == 3
+    assert read_metrics(str(tmp_path / "missing")) == {}
+
+
 def test_build_config_dpo_pref(sdb, tmp_path):
     job = _seed_job(sdb, tmp_path, stage="dpo", dsvids=[1])
     v = sdb.get(M.DatasetVersion, 1)

@@ -55,10 +55,14 @@ def _discover_env() -> tuple[int, int, int]:
     r.raise_for_status()
     rows = r.json()
     ready = [a for a in rows if a["status"] == "ready"]
-    if not (ready or rows):
+    # API 测试套件会在默认项目注册 1 字节假模型（500m* 前缀），按体积过滤出真实
+    # 基座（真实模型 ≥ 数百 MB；假资产 size_bytes ≤ 几 KB），防止误选假资产训练
+    real = [a for a in ready if (a.get("size_bytes") or 0) >= 10_000_000]
+    pick = (real or ready or rows)
+    if not pick:
         raise RuntimeError("默认项目缺少基座模型资产，请先完成基座初始化"
                            "（POST /api/models/base 并等待下载 ready）")
-    asset = (ready or rows)[0]["id"]
+    asset = pick[0]["id"]
 
     r = requests.get(f"{BASE}/api/inference/deployments", params={"project_id": dp},
                      headers=H(tok), timeout=15)

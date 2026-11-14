@@ -6,9 +6,10 @@
 - 断点续训：基于输出目录中的 checkpoint-xxx 新建任务
 """
 import json
+import logging
 import os
 import glob
-import shutil
+import uuid
 
 import yaml
 
@@ -18,12 +19,87 @@ from ..database import SessionLocal
 from . import taskcontainer as tc
 from . import dataset_service as ds
 
+log = logging.getLogger(__name__)
+
 STAGE_MAP = {"cpt": "pretrain", "pretrain": "pretrain", "sft": "sft", "dpo": "dpo", "export": "export"}
+
+# 训练镜像 tensorboard 可用性探测缓存（image -> bool，每镜像只探测一次）
+_tb_probe_cache: dict[str, bool] = {}
+
+
+def image_has_tensorboard(image: str) -> bool:
+    """探测训练镜像内是否可 import tensorboard（按镜像名缓存，探测开销约数秒）。
+
+    官方预构建镜像（hiyouga/llamafactory）未安装 tensorboard，此时 report_to=tensorboard
+    会在 transformers TensorBoardCallback 初始化处直接 RuntimeError。探测失败
+    （镜像未就绪/docker 异常等）按「不可用」保守处理。
+    """
+    if image in _tb_probe_cache:
+        return _tb_probe_cache[image]
+    ok = False
+    name = f"ft-tb-probe-{uuid.uuid4().hex[:8]}"
+    try:
+        client = tc.docker_client()
+        cid = client.api.create_container(
+            image, command=["python3", "-c", "import tensorboard"],
+            entrypoint=["python3"], name=name, stdout=False, stderr=False)
+        client.api.start(cid)
+        res = client.api.wait(cid, timeout=120)
+        ok = res.get("StatusCode", -1) == 0
+    except Exception as e:
+        log.warning("tensorboard 探测失败 image=%s: %s", image, e)
+    finally:
+        tc.remove_container(name, force=True)
+    _tb_probe_cache[image] = ok
+    if not ok:
+        log.warning("训练镜像 %s 无 tensorboard，report_to=tensorboard/all 将降级为 none", image)
+    return ok
 
 
 def job_dir(jid: int) -> str:
     """训练任务工作目录：/data/jobs/<id>/（config.yaml / run.log / ckpt / runs / merged）"""
     return os.path.join(settings.data_dir, "jobs", str(jid))
+
+
+# DeepSpeed ZeRO 配置模板（内嵌，替代原镜像内 /workspace/ds_*.json 拷贝，
+# 兼容官方预构建镜像；batch/accum 用 "auto" 由 LF 依据 per_device 配置回填）
+DEEPSPEED_CONFIGS: dict[str, dict] = {
+    "zero2": {
+        "train_batch_size": "auto",
+        "train_micro_batch_size_per_gpu": "auto",
+        "gradient_accumulation_steps": "auto",
+        "gradient_clipping": "auto",
+        "steps_per_print": 2000,
+        "wall_clock_breakdown": False,
+        "zero_optimization": {
+            "stage": 2,
+            "allgather_partitions": True,
+            "allgather_bucket_size": 2e8,
+            "overlap_comm": True,
+            "reduce_scatter": True,
+            "reduce_bucket_size": 2e8,
+            "contiguous_gradients": True,
+        },
+    },
+    "zero3": {
+        "train_batch_size": "auto",
+        "train_micro_batch_size_per_gpu": "auto",
+        "gradient_accumulation_steps": "auto",
+        "gradient_clipping": "auto",
+        "steps_per_print": 2000,
+        "zero_optimization": {
+            "stage": 3,
+            "overlap_comm": True,
+            "contiguous_gradients": True,
+            "reduce_bucket_size": 2e8,
+            "stage3_prefetch_bucket_size": 2e8,
+            "stage3_param_persistence_threshold": 1e6,
+            "stage3_max_live_parameters": 1e9,
+            "stage3_max_reuse_distance": 1e9,
+            "stage3_gather_16bit_weights_on_model_save": True,
+        },
+    },
+}
 
 # ---------------------------------------------------------------------------
 # LLaMA-Factory 全量训练参数面（对齐 WebUI 页面，key 与 LF 0.9.3 参数一一对应；
@@ -339,11 +415,13 @@ def build_config(job: TrainingJob, db) -> dict:
         with open(os.path.join(job_dir(job.id), "dataset_info.json"), "w", encoding="utf-8") as f:
             json.dump(dataset_info, f, ensure_ascii=False, indent=1)
 
-    # DeepSpeed
-    if job.deepspeed in ("zero2", "zero3"):
-        src = f"/workspace/ds_{job.deepspeed}.json"
+    # DeepSpeed：模板内嵌于后端（不依赖镜像内 /workspace/ds_*.json，兼容官方预构建镜像），
+    # 按需写出到任务工作目录（容器内 /data/jobs/<id>/ 可见）
+    if job.deepspeed in DEEPSPEED_CONFIGS:
         dst = os.path.join(job_dir(job.id), f"ds_{job.deepspeed}.json")
-        shutil.copy(src, dst)
+        os.makedirs(job_dir(job.id), exist_ok=True)
+        with open(dst, "w", encoding="utf-8") as f:
+            json.dump(DEEPSPEED_CONFIGS[job.deepspeed], f, ensure_ascii=False, indent=2)
         d["deepspeed"] = dst
 
     # 内部键最后兜底（防止 extra_args/透传覆盖平台装配值）
@@ -366,6 +444,10 @@ def build_config(job: TrainingJob, db) -> dict:
 
 def write_config(job: TrainingJob, db) -> str:
     d = build_config(job, db)
+    # 官方镜像未装 tensorboard：依赖它的上报自动降级为 none（装过 tensorboard 的
+    # 自构镜像保持原上报；用户显式选 wandb/mlflow 等其他集成不受影响）
+    if d.get("report_to") in ("tensorboard", "all") and not image_has_tensorboard(settings.images_train):
+        d["report_to"] = "none"
     cfg = os.path.join(job_dir(job.id), "config.yaml")
     os.makedirs(job_dir(job.id), exist_ok=True)
     with open(cfg, "w", encoding="utf-8") as f:

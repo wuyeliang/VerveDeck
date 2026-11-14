@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Tabs, Table, Button, Space, Tag, Modal, Form, Input, Select, message, Popconfirm, Card,
+  Tabs, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Card,
 } from 'antd'
 import { PlusOutlined, CopyOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -20,6 +20,7 @@ export default function AdminPanel() {
         { key: 'users', label: t('admin.tabUsers'), children: <UsersTab /> },
         { key: 'keys', label: t('admin.tabKeys'), children: <KeysTab /> },
         { key: 'guard', label: t('admin.tabGuard'), children: <GuardTab /> },
+        { key: 'alerts', label: t('admin.tabAlerts'), children: <AlertsTab /> },
         { key: 'settings', label: t('admin.tabSettings'), children: <SettingsTab /> },
       ]} />
     </div>
@@ -189,6 +190,141 @@ function GuardTab() {
           { title: t('admin.colEnabled'), dataIndex: 'enabled', width: 70, render: (v: boolean) => v ? <Tag color="success">{t('common.yes')}</Tag> : <Tag>{t('common.no')}</Tag> },
           { title: t('common.actions'), width: 80, render: (_: any, r: any) => <Popconfirm title={t('admin.del')} onConfirm={() => api.delete(`/api/admin/guard-rules/${r.id}`).then(load)}><Button size="small" danger>{t('common.delete')}</Button></Popconfirm> },
         ]} />
+    </div>
+  )
+}
+
+/** 告警：阈值规则（系统/GPU/推理）+ 事件规则 + 告警事件 + 通道测试 */
+const METRICS = ['host_cpu', 'host_mem', 'host_disk', 'gpu_util', 'gpu_temp', 'gpu_mem', 'kv_cache']
+const EVENTS = ['node_offline', 'node_online', 'train_failed', 'eval_failed', 'quant_failed', 'infer_down']
+
+function AlertsTab() {
+  const { t, i18n: ti18n } = useTranslation()
+  const [rules, setRules] = useState<any[]>([])
+  const [events, setEvents] = useState<any[]>([])
+  const [open, setOpen] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
+  const [form] = Form.useForm()
+  const kind = Form.useWatch('kind', form)
+  const mLabel = (m: string) => ({
+    host_cpu: t('admin.mHostCpu'), host_mem: t('admin.mHostMem'), host_disk: t('admin.mHostDisk'),
+    gpu_util: t('admin.mGpuUtil'), gpu_temp: t('admin.mGpuTemp'), gpu_mem: t('admin.mGpuMem'),
+    kv_cache: t('admin.mKvCache'),
+  }[m] || m)
+  const eLabel = (e: string) => ({
+    node_offline: t('admin.evNodeOffline'), node_online: t('admin.evNodeOnline'),
+    train_failed: t('admin.evTrainFailed'), eval_failed: t('admin.evEvalFailed'),
+    quant_failed: t('admin.evQuantFailed'), infer_down: t('admin.evInferDown'),
+  }[e] || e)
+
+  const load = () => {
+    api.get('/api/admin/alerts/rules').then((r) => setRules(r.data)).catch(() => {})
+    api.get('/api/admin/alerts/events?limit=100').then((r) => setEvents(r.data.items || [])).catch(() => {})
+  }
+  useEffect(() => { load(); const x = setInterval(load, 10000); return () => clearInterval(x) }, [])
+
+  const openModal = (r?: any) => {
+    form.resetFields()
+    if (r) { setEditId(r.id); form.setFieldsValue(r) }
+    else { setEditId(null); form.setFieldsValue({ kind: 'threshold', op: '>', threshold: 0, cooldown: 300, severity: 'warning', channels: [], enabled: true }) }
+    setOpen(true)
+  }
+
+  const submit = async () => {
+    const v = await form.validateFields()
+    if (editId) await api.put(`/api/admin/alerts/rules/${editId}`, v)
+    else await api.post('/api/admin/alerts/rules', v)
+    message.success(t('admin.created')); setOpen(false); load()
+  }
+
+  const sevTag = (v: string) => v === 'critical' ? <Tag color="error">{t('admin.sevCritical')}</Tag> : <Tag color="warning">{t('admin.sevWarning')}</Tag>
+
+  return (
+    <div>
+      <Card size="small" title={t('admin.alertRules')} style={{ marginBottom: 16 }}
+        extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => openModal()}>{t('admin.newRule')}</Button>}>
+        <Table size="small" rowKey="id" dataSource={rules} pagination={false}
+          columns={[
+            { title: t('admin.ruleName'), dataIndex: 'name', width: 180, ellipsis: true },
+            { title: t('admin.colKind'), dataIndex: 'kind', width: 80, render: (v: string) => v === 'event' ? <Tag>{t('admin.kindEvent')}</Tag> : <Tag color="blue">{t('admin.kindThreshold')}</Tag> },
+            {
+              title: t('admin.colMetric'), width: 170, render: (_: any, r: any) =>
+                r.kind === 'event' ? eLabel(r.event) : mLabel(r.metric),
+            },
+            { title: t('admin.colCond'), width: 130, render: (_: any, r: any) => r.kind === 'threshold' ? `${r.op} ${r.threshold}` : '-' },
+            { title: t('admin.colSeverity'), dataIndex: 'severity', width: 90, render: sevTag },
+            { title: t('admin.colCooldown'), dataIndex: 'cooldown', width: 90, render: (v: number) => `${v}s` },
+            {
+              title: t('admin.colChannels'), dataIndex: 'channels', width: 150, render: (c: string[]) => (!c || !c.length)
+                ? <Tag>{t('admin.chAuto')}</Tag>
+                : <>{c.includes('wecom') && <Tag color="green">{t('admin.chWecom')}</Tag>}{c.includes('email') && <Tag color="blue">{t('admin.chEmail')}</Tag>}</>,
+            },
+            { title: t('common.status'), dataIndex: 'enabled', width: 80, render: (v: boolean) => v ? <Tag color="success">{t('common.enabled')}</Tag> : <Tag>{t('common.disabled')}</Tag> },
+            {
+              title: t('common.actions'), width: 170, render: (_: any, r: any) => (
+                <Space size={4}>
+                  <Button size="small" onClick={() => openModal(r)}>{t('admin.editRule')}</Button>
+                  <Button size="small" onClick={async () => {
+                    const res = await api.post(`/api/admin/alerts/rules/${r.id}/test`)
+                    if (res.data.ok) message.success(t('admin.testSent'))
+                    else message.error(res.data.error || t('admin.testFail'))
+                  }}>{t('admin.testNotify')}</Button>
+                  <Popconfirm title={t('admin.del')} onConfirm={() => api.delete(`/api/admin/alerts/rules/${r.id}`).then(load)}>
+                    <Button size="small" danger>{t('common.delete')}</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]} />
+      </Card>
+      <Card size="small" title={t('admin.eventsTitle')}>
+        <Table size="small" rowKey="id" dataSource={events} pagination={false} locale={{ emptyText: '-' }}
+          columns={[
+            { title: t('admin.colTime'), width: 160, render: (_: any, r: any) => new Date(r.ts * 1000).toLocaleString(ti18n.language) },
+            { title: t('admin.colLevel'), dataIndex: 'level', width: 90, render: sevTag },
+            { title: t('admin.colTarget'), dataIndex: 'target', width: 110 },
+            { title: t('admin.colTitle'), dataIndex: 'title', ellipsis: true },
+            { title: t('admin.colNotified'), dataIndex: 'notified', width: 90, render: (v: boolean) => v ? <Tag color="success">{t('common.yes')}</Tag> : <Tag>{t('common.no')}</Tag> },
+          ]} />
+      </Card>
+      <Modal title={editId ? t('admin.editRule') : t('admin.newRule')} open={open} onCancel={() => setOpen(false)} onOk={submit} width={520}>
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label={t('admin.ruleName')} rules={[{ required: true }]}><Input maxLength={128} /></Form.Item>
+          <Form.Item name="kind" label={t('admin.colKind')}>
+            <Select options={[{ value: 'threshold', label: t('admin.kindThreshold') }, { value: 'event', label: t('admin.kindEvent') }]} />
+          </Form.Item>
+          {kind !== 'event' && (
+            <Space.Compact block style={{ display: 'flex', gap: 8 }}>
+              <Form.Item name="metric" style={{ flex: 2 }} rules={[{ required: true }]}>
+                <Select options={METRICS.map((m) => ({ value: m, label: mLabel(m) }))} />
+              </Form.Item>
+              <Form.Item name="op" style={{ flex: 1 }} rules={[{ required: true }]}>
+                <Select options={[{ value: '>', label: '>' }, { value: '>=', label: '>=' }, { value: '<', label: '<' }, { value: '<=', label: '<=' }]} />
+              </Form.Item>
+              <Form.Item name="threshold" style={{ flex: 1 }} rules={[{ required: true }]}>
+                <InputNumber style={{ width: '100%' }} min={0} step={1} />
+              </Form.Item>
+            </Space.Compact>
+          )}
+          {kind === 'event' && (
+            <Form.Item name="event" label={t('admin.colEvent')} rules={[{ required: true }]}>
+              <Select options={EVENTS.map((e) => ({ value: e, label: eLabel(e) }))} />
+            </Form.Item>
+          )}
+          <Space.Compact block style={{ display: 'flex', gap: 8 }}>
+            <Form.Item name="severity" style={{ flex: 1 }}>
+              <Select options={[{ value: 'warning', label: t('admin.sevWarning') }, { value: 'critical', label: t('admin.sevCritical') }]} />
+            </Form.Item>
+            <Form.Item name="cooldown" style={{ flex: 1 }}><InputNumber style={{ width: '100%' }} min={0} step={30} addonAfter="s" /></Form.Item>
+          </Space.Compact>
+          <Form.Item name="channels" label={t('admin.colChannels')} extra={t('admin.chAuto')}>
+            <Select mode="multiple" allowClear options={[{ value: 'wecom', label: t('admin.chWecom') }, { value: 'email', label: t('admin.chEmail') }]} />
+          </Form.Item>
+          <Form.Item name="enabled">
+            <Select options={[{ value: true, label: t('common.enabled') }, { value: false, label: t('common.disabled') }]} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }

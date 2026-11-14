@@ -184,7 +184,10 @@
     "chatPh": "Escriba un mensaje, Enter para enviar", "send": "Enviar", "selectLora": "Seleccionar artefacto LoRA", "hotload": "Recarga en caliente",
     "loaded": "LoRA recargado en caliente", "loadFail": "Error al cargar", "unload": "Desinstalar", "noLogs": "(vacío)",
     "curReplicas": "Réplicas actuales: {{n}}", "scaleUp": "+1 réplica", "scaleDown": "-1 réplica",
-    "scaledUp": "Escalado hacia arriba (requiere GPU libre)", "scaledDown": "Escalado hacia abajo"
+    "scaledUp": "Escalado hacia arriba (requiere GPU libre)", "scaledDown": "Escalado hacia abajo",
+    "tabMonitor": "Monitor", "kvCache": "Caché KV", "runReqs": "Peticiones activas",
+    "waitReqs": "Peticiones en cola", "avgLatency": "Latencia media", "monEmpty": "Sin datos aún (se recopila cada 30 s)",
+    "monHint": "Fuente: endpoint metrics del motor, ~30 s, retenido 24 h"
   },
   "cluster": {
     "title": "Orquestación y operación de cómputo", "heartbeat": "Latido {{ts}}", "gpuTotal": "GPU en total", "gpuUsed": "Ocupadas", "gpuFree": "Libres",
@@ -196,7 +199,11 @@
     "colPriority": "Prioridad", "top": "Promover", "emptyQueue": "Cola vacía",
     "runningTitle": "Tareas en curso", "emptyRunning": "Sin tareas en curso", "colStart": "Inicio",
     "nodeInfo": "Nodo {{node}} · Despliegues en línea {{d}} · En entrenamiento {{j}} · Autocuración: timeout del latido GPU (60 s) marca el nodo offline y las tareas asociadas como fallidas (reanudables)",
-    "tabNodes": "Nodos de cómputo", "tabGpus": "Dispositivos GPU", "tabMonitor": "Monitorización", "colNode": "Nodo", "colIdx": "Idx", "colMemTemp": "Temp. memoria", "colClocks": "Reloj SM/mem", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Límite", "colHealth": "Salud", "colName": "GPU", "colTemp": "Temp. (°C)"
+    "tabNodes": "Nodos de cómputo", "tabGpus": "Dispositivos GPU", "tabMonitor": "Monitorización", "colNode": "Nodo", "colIdx": "Idx", "colMemTemp": "Temp. memoria", "colClocks": "Reloj SM/mem", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Límite", "colHealth": "Salud", "colName": "GPU", "colTemp": "Temp. (°C)",
+    "systemTitle": "Métricas del sistema (1h)", "noSysData": "Aún sin métricas (recopilando gpu-agent…)", "sysCpu": "CPU",
+    "sysMem": "Memoria", "sysDisk": "Disco", "sysLoad": "Carga (1min)",
+    "sysNetRx": "Red rx", "sysNetTx": "Red tx", "sysMemDetail": "Memoria usada {{u}}/{{tgb}}GB",
+    "sysDiskDetail": "Disco usado {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} núcleos"
   },
   "logs": { "title": "Registros", "service": "Servicio", "tail": "Líneas", "auto": "Autoactualizar", "searchPh": "Filtrar palabras clave", "level": "Nivel", "all": "Todo", "warn": "Aviso", "error": "Error", "empty": "Sin registros", "copy": "Copiar", "copied": "Copiado", "download": "Descargar", "running": "En ejecución", "stopped": "Detenido", "tabAudit": "Registro de auditoría", "tabContainer": "Registros de contenedores" },
   "storage": { "title": "Almacenamiento de objetos", "statusTitle": "Estado del almacenamiento", "enabled": "Habilitado", "disabled": "Deshabilitado (solo local)", "endpoint": "Endpoint", "bucket": "Bucket", "objCount": "Objetos", "totalBytes": "Tamaño total", "disk": "Uso del disco de datos", "diskUsed": "Usado", "browser": "Explorador de objetos", "queue": "Cola de sincronización", "queueEmpty": "La cola está vacía", "colOp": "Op.", "colKey": "Key/prefijo", "colStatus": "Estado", "colError": "Error", "colCreated": "Creado", "retry": "Reintentar", "retriedOk": "Reintento ok", "retriedFail": "Reintento fallido", "clearDone": "Limpiar terminadas", "clearFail": "Limpiar fallidas", "delete": "Eliminar", "delConfirm": "¿Eliminar todos los objetos con este prefijo?", "delOk": "Eliminado", "delFail": "Error al eliminar", "empty": "(vacío)", "updated": "Actualizado", "back": "Subir", "goRoot": "Raíz", "disabledTip": "S3 deshabilitado: los datos quedan solo en disco local", "opPut": "Subir", "opGet": "Descargar", "opDelete": "Eliminar", "stDone": "Hecho", "stFailed": "Fallido", "colSize": "Tamaño", "colTime": "Modificado" , "addBackend": "Añadir origen", "backends": "Orígenes de almacenamiento", "backendEmpty": "Sin orígenes de almacenamiento", "addOk": "Añadido", "colType": "Tipo", "colConfig": "Config", "colCapacity": "Capacidad", "test": "Probar", "delBackendConfirm": "¿Eliminar este origen de almacenamiento?", "pathHost": "Ruta del host (visible en el contenedor)", "device": "Disco bloque", "primaryObject": "Objeto principal", "typeObject": "Objetos", "typeLocal": "Local", "typeNfs": "NFS", "typeBlock": "Bloques" , "endpointPh": "http://rustfs:9000 o un endpoint S3" },
@@ -218,7 +225,21 @@
     "colPattern": "Regex", "colScope": "Alcance", "colEnabled": "Activado", "del": "¿Eliminar?",
     "auditFilter": "Filtrar por usuario", "colTime": "Hora", "colUser": "Usuario", "colMethod": "Método",
     "colPath": "Ruta", "colIp": "IP", "colCode": "Código",
-    "auditColAction": "Acción", "auditFilterAction": "Por acción", "auditFilterStatus": "Resultado", "auditFilterMethod": "Método", "auditFilterPath": "Ruta", "auditOk": "OK", "auditErr": "Fallido", "auditAll": "Todo", "tabSettings": "Ajustes", "langLabel": "Idioma", "keyModels": "Limitar a modelos", "keyModelsHint": "Dejar vacío para permitir acceso a todos los modelos del proyecto", "keyScopeAll": "Todos los modelos", "keyScopeN": "Limitado a {{n}} modelo(s)"
+    "auditColAction": "Acción", "auditFilterAction": "Por acción", "auditFilterStatus": "Resultado", "auditFilterMethod": "Método", "auditFilterPath": "Ruta", "auditOk": "OK", "auditErr": "Fallido", "auditAll": "Todo", "tabSettings": "Ajustes", "langLabel": "Idioma", "keyModels": "Limitar a modelos", "keyModelsHint": "Dejar vacío para permitir acceso a todos los modelos del proyecto", "keyScopeAll": "Todos los modelos", "keyScopeN": "Limitado a {{n}} modelo(s)",
+    "tabAlerts": "Alertas", "alertRules": "Reglas de alerta", "newRule": "Nueva regla",
+    "editRule": "Editar regla", "ruleName": "Nombre de la regla", "colKind": "Tipo",
+    "kindThreshold": "Umbral", "kindEvent": "Evento", "colMetric": "Métrica",
+    "colEvent": "Evento", "colCond": "Condición", "colSeverity": "Gravedad",
+    "sevWarning": "Aviso", "sevCritical": "Crítico", "colCooldown": "Enfriam. (s)",
+    "colChannels": "Canales", "mHostCpu": "CPU del host", "mHostMem": "Memoria del host",
+    "mHostDisk": "Disco del host", "mGpuUtil": "Uso de GPU", "mGpuTemp": "Temp. GPU",
+    "mGpuMem": "Memoria GPU", "mKvCache": "Caché KV de inferencia", "evNodeOffline": "Nodo sin conexión",
+    "evNodeOnline": "Nodo restablecido", "evTrainFailed": "Fallo del entrenamiento", "evEvalFailed": "Fallo de evaluación",
+    "evQuantFailed": "Fallo de cuantización", "evInferDown": "Servicio de inferencia no disponible", "eventsTitle": "Eventos de alerta (últimos 100)",
+    "colLevel": "Nivel", "colTarget": "Objetivo", "colTitle": "Título",
+    "colNotified": "Notificado", "testNotify": "Probar", "testSent": "Mensaje de prueba enviado, revisa el canal",
+    "testFail": "Error de envío", "chWecom": "Bot WeCom", "chEmail": "Correo",
+    "chAuto": "Auto (todos los configurados)"
   },
   "quant": {
     "title": "Compresión de modelos",

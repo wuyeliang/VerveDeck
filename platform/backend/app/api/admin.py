@@ -1,4 +1,4 @@
-"""系统管理：租户/项目/用户(RBAC)/API Key/护栏规则/审计日志"""
+"""系统管理：租户/项目/用户(RBAC)/API Key/护栏规则/告警规则/审计日志"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -7,7 +7,8 @@ import time
 from ..database import get_db
 from ..security import get_current_user, require_role, hash_password, new_api_key, can_access_project
 from ..models import (Tenant, User, Project, ProjectMember, ApiKey, GuardRule,
-                      AuditLog, Dataset)
+                      AuditLog, Dataset, AlertRule, AlertEvent)
+from ..services import alert_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -226,6 +227,118 @@ def delete_rule(rid: int, db=Depends(get_db), user=Depends(require_role("super_a
     db.query(GuardRule).filter_by(id=rid).delete()
     db.commit()
     return {"ok": True}
+
+
+# ---------- 告警规则与事件 ----------
+
+class AlertRuleReq(BaseModel):
+    name: str
+    kind: str = "threshold"  # threshold/event
+    metric: str = ""
+    op: str = ">"
+    threshold: float = 0
+    event: str = ""
+    severity: str = "warning"  # warning/critical
+    cooldown: int = 300
+    channels: list = []  # ["wecom","email"]，空=全部已配置通道
+    enabled: bool = True
+
+
+def _validate_alert(req: AlertRuleReq):
+    if not (req.name or "").strip():
+        raise HTTPException(400, "规则名称必填")
+    if req.kind not in ("threshold", "event"):
+        raise HTTPException(400, "kind 需为 threshold/event")
+    if req.kind == "threshold":
+        if req.metric not in alert_service.METRIC_NAMES:
+            raise HTTPException(400, f"metric 需为 {sorted(alert_service.METRIC_NAMES)} 之一")
+        if req.op not in (">", "<", ">=", "<="):
+            raise HTTPException(400, "op 需为 > < >= <= 之一")
+    else:
+        if req.event not in alert_service.EVENT_NAMES:
+            raise HTTPException(400, f"event 需为 {sorted(alert_service.EVENT_NAMES)} 之一")
+    if req.severity not in ("warning", "critical"):
+        raise HTTPException(400, "severity 需为 warning/critical")
+    bad = [c for c in (req.channels or []) if c not in ("wecom", "email")]
+    if bad:
+        raise HTTPException(400, f"channels 含非法值: {bad}")
+
+
+def _rule_dict(r: AlertRule) -> dict:
+    return {"id": r.id, "name": r.name, "kind": r.kind, "metric": r.metric, "op": r.op,
+            "threshold": r.threshold, "event": r.event, "severity": r.severity,
+            "cooldown": r.cooldown, "channels": r.channels or [], "enabled": r.enabled,
+            "created_at": str(r.created_at)}
+
+
+@router.get("/alerts/rules")
+def list_alert_rules(db=Depends(get_db), user=Depends(get_current_user)):
+    return [_rule_dict(r) for r in db.query(AlertRule).order_by(AlertRule.id.asc()).all()]
+
+
+@router.post("/alerts/rules")
+def create_alert_rule(req: AlertRuleReq, db=Depends(get_db),
+                      user=Depends(require_role("super_admin", "tenant_admin"))):
+    _validate_alert(req)
+    r = AlertRule(name=req.name.strip()[:128], kind=req.kind, metric=req.metric, op=req.op,
+                  threshold=req.threshold, event=req.event, severity=req.severity,
+                  cooldown=max(0, int(req.cooldown)), channels=req.channels or [],
+                  enabled=req.enabled)
+    db.add(r)
+    db.commit()
+    return {"id": r.id}
+
+
+@router.put("/alerts/rules/{rid}")
+def update_alert_rule(rid: int, req: AlertRuleReq, db=Depends(get_db),
+                      user=Depends(require_role("super_admin", "tenant_admin"))):
+    r = db.get(AlertRule, rid)
+    if not r:
+        raise HTTPException(404, "规则不存在")
+    _validate_alert(req)
+    r.name = req.name.strip()[:128]
+    r.kind = req.kind
+    r.metric = req.metric
+    r.op = req.op
+    r.threshold = req.threshold
+    r.event = req.event
+    r.severity = req.severity
+    r.cooldown = max(0, int(req.cooldown))
+    r.channels = req.channels or []
+    r.enabled = req.enabled
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/alerts/rules/{rid}")
+def delete_alert_rule(rid: int, db=Depends(get_db),
+                      user=Depends(require_role("super_admin", "tenant_admin"))):
+    db.query(AlertRule).filter_by(id=rid).delete()
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/alerts/rules/{rid}/test")
+def test_alert_rule(rid: int, db=Depends(get_db),
+                    user=Depends(require_role("super_admin", "tenant_admin"))):
+    """同步发送一条测试通知，验证通道连通性"""
+    return alert_service.test_notify(db, rid)
+
+
+@router.get("/alerts/events")
+def list_alert_events(limit: int = 100, offset: int = 0, level: str = "", target: str = "",
+                      db=Depends(get_db), user=Depends(get_current_user)):
+    q = db.query(AlertEvent)
+    if level:
+        q = q.filter(AlertEvent.level == level)
+    if target:
+        q = q.filter(AlertEvent.target.like(f"%{target}%"))
+    total = q.count()
+    rows = q.order_by(AlertEvent.id.desc()).offset(offset).limit(min(limit, 500)).all()
+    return {"total": total, "items": [
+        {"id": e.id, "ts": e.ts, "rule_id": e.rule_id, "level": e.level,
+         "target": e.target, "title": e.title, "detail": e.detail, "notified": e.notified}
+        for e in rows]}
 
 
 # ---------- 审计日志 ----------

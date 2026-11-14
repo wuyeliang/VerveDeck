@@ -9,7 +9,7 @@ from .config import settings
 from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401  注册 ORM
 from .security import hash_password
-from .models import User, Tenant, Project, GpuNode, GuardRule
+from .models import User, Tenant, Project, GpuNode, GuardRule, AlertRule
 from .audit import AuditMiddleware
 from .scheduler import start_scheduler
 from .api import (auth, admin, datasets, models_api, training, evals,
@@ -96,6 +96,23 @@ def init_db():
                 (r"暴恐|恐怖袭击方法", "暴恐内容（默认护栏）"),
             ]:
                 db.add(GuardRule(project_id=None, pattern=pat, scope="both", description=desc))
+        # 默认告警规则（阈值型：宿主系统/GPU/推理 KV；事件型：节点离线/任务失败/推理不可用）
+        if not db.query(AlertRule).first():
+            for name, kind, metric, op, thr, sev, cd, event in [
+                ("GPU 温度过高", "threshold", "gpu_temp", ">", 85, "critical", 300, ""),
+                ("GPU 显存过高", "threshold", "gpu_mem", ">", 95, "warning", 300, ""),
+                ("宿主 CPU 过高", "threshold", "host_cpu", ">", 90, "warning", 300, ""),
+                ("宿主内存过高", "threshold", "host_mem", ">", 90, "warning", 300, ""),
+                ("宿主磁盘过高", "threshold", "host_disk", ">", 85, "warning", 600, ""),
+                ("推理 KV 缓存过高", "threshold", "kv_cache", ">", 90, "warning", 300, ""),
+                ("计算节点离线", "event", "", "", 0, "critical", 300, "node_offline"),
+                ("训练任务失败", "event", "", "", 0, "critical", 60, "train_failed"),
+                ("量化任务失败", "event", "", "", 0, "warning", 60, "quant_failed"),
+                ("评测任务失败", "event", "", "", 0, "warning", 60, "eval_failed"),
+                ("推理服务不可用", "event", "", "", 0, "critical", 300, "infer_down"),
+            ]:
+                db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
+                                 threshold=thr, event=event, severity=sev, cooldown=cd))
         # 数据目录
         for d in ("models/hub", "datasets", "jobs", "evals", "infer", "gpu",
                   "uploads", "dvc-remote", "hf-cache", "argilla"):

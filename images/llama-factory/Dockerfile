@@ -1,3 +1,6 @@
+# 兜底镜像：默认训练镜像是 LLaMA-Factory 官方预构建 hiyouga/llamafactory:0.9.5
+# （compose IMAGES_TRAIN），仅在离线/气隔环境无法拉取官方镜像时，用本 Dockerfile
+# 自构 fintune/llama-factory:1.0 并把 IMAGES_TRAIN 指回它。
 FROM python:3.12-slim
 
 ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
