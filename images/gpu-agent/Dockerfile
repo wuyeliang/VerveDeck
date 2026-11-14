@@ -2,7 +2,8 @@
 # 基于 cuda base（与既有 nvidia/cuda 镜像同源，国内拉取稳定）+ CUDA 官方 apt 仓库的
 # datacenter-gpu-manager 包（温度/功耗/时钟/ECC/降频/健康度/XID 等扩展指标）。
 # 运行要求：nvidia 设备注入（--gpus all）+ ipc: host（DCGM hostengine 共享内存）。
-FROM nvidia/cuda:12.4.1-base-ubuntu22.04
+# 2026-11 升级：CUDA 13.5 base（与主机驱动 620 / Ubuntu 24.04 对齐）。
+FROM nvidia/cuda:13.5.0-base-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 

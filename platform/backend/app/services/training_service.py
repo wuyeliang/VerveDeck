@@ -401,6 +401,7 @@ def launch(job: TrainingJob) -> None:
         j.output_dir = f"{job_dir(job.id)}/ckpt"
         j.tensorboard_dir = f"{job_dir(job.id)}/runs"
         j.status = "running"
+        j.error = ""  # 清除排队期"镜像下载中"等残留提示
         from datetime import datetime
         j.started_at = datetime.utcnow()
         db.commit()

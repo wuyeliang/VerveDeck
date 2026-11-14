@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import (String, Integer, Float, Boolean, DateTime, ForeignKey,
+from sqlalchemy import (String, Integer, BigInteger, Float, Boolean, DateTime, ForeignKey,
                         Text, JSON, Index)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -288,4 +288,31 @@ class StorageQueue(Base):
     local_path: Mapped[str] = mapped_column(String(512), default="")
     status: Mapped[str] = mapped_column(String(16), default="done")  # done/failed
     error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class CustomImage(Base):
+    """自定义镜像登记（国产芯片 vllm/sglang/llamafactory 等自托管镜像）"""
+    __tablename__ = "custom_images"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)  # 完整镜像引用 name:tag
+    note: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(16), default="unknown")  # present/missing/unknown
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class StorageBackend(Base):
+    """存储后端注册表：对象存储/本地/NFS/块存储等多类型对接"""
+    __tablename__ = "storage_backends"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    type: Mapped[str] = mapped_column(String(16), default="object")  # object/local/nfs/block
+    # config 按类型：object={endpoint,access_key,secret_key,bucket}
+    #              local/nfs/block={path, [server,export|device]}
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="unknown")  # ok/error/unknown
+    detail: Mapped[str] = mapped_column(String(512), default="")
+    size_used: Mapped[int] = mapped_column(BigInteger, default=0)
+    size_total: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

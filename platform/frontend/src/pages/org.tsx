@@ -4,8 +4,18 @@ import { PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
-/** 租户与项目空间（系统管理 tab 内容：租户 / 项目空间 两个子页，避免单页过长） */
-export default function OrgSpace() {
+/** 租户与项目空间（一级菜单 /org：租户 / 项目空间 两个子页，避免单页过长） */
+export default function OrgPage() {
+  const { t } = useTranslation()
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>{t('nav.org')}</h3>
+      <OrgSpace />
+    </div>
+  )
+}
+
+function OrgSpace() {
   const { t } = useTranslation()
   const [sub, setSub] = useState('tenants')
   const [tenants, setTenants] = useState<any[]>([])

@@ -7,8 +7,6 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useTheme } from '../theme'
 import { LANGS, setLang } from '../i18n'
-import OrgSpace from './org'
-import StorageTab from './storage'
 
 const ROLE_COLOR: Record<string, string> = { super_admin: 'gold', tenant_admin: 'purple', developer: 'blue', viewer: 'default' }
 
@@ -20,10 +18,8 @@ export default function AdminPanel() {
       <h3 style={{ marginTop: 0 }}>{t('admin.title')}</h3>
       <Tabs activeKey={tab} onChange={setTab} items={[
         { key: 'users', label: t('admin.tabUsers'), children: <UsersTab /> },
-        { key: 'org', label: t('admin.tabOrg'), children: <OrgSpace /> },
         { key: 'keys', label: t('admin.tabKeys'), children: <KeysTab /> },
         { key: 'guard', label: t('admin.tabGuard'), children: <GuardTab /> },
-        { key: 'storage', label: t('storage.title'), children: <StorageTab /> },
         { key: 'settings', label: t('admin.tabSettings'), children: <SettingsTab /> },
       ]} />
     </div>

@@ -15,6 +15,9 @@ log = logging.getLogger("gpu")
 
 STALE_SECONDS = 60
 _fail_count = 0
+_last_ts = 0  # 已入库的最新采样时间戳：tick 周期(5s)与 agent 采集周期(5s)存在相位漂移，
+# 同一份 CSV 可能被连续两次 tick 读到，ts 未变则跳过入库，避免同 ts 重复指标行
+# （重复行会使 /api/cluster/nodes 的 ts==last_ts 查询返回 2 行，前端偶现 2 张 GPU）。
 
 # DCGM 扩展字段（与 images/gpu-agent/collect.sh 的 HEADER 列一一对应）
 EXTRA_KEYS = [
@@ -101,10 +104,10 @@ def ensure_node(db) -> GpuNode:
 
 def tick():
     """调度器每 tick 调用：更新节点心跳/状态/指标采样"""
+    global _last_ts, _fail_count
     db = SessionLocal()
     try:
         node = ensure_node(db)
-        global _fail_count
         ts, gpus = read_agent()
         if gpus:
             _fail_count = 0
@@ -115,12 +118,14 @@ def tick():
             node.status = "online"
             if not node.meta or node.meta.get("names") != [g["name"] for g in gpus]:
                 node.meta = {"names": [g["name"] for g in gpus]}
-            # 采样入库（每 tick 一次，保留最近数据由清理任务控制）
-            for g in gpus:
-                db.add(GpuMetric(node_id=node.id, ts=ts, gpu_index=g["index"],
-                                 mem_used=g["mem_used"], mem_total=g["mem_total"],
-                                 util=g["util"], power=g["power"], temp=g["temp"],
-                                 extra=g.get("extra", {})))
+            # 采样入库（ts 有变化才写，保留最近数据由清理任务控制）
+            if ts > _last_ts:
+                _last_ts = ts
+                for g in gpus:
+                    db.add(GpuMetric(node_id=node.id, ts=ts, gpu_index=g["index"],
+                                     mem_used=g["mem_used"], mem_total=g["mem_total"],
+                                     util=g["util"], power=g["power"], temp=g["temp"],
+                                     extra=g.get("extra", {})))
         else:
             # 连续 2 次 tick 读不到心跳（~10s）且超过 STALE 才判离线，避免 CSV 写入瞬间误判
             _fail_count += 1

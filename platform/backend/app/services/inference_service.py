@@ -38,7 +38,8 @@ def deployment_container_name(dep: Deployment, replica: int = 0) -> str:
 
 def build_cmd(dep: Deployment, model_path: str) -> list[str]:
     if dep.engine == "sglang":
-        cmd = ["python", "-m", "sglang.launch_server",
+        # 官方 sglang 镜像内只有 python3（无 python 别名）
+        cmd = ["python3", "-m", "sglang.launch_server",
                "--model-path", model_path,
                "--host", "0.0.0.0", "--port", "8000",
                "--served-model-name", dep.name,

@@ -181,13 +181,13 @@ def health() -> dict:
 
 
 def list_objects(prefix: str = "", limit: int = 200) -> list[dict]:
-    """浏览对象（模拟目录：delimiter=/ 时前缀聚合为「文件夹」条目）"""
+    """浏览对象（模拟目录：minio-py recursive=False 即按前缀聚合出「文件夹」条目）"""
     if not enabled():
         return []
     ensure_bucket()
     c = client()
     out = []
-    for o in c.list_objects(settings.s3_bucket, prefix=prefix, delimiter="/", recursive=False):
+    for o in c.list_objects(settings.s3_bucket, prefix=prefix, recursive=False):
         if o.is_dir:
             out.append({"name": o.object_name, "is_dir": True, "size": 0, "last_modified": ""})
         else:
@@ -229,3 +229,118 @@ def stats() -> dict:
             truncated = True
             break
     return {"objects": n, "bytes": total, "truncated": truncated}
+
+
+# ---------------------------------------------------------------------------
+# 多类型存储后端注册表：object（S3 兼容）/ local / nfs / block
+# ---------------------------------------------------------------------------
+
+def _minio_client(endpoint: str, access_key: str, secret_key: str):
+    from minio import Minio
+    url = endpoint or ""
+    if "://" not in url:
+        url = "http://" + url
+    secure = url.startswith("https")
+    host = url.split("//")[-1].split("/")[0]
+    return Minio(host, access_key=access_key, secret_key=secret_key, secure=secure)
+
+
+def probe_object(cfg: dict) -> dict:
+    """对象存储连通性测试：桶可达 + 统计（10 万对象截断）"""
+    cfg = cfg or {}
+    bucket = cfg.get("bucket", "")
+    try:
+        c = _minio_client(cfg.get("endpoint", ""), cfg.get("access_key", ""), cfg.get("secret_key", ""))
+        if not c.bucket_exists(bucket):
+            return {"ok": False, "detail": f"bucket {bucket} 不存在或不可访问"}
+        n, total = 0, 0
+        for o in c.list_objects(bucket, recursive=True):
+            n += 1
+            total += o.size or 0
+            if n >= 100000:
+                break
+        return {"ok": True, "detail": "连接成功", "objects": n, "bytes": total}
+    except Exception as e:
+        return {"ok": False, "detail": str(e)[:200]}
+
+
+def probe_path(path: str) -> dict:
+    """local/nfs/block 探测：把宿主路径只读挂进一次性容器跑 df。
+    挂载成功即证明路径存在且可读，顺带拿到容量。"""
+    import docker
+    try:
+        d = docker.from_env()
+        probe_img = "fintune/web:1.0"
+        try:
+            d.images.get(probe_img)
+        except Exception:
+            probe_img = "alpine:3.20"
+        ctr = d.containers.run(
+            probe_img,
+            entrypoint=["sh", "-c", f"test -d {path!r} && df -kP {path!r} | tail -1"],
+            volumes={path: {"bind": "/probe", "mode": "ro"}},
+            remove=False)
+        try:
+            out = ctr.logs().decode("utf-8", "ignore").strip()
+        finally:
+            ctr.remove(force=True)
+        if not out or "No such file" in out:
+            return {"ok": False, "detail": f"路径 {path} 不存在或不可读"}
+        p = out.split()
+        # df -kP: fs blocks(1K) used available capacity mountpoint
+        if len(p) >= 6:
+            total = int(p[1]) * 1024
+            avail = int(p[3]) * 1024
+            return {"ok": True, "detail": "ok",
+                    "size_total": total, "size_used": max(0, total - avail)}
+        return {"ok": True, "detail": out[:160]}
+    except Exception as e:
+        return {"ok": False, "detail": str(e)[:200]}
+
+
+def test_backend(btype: str, cfg: dict) -> dict:
+    """统一入口：按类型分发探测，返回 {ok, detail, size_used, size_total, objects?, bytes?}"""
+    if btype == "object":
+        r = probe_object(cfg)
+        r.setdefault("size_used", 0)
+        r.setdefault("size_total", 0)
+        return r
+    path = (cfg or {}).get("path", "")
+    if not path:
+        return {"ok": False, "detail": "path 必填", "size_used": 0, "size_total": 0}
+    r = probe_path(path)
+    r.setdefault("size_used", 0)
+    r.setdefault("size_total", 0)
+    return r
+
+
+def list_objects_cfg(cfg: dict, prefix: str = "", limit: int = 200) -> list[dict]:
+    """按指定对象存储配置浏览（多后端浏览用，recursive=False 按目录聚合）"""
+    cfg = cfg or {}
+    c = _minio_client(cfg.get("endpoint", ""), cfg.get("access_key", ""), cfg.get("secret_key", ""))
+    bucket = cfg.get("bucket", "")
+    out = []
+    for o in c.list_objects(bucket, prefix=prefix, recursive=False):
+        if o.is_dir:
+            out.append({"name": o.object_name, "is_dir": True, "size": 0, "last_modified": ""})
+        else:
+            out.append({"name": o.object_name, "is_dir": False,
+                        "size": o.size or 0,
+                        "last_modified": str(o.last_modified) if o.last_modified else ""})
+        if len(out) >= max(1, min(int(limit), 500)):
+            break
+    return out
+
+
+def delete_prefix_cfg(cfg: dict, prefix: str, cap: int = 5000) -> int:
+    """按指定对象存储配置删前缀（防误删上限同 delete_prefix）"""
+    cfg = cfg or {}
+    c = _minio_client(cfg.get("endpoint", ""), cfg.get("access_key", ""), cfg.get("secret_key", ""))
+    bucket = cfg.get("bucket", "")
+    deleted = 0
+    for o in c.list_objects(bucket, prefix=prefix, recursive=True):
+        c.remove_object(bucket, o.object_name)
+        deleted += 1
+        if deleted > cap:
+            raise RuntimeError(f"prefix 下对象超过 {cap} 个，已中止（防误删）")
+    return deleted

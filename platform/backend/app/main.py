@@ -13,7 +13,7 @@ from .models import User, Tenant, Project, GpuNode, GuardRule
 from .audit import AuditMiddleware
 from .scheduler import start_scheduler
 from .api import (auth, admin, datasets, models_api, training, evals,
-                  inference, cluster, dashboard, quantize, storage, logs)
+                  inference, cluster, dashboard, quantize, storage, logs, images)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -71,7 +71,7 @@ def init_db():
         if not admin:
             admin = User(username="admin",
                          password_hash=hash_password(settings.admin_password),
-                         full_name="平台管理员", role="super_admin",
+                         full_name="Admin", role="super_admin",  # 中性显示名（多语言 UI 通用）
                          must_change_password=True)  # 默认密码，首登强制修改
             db.add(admin)
             db.flush()
@@ -166,3 +166,4 @@ app.include_router(dashboard.router)
 app.include_router(quantize.router)
 app.include_router(storage.router)
 app.include_router(logs.router)
+app.include_router(images.router)

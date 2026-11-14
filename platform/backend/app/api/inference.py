@@ -16,6 +16,7 @@ from ..security import get_current_user, can_access_project, verify_api_key
 from ..models import (Deployment, ModelAsset, Project, User, GuardRule, ApiKey)
 from ..services import inference_service as inf
 from ..services import taskcontainer as tc
+from ..services import image_ops
 
 log = logging.getLogger("inference")
 router = APIRouter(tags=["inference"])
@@ -51,6 +52,35 @@ def _resolve_model_path(asset: ModelAsset, db) -> str:
         if base:
             return base.path
     return asset.path
+
+
+def _wait_engine_image(dep: Deployment, db2) -> str:
+    """引擎镜像按需下载（懒加载）：本地缺失自动后台拉取并等待就绪。
+
+    返回 "ready" 继续建容器；拉取失败/超时回写 failed 并返回 "stop"。
+    """
+    img = settings.images_vllm if dep.engine == "vllm" else settings.images_sglang
+    deadline = time.time() + 3600
+    while True:
+        ist = image_ops.ensure_image(img)
+        if ist == "ready":
+            return "ready"
+        if ist == "failed":
+            dep.status = "failed"
+            dep.error = f"引擎镜像下载失败: {image_ops.image_status(img).get('error', '')}"
+            db2.commit()
+            return "stop"
+        dep.status = "creating"
+        msg = f"引擎镜像 {img} 下载中，完成后自动创建容器…"
+        if dep.error != msg:
+            dep.error = msg
+            db2.commit()
+        if time.time() > deadline:
+            dep.status = "failed"
+            dep.error = "引擎镜像下载超时（>1h），请在镜像管理页检查网络后重试"
+            db2.commit()
+            return "stop"
+        time.sleep(10)
 
 
 def _brief(d: Deployment, db: Session) -> dict:
@@ -116,6 +146,8 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         try:
             dep = db2.get(Deployment, d.id)
             path = _resolve_model_path(asset, db2)
+            if _wait_engine_image(dep, db2) != "ready":
+                return
             inf.launch(dep, path)
             ready = inf.wait_ready(dep, timeout=1200)
             if _launch_stale(d.id, launch_tok):
@@ -177,6 +209,8 @@ def start_deploy(did: int, db=Depends(get_db), user=Depends(get_current_user)):
         try:
             dep = db2.get(Deployment, did)
             path = _resolve_model_path(asset, db2)
+            if _wait_engine_image(dep, db2) != "ready":
+                return
             inf.launch(dep, path)
             ready = inf.wait_ready(dep, timeout=1200)
             if _launch_stale(did, launch_tok):

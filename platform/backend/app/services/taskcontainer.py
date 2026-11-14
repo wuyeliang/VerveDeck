@@ -44,12 +44,23 @@ def _volumes(base: dict):
 def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = None,
                      mem_gb: float | None = None, env: dict | None = None,
                      volumes: dict | None = None, labels: dict | None = None) -> str:
-    """创建 pause 占位容器（主进程 sleep infinity），返回容器 id。"""
+    """创建 pause 占位容器（主进程 sleep infinity），返回容器 id。
+
+    镜像懒加载：本地缺失时自动后台拉取/构建并抛 ImageNotReady，
+    由调度器/启动线程轮询 ensure_image 就绪后再重试（部署时不预下载）。
+    """
+    from . import image_ops
+    st = image_ops.ensure_image(image)
+    if st != "ready":
+        extra = f": {image_ops.image_status(image).get('error', '')}" if st == "failed" else ""
+        raise image_ops.ImageNotReady(f"镜像 {image} 未就绪（{st}）{extra}")
     client = docker_client()
     kwargs = dict(
         image=image,
         name=name,
-        command=["sleep", "infinity"],  # pause 占位主进程
+        # pause 占位主进程：显式覆盖镜像 ENTRYPOINT（官方镜像如 vllm/vllm-openai
+        # 的 ENTRYPOINT 是 vllm 本身，不覆盖会执行 "vllm sleep infinity" 直接崩掉）
+        entrypoint=["sleep", "infinity"],
         detach=True,
         auto_remove=False,
         network=settings.docker_network,

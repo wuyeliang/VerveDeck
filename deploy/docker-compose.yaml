@@ -126,9 +126,11 @@ services:
       ARGILLA_API_KEY: ${ARGILLA_API_KEY:-fintune-argilla-key}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       INFER_PORT_BASE: "8100"
+      # 推理引擎用官方开源镜像（CUDA 随镜像内置，不装宿主机）；
+      # llamafactory 官方无预构建镜像，自构（deploy/build-images.sh）
       IMAGES_TRAIN: fintune/llama-factory:1.0
-      IMAGES_VLLM: fintune/vllm:1.0
-      IMAGES_SGLANG: fintune/sglang:1.0
+      IMAGES_VLLM: vllm/vllm-openai:v0.33.0
+      IMAGES_SGLANG: lmsysorg/sglang:v0.5.23
       IMAGES_EVAL: fintune/evalscope:1.0
       # 对象存储：数据集版本主存储在 rustfs，/data/datasets 为处理缓存；
       # S3_ENDPOINT 留空则自动降级纯本地存储
@@ -136,9 +138,12 @@ services:
       S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
       S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
       S3_BUCKET: ${S3_BUCKET:-vervedeck-datasets}
+      # 宿主源码树（只读）：镜像管理页在线重建自构镜像的构建上下文
+      VERVEDECK_REPO: /repo
     volumes:
       - /data:/data
       - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/vervedeck:/repo:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3001/health || exit 1"]
       interval: 10s

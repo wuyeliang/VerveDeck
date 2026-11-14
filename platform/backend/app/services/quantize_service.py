@@ -72,6 +72,7 @@ def launch(task: QuantTask) -> None:
         t.work_dir = task_dir(task.id)
         t.output_dir = f"{task_dir(task.id)}/out"
         t.status = "running"
+        t.error = ""  # 清除排队期"镜像下载中"等残留提示
         db.commit()
     finally:
         db.close()

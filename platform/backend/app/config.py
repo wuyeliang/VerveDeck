@@ -13,9 +13,11 @@ class Settings(BaseSettings):
     argilla_url: str = "http://argilla:3000"
     argilla_api_key: str = "fintune-argilla-key"
     infer_port_base: int = 8100
-    images_train: str = "fintune/llama-factory:1.0"
-    images_vllm: str = "fintune/vllm:1.0"
-    images_sglang: str = "fintune/sglang:1.0"
+    # 推理引擎优先用官方开源镜像（CUDA 随镜像内置，不装宿主机）：
+    # vllm/vllm-openai = CUDA 13.5 + vLLM 0.33.0；lmsysorg/sglang = CUDA 13.0 + SGLang 0.5.23
+    images_train: str = "fintune/llama-factory:1.0"  # 官方无预构建镜像，自构（repo Dockerfile）
+    images_vllm: str = "vllm/vllm-openai:v0.33.0"
+    images_sglang: str = "lmsysorg/sglang:v0.5.23"
     images_eval: str = "fintune/evalscope:1.0"
     node_name: str = "node-1"
     # 对象存储（rustfs / S3 兼容）：数据集版本文件主存储，本地 /data 为处理缓存

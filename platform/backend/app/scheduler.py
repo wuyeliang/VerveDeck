@@ -22,6 +22,7 @@ from .models import TrainingJob, EvalTask, Deployment, ModelAsset, GpuNode, GpuM
 from .services import gpu_service
 from .services import taskcontainer as tc
 from .services import training_service, eval_service, inference_service, quantize_service
+from .services import image_ops
 
 log = logging.getLogger("scheduler")
 
@@ -140,6 +141,18 @@ def _reconcile_eval(db):
 
 def _reconcile_deployments(db):
     for dep in db.query(Deployment).filter(Deployment.status.in_(["running", "creating"])).all():
+        # 镜像懒加载守卫：引擎镜像未就绪时保持 creating，勿按"容器丢失"判失败
+        img = settings.images_vllm if dep.engine == "vllm" else settings.images_sglang
+        ist = image_ops.ensure_image(img)
+        if ist != "ready":
+            dep.status = "creating"
+            new_err = (f"引擎镜像拉取失败: {image_ops.image_status(img).get('error', '')}"
+                       if ist == "failed"
+                       else f"引擎镜像 {img} 下载中，完成后自动创建容器…")
+            if ist == "failed" or dep.error != new_err:
+                dep.error = new_err
+                db.commit()
+            continue
         alive = all(tc.container_alive(n) for n in
                     (dep.container_ids or [f"ft-infer-{dep.id}"]))
         if not alive:
@@ -178,6 +191,12 @@ def _admit_jobs(db):
                 training_service.launch(job)
                 free -= need
                 log.info("admitted training job %s (%d gpus)", job.id, need)
+            except image_ops.ImageNotReady as e:
+                # 镜像懒加载：保持排队，等后台拉取完成后下个 tick 自动重试
+                job.status = "queued"
+                if job.error != str(e):
+                    job.error = str(e)
+                    db.commit()
             except Exception as e:
                 job.status = "failed"
                 job.error = f"启动失败: {e}"
@@ -193,6 +212,11 @@ def _admit_jobs(db):
                 quantize_service.launch(task)
                 free -= task.gpu_count or 1
                 log.info("admitted quant task %s", task.id)
+            except image_ops.ImageNotReady as e:
+                task.status = "pending"
+                if task.error != str(e):
+                    task.error = str(e)
+                    db.commit()
             except Exception as e:
                 task.status = "failed"
                 task.error = f"启动失败: {e}"

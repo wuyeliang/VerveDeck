@@ -25,6 +25,15 @@ def nodes(db=Depends(get_db), user=Depends(get_current_user)):
                  .filter(GpuMetric.node_id == n.id, GpuMetric.ts == last_ts)
                  .order_by(GpuMetric.gpu_index.asc()).all())
                 if last_ts else [])
+        # 防御：同 ts 历史重复行（tick/采集周期相位漂移的旧数据），按 gpu_index 去重
+        _seen = set()
+        deduped = []
+        for r in rows:
+            if r.gpu_index in _seen:
+                continue
+            _seen.add(r.gpu_index)
+            deduped.append(r)
+        rows = deduped
         meta_names = (n.meta or {}).get("names", []) or []
         out.append({
             "id": n.id, "name": n.name, "gpu_count": n.gpu_count, "status": n.status,

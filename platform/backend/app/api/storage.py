@@ -1,26 +1,41 @@
-"""对象存储管理：状态/浏览/删除 + 同步队列（留痕 + 重试）"""
+"""存储管理：多类型存储后端注册（对象/本地/NFS/块存储）+ 对象浏览/删除
+
+同步队列 UI/端点已按需求移除；内部同步留痕（services.storage.record）仍保留于数据库。
+"""
 import os
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db, SessionLocal
-from ..security import get_current_user, require_role
-from ..models import StorageQueue, User
+from ..security import require_role
+from ..models import StorageBackend, User
 from ..services import storage
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
+
+BACKEND_TYPES = ("object", "local", "nfs", "block")
 
 
 def _admin(user: User = Depends(require_role("super_admin", "tenant_admin"))):
     return user
 
 
+def _row(b: StorageBackend) -> dict:
+    return {
+        "id": b.id, "name": b.name, "type": b.type, "config": b.config or {},
+        "status": b.status, "detail": b.detail,
+        "size_used": b.size_used or 0, "size_total": b.size_total or 0,
+        "created_at": str(b.created_at),
+    }
+
+
 @router.get("")
 def overview(user=Depends(_admin)):
-    """存储状态：S3 健康 + 磁盘占用 + 桶统计"""
+    """主对象存储（rustfs）状态：健康 + 磁盘占用 + 桶统计"""
     h = storage.health()
     try:
         du = shutil.disk_usage(os.path.abspath(settings.data_dir))
@@ -36,9 +51,31 @@ def overview(user=Depends(_admin)):
     return h
 
 
+def _get_backend_or_404(bid: int, db: Session) -> StorageBackend:
+    b = db.get(StorageBackend, bid)
+    if not b:
+        raise HTTPException(404, "存储后端不存在")
+    return b
+
+
 @router.get("/objects")
-def objects(prefix: str = "", limit: int = 200, user=Depends(_admin)):
-    """对象浏览（目录式：文件夹 + 文件）"""
+def objects(prefix: str = "", limit: int = 200, backend: int = 0, user=Depends(_admin)):
+    """对象浏览（目录式）；backend>0 时浏览指定对象存储后端"""
+    if backend:
+        db = SessionLocal()
+        try:
+            b = _get_backend_or_404(backend, db)
+            if b.type != "object":
+                raise HTTPException(400, "仅对象存储类型可浏览")
+            try:
+                items = storage.list_objects_cfg(b.config or {}, prefix, limit)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(502, f"对象存储不可用: {str(e)[:200]}")
+        finally:
+            db.close()
+        return {"prefix": prefix, "items": items, "disabled": False}
     if not storage.enabled():
         return {"prefix": prefix, "items": [], "disabled": True}
     try:
@@ -49,10 +86,25 @@ def objects(prefix: str = "", limit: int = 200, user=Depends(_admin)):
 
 
 @router.delete("/objects")
-def delete_objects(prefix: str, user=Depends(_admin)):
+def delete_objects(prefix: str, backend: int = 0, user=Depends(_admin)):
     """按前缀删除对象（空 prefix 一律拒绝，防误删全桶）"""
     if not prefix or prefix.endswith("/") and len(prefix) <= 1:
         raise HTTPException(400, "prefix 不能为空（不允许删除整个桶）")
+    if backend:
+        db = SessionLocal()
+        try:
+            b = _get_backend_or_404(backend, db)
+            if b.type != "object":
+                raise HTTPException(400, "仅对象存储类型可删除")
+            try:
+                n = storage.delete_prefix_cfg(b.config or {}, prefix)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(502, f"删除失败: {str(e)[:200]}")
+        finally:
+            db.close()
+        return {"ok": True, "deleted": n}
     if not storage.enabled():
         raise HTTPException(400, "对象存储未启用")
     try:
@@ -62,59 +114,72 @@ def delete_objects(prefix: str, user=Depends(_admin)):
     return {"ok": True, "deleted": n}
 
 
-@router.get("/queue")
-def queue(status: str = "", limit: int = 100, db: Session = Depends(get_db), user=Depends(_admin)):
-    """同步队列：S3 上传/下载/删除留痕"""
-    q = db.query(StorageQueue)
-    if status:
-        q = q.filter(StorageQueue.status == status)
-    total = q.count()
-    rows = (q.order_by(StorageQueue.id.desc()).limit(min(max(limit, 1), 500)).all())
-    return {"total": total, "items": [
-        {"id": r.id, "op": r.op, "key": r.key, "status": r.status,
-         "error": r.error, "created_at": str(r.created_at)} for r in rows]}
+# ---------------------------------------------------------------------------
+# 存储后端注册表（多类型对接）
+# ---------------------------------------------------------------------------
+
+class BackendReq(BaseModel):
+    name: str
+    type: str  # object/local/nfs/block
+    config: dict = {}
 
 
-@router.post("/queue/{qid}/retry")
-def retry(qid: int, user=Depends(_admin)):
-    """重试失败的同步操作（仅 put：源文件仍在本地时重新上传；delete 重新删前缀）"""
-    db = SessionLocal()
-    try:
-        r = db.get(StorageQueue, qid)
-        if not r:
-            raise HTTPException(404, "记录不存在")
-        if r.status != "failed":
-            raise HTTPException(400, f"仅 failed 记录可重试（当前 {r.status}）")
-        if r.op == "put" and os.path.exists(r.local_path):
-            ok = storage.put_file(r.local_path)
-            r.status = "done" if ok else "failed"
-            r.error = "" if ok else r.error
-            db.commit()
-            return {"ok": ok}
-        if r.op == "delete" and r.key:
-            try:
-                n = storage.delete_prefix(r.key)
-                r.status = "done"
-                r.error = f"{n} objects (retry)"
-                db.commit()
-                return {"ok": True, "deleted": n}
-            except Exception as e:
-                r.error = str(e)[:1000]
-                db.commit()
-                raise HTTPException(502, f"重试失败: {str(e)[:200]}")
-        raise HTTPException(400, f"该记录无法自动重试（op={r.op}）")
-    except HTTPException:
-        raise
-    finally:
-        db.close()
+def _validate(type_: str, cfg: dict) -> None:
+    if type_ == "object":
+        for k in ("endpoint", "bucket"):
+            if not (cfg or {}).get(k):
+                raise HTTPException(400, f"对象存储必须提供 {k}")
+    elif type_ in ("local", "nfs", "block"):
+        if not (cfg or {}).get("path"):
+            raise HTTPException(400, f"{type_} 必须提供 path（宿主机上的目录）")
+        if type_ == "nfs" and not cfg.get("server"):
+            raise HTTPException(400, "NFS 必须提供 server（如 192.168.1.10:/export）")
+        if type_ == "block" and not cfg.get("device"):
+            raise HTTPException(400, "块存储必须提供 device（如 /dev/vdb）")
 
 
-@router.delete("/queue")
-def clear_queue(status: str = "done", db: Session = Depends(get_db), user=Depends(_admin)):
-    """清理队列记录（默认清理 done；可传 failed）"""
-    if status not in ("done", "failed"):
-        raise HTTPException(400, "status 仅支持 done/failed")
-    n = (db.query(StorageQueue).filter(StorageQueue.status == status)
-         .delete(synchronize_session=False))
+@router.get("/backends")
+def list_backends(db: Session = Depends(get_db), user=Depends(_admin)):
+    rows = db.query(StorageBackend).order_by(StorageBackend.id.asc()).all()
+    return [_row(b) for b in rows]
+
+
+@router.post("/backends")
+def add_backend(req: BackendReq, db: Session = Depends(get_db), user=Depends(_admin)):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(400, "name 必填")
+    if req.type not in BACKEND_TYPES:
+        raise HTTPException(400, f"type 需为 {'/'.join(BACKEND_TYPES)}")
+    if db.query(StorageBackend).filter(StorageBackend.name == name).first():
+        raise HTTPException(400, f"名称 {name} 已存在")
+    _validate(req.type, req.config)
+    r = storage.test_backend(req.type, req.config)
+    b = StorageBackend(name=name, type=req.type, config=req.config or {},
+                       status="ok" if r["ok"] else "error", detail=r.get("detail", ""),
+                       size_used=r.get("size_used", 0), size_total=r.get("size_total", 0))
+    db.add(b)
     db.commit()
-    return {"ok": True, "deleted": n}
+    db.refresh(b)
+    return _row(b)
+
+
+@router.post("/backends/{bid}/test")
+def test_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
+    b = _get_backend_or_404(bid, db)
+    r = storage.test_backend(b.type, b.config or {})
+    b.status = "ok" if r["ok"] else "error"
+    b.detail = r.get("detail", "")
+    b.size_used = r.get("size_used", 0)
+    b.size_total = r.get("size_total", 0)
+    db.commit()
+    db.refresh(b)
+    return _row(b)
+
+
+@router.delete("/backends/{bid}")
+def delete_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
+    b = db_get_backend(bid, db)
+    db.delete(b)
+    db.commit()
+    return {"ok": True}
