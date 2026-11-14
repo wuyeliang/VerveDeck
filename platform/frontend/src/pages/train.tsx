@@ -11,16 +11,17 @@ import { api } from '../api'
 const ST: Record<string, string> = { queued: 'default', running: 'processing', succeeded: 'success', failed: 'error', cancelled: 'warning' }
 
 // 按参数 spec 渲染对应控件（bool→Checkbox，choices→Select，数值→InputNumber，str→Input/TextArea）
+// 控件一律铺满所在栅格列（width:100%），列宽由外层 Row/Col 决定，避免定宽控件溢出/参差
 const ParamControl = ({ p }: { p: any }) => {
   if (p.type === 'bool') return <Checkbox />
   if (p.choices) {
-    return <Select allowClear={p.default === null} style={{ width: 200 }}
+    return <Select allowClear={p.default === null} style={{ width: '100%' }}
       options={p.choices.map((c: any) => ({ value: c, label: String(c) }))} />
   }
-  if (p.type === 'int') return <InputNumber style={{ width: 150 }} min={p.min} max={p.max} step={p.step ?? 1} />
-  if (p.type === 'float') return <InputNumber style={{ width: 190 }} min={p.min} max={p.max} step={p.step ?? 0.1} />
+  if (p.type === 'int') return <InputNumber style={{ width: '100%' }} min={p.min} max={p.max} step={p.step ?? 1} />
+  if (p.type === 'float') return <InputNumber style={{ width: '100%' }} min={p.min} max={p.max} step={p.step ?? 0.1} />
   if (p.key === 'extra_args') return <Input.TextArea rows={2} placeholder={'{"key": value}'} />
-  return <Input style={{ width: 220 }} />
+  return <Input style={{ width: '100%' }} />
 }
 
 // 主面板直接展示的常用超参（其余进高级折叠）
@@ -285,9 +286,10 @@ export default function TrainCenter() {
                 </Section>
               )}
               <Section title={t('train.secHyper')} extra={<Tag color="blue">{t('train.useRecommended')}</Tag>}>
-                <Row gutter={12}>
+                {/* 常用超参：3 列网格，列内控件铺满，标签同宽换行对齐 */}
+                <Row gutter={[12, 0]}>
                   {mainKeys.map((k) => (
-                    <Col span={6} key={k}>
+                    <Col span={8} key={k}>
                       <Form.Item name={k} label={t('pp.' + k, specIndex[k]?.label) as string}>
                         <ParamControl p={specIndex[k]} />
                       </Form.Item>
@@ -298,15 +300,17 @@ export default function TrainCenter() {
                   <Collapse ghost size="small"
                     items={advancedGroups.map((g: any) => ({
                       key: g.key, label: g.label,
+                      // 高级参数同样走栅格：常规项 3 列，extra_args 独占整行
                       children: (
-                        <Space wrap>
+                        <Row gutter={[12, 0]}>
                           {g.params.map((p: any) => (
-                            <Form.Item key={p.key} name={p.key} label={t('pp.' + p.key, p.label) as string}
-                              style={{ marginBottom: 12, maxWidth: p.key === 'extra_args' ? 520 : undefined }}>
-                              <ParamControl p={p} />
-                            </Form.Item>
+                            <Col span={p.key === 'extra_args' ? 24 : 8} key={p.key}>
+                              <Form.Item name={p.key} label={t('pp.' + p.key, p.label) as string}>
+                                <ParamControl p={p} />
+                              </Form.Item>
+                            </Col>
                           ))}
-                        </Space>
+                        </Row>
                       ),
                     }))} />
                 )}

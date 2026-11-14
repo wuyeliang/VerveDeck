@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   Tabs, Table, Button, Space, Tag, Modal, Form, Input, Select, message, Popconfirm, Card,
 } from 'antd'
@@ -23,7 +23,6 @@ export default function AdminPanel() {
         { key: 'org', label: t('admin.tabOrg'), children: <OrgSpace /> },
         { key: 'keys', label: t('admin.tabKeys'), children: <KeysTab /> },
         { key: 'guard', label: t('admin.tabGuard'), children: <GuardTab /> },
-        { key: 'audit', label: t('admin.tabAudit'), children: <AuditTab /> },
         { key: 'storage', label: t('storage.title'), children: <StorageTab /> },
         { key: 'settings', label: t('admin.tabSettings'), children: <SettingsTab /> },
       ]} />
@@ -193,59 +192,6 @@ function GuardTab() {
           { title: t('common.desc'), dataIndex: 'description', ellipsis: true },
           { title: t('admin.colEnabled'), dataIndex: 'enabled', width: 70, render: (v: boolean) => v ? <Tag color="success">{t('common.yes')}</Tag> : <Tag>{t('common.no')}</Tag> },
           { title: t('common.actions'), width: 80, render: (_: any, r: any) => <Popconfirm title={t('admin.del')} onConfirm={() => api.delete(`/api/admin/guard-rules/${r.id}`).then(load)}><Button size="small" danger>{t('common.delete')}</Button></Popconfirm> },
-        ]} />
-    </div>
-  )
-}
-
-function AuditTab() {
-  const { t, i18n: ti18n } = useTranslation()
-  const [data, setData] = useState<any>({ items: [], total: 0 })
-  const [page, setPage] = useState(1)
-  const [user, setUser] = useState('')
-  const [action, setAction] = useState('')
-  const [method, setMethod] = useState('')
-  const [status, setStatus] = useState('')
-  const [pathQ, setPathQ] = useState('')
-  const [actions, setActions] = useState<any[]>([])
-
-  useEffect(() => {
-    api.get('/api/admin/audit/actions').then((r) => setActions(r.data || [])).catch(() => {})
-  }, [])
-  const load = useCallback(() => {
-    api.get('/api/admin/audit', {
-      params: { limit: 20, offset: (page - 1) * 20, username: user, action, method, status, path_q: pathQ },
-    }).then((r) => setData(r.data)).catch(() => {})
-  }, [page, user, action, method, status, pathQ])
-  useEffect(() => { load() }, [load])
-  const actLabel = (code: string) => t(`audit.act.${code}`, { defaultValue: code || '-' })
-  return (
-    <div>
-      <Space style={{ marginBottom: 12 }} wrap>
-        <Input placeholder={t('admin.auditFilter')} value={user} onChange={(e) => { setUser(e.target.value); setPage(1) }} style={{ width: 140 }} />
-        <Select allowClear placeholder={t('admin.auditFilterAction')} value={action || undefined}
-          onChange={(v) => { setAction(v || ''); setPage(1) }} style={{ width: 170 }}
-          options={actions.map((a) => ({ value: a.action, label: `${actLabel(a.action)} (${a.count})` }))} />
-        <Select allowClear placeholder={t('admin.auditFilterMethod')} value={method || undefined}
-          onChange={(v) => { setMethod(v || ''); setPage(1) }} style={{ width: 110 }}
-          options={['GET', 'POST', 'PUT', 'DELETE'].map((x) => ({ value: x, label: x }))} />
-        <Select allowClear placeholder={t('admin.auditFilterStatus')} value={status || undefined}
-          onChange={(v) => { setStatus(v || ''); setPage(1) }} style={{ width: 100 }}
-          options={[{ value: 'ok', label: t('admin.auditOk') }, { value: 'err', label: t('admin.auditErr') }]} />
-        <Input placeholder={t('admin.auditFilterPath')} value={pathQ} onChange={(e) => { setPathQ(e.target.value); setPage(1) }} style={{ width: 160 }} />
-      </Space>
-      <Table size="small" rowKey="id" dataSource={data.items}
-        pagination={{ current: page, total: data.total, pageSize: 20, onChange: setPage }}
-        columns={[
-          { title: t('admin.colTime'), dataIndex: 'ts', width: 160, render: (ts: number) => new Date(ts * 1000).toLocaleString(ti18n.language) },
-          { title: t('admin.colUser'), dataIndex: 'username', width: 100 },
-          { title: t('admin.auditColAction'), dataIndex: 'action', width: 130,
-            render: (v: string) => <Tag color={v ? 'blue' : 'default'}>{actLabel(v)}</Tag> },
-          { title: t('admin.colMethod'), dataIndex: 'method', width: 70 },
-          { title: t('admin.colPath'), dataIndex: 'path', ellipsis: true },
-          { title: t('admin.colIp'), dataIndex: 'ip', width: 120 },
-          { title: t('admin.colCode'), dataIndex: 'status_code', width: 70,
-            render: (v: number) => <Tag color={v >= 400 ? 'error' : 'success'}>{v}</Tag> },
         ]} />
     </div>
   )

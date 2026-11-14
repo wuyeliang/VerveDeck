@@ -1,11 +1,80 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Card, Select, Switch, Input, Button, Space, Tag, message } from 'antd'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Card, Select, Switch, Input, Button, Space, Tag, Table, Tabs, message } from 'antd'
 import { CopyOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
-/** 日志中心（超管左菜单）：平台容器 + 任务容器 docker logs 查看 */
+/** 日志中心（超管左菜单）：审计日志 + 容器运行日志（原系统管理内审计日志已并入本页） */
 export default function LogsPage() {
+  const { t } = useTranslation()
+  const [tab, setTab] = useState('audit')
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>{t('logs.title')}</h3>
+      <Tabs activeKey={tab} onChange={setTab} items={[
+        { key: 'audit', label: t('logs.tabAudit'), children: <AuditTab /> },
+        { key: 'container', label: t('logs.tabContainer'), children: <ContainerTab active={tab === 'container'} /> },
+      ]} />
+    </div>
+  )
+}
+
+/** 审计日志（原系统管理-审计 tab 迁入）：/api/admin/audit 五维筛选 */
+function AuditTab() {
+  const { t, i18n: ti18n } = useTranslation()
+  const [data, setData] = useState<any>({ items: [], total: 0 })
+  const [page, setPage] = useState(1)
+  const [user, setUser] = useState('')
+  const [action, setAction] = useState('')
+  const [method, setMethod] = useState('')
+  const [status, setStatus] = useState('')
+  const [pathQ, setPathQ] = useState('')
+  const [actions, setActions] = useState<any[]>([])
+
+  useEffect(() => {
+    api.get('/api/admin/audit/actions').then((r) => setActions(r.data || [])).catch(() => {})
+  }, [])
+  const load = useCallback(() => {
+    api.get('/api/admin/audit', {
+      params: { limit: 20, offset: (page - 1) * 20, username: user, action, method, status, path_q: pathQ },
+    }).then((r) => setData(r.data)).catch(() => {})
+  }, [page, user, action, method, status, pathQ])
+  useEffect(() => { load() }, [load])
+  const actLabel = (code: string) => t(`audit.act.${code}`, { defaultValue: code || '-' })
+  return (
+    <div>
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Input placeholder={t('admin.auditFilter')} value={user} onChange={(e) => { setUser(e.target.value); setPage(1) }} style={{ width: 140 }} />
+        <Select allowClear placeholder={t('admin.auditFilterAction')} value={action || undefined}
+          onChange={(v) => { setAction(v || ''); setPage(1) }} style={{ width: 170 }}
+          options={actions.map((a) => ({ value: a.action, label: `${actLabel(a.action)} (${a.count})` }))} />
+        <Select allowClear placeholder={t('admin.auditFilterMethod')} value={method || undefined}
+          onChange={(v) => { setMethod(v || ''); setPage(1) }} style={{ width: 110 }}
+          options={['GET', 'POST', 'PUT', 'DELETE'].map((x) => ({ value: x, label: x }))} />
+        <Select allowClear placeholder={t('admin.auditFilterStatus')} value={status || undefined}
+          onChange={(v) => { setStatus(v || ''); setPage(1) }} style={{ width: 100 }}
+          options={[{ value: 'ok', label: t('admin.auditOk') }, { value: 'err', label: t('admin.auditErr') }]} />
+        <Input placeholder={t('admin.auditFilterPath')} value={pathQ} onChange={(e) => { setPathQ(e.target.value); setPage(1) }} style={{ width: 160 }} />
+      </Space>
+      <Table size="small" rowKey="id" dataSource={data.items}
+        pagination={{ current: page, total: data.total, pageSize: 20, onChange: setPage }}
+        columns={[
+          { title: t('admin.colTime'), dataIndex: 'ts', width: 160, render: (ts: number) => new Date(ts * 1000).toLocaleString(ti18n.language) },
+          { title: t('admin.colUser'), dataIndex: 'username', width: 100 },
+          { title: t('admin.auditColAction'), dataIndex: 'action', width: 130,
+            render: (v: string) => <Tag color={v ? 'blue' : 'default'}>{actLabel(v)}</Tag> },
+          { title: t('admin.colMethod'), dataIndex: 'method', width: 70 },
+          { title: t('admin.colPath'), dataIndex: 'path', ellipsis: true },
+          { title: t('admin.colIp'), dataIndex: 'ip', width: 120 },
+          { title: t('admin.colCode'), dataIndex: 'status_code', width: 70,
+            render: (v: number) => <Tag color={v >= 400 ? 'error' : 'success'}>{v}</Tag> },
+        ]} />
+    </div>
+  )
+}
+
+/** 容器运行日志：平台容器 + 任务容器 docker logs 查看 */
+function ContainerTab({ active }: { active: boolean }) {
   const { t } = useTranslation()
   const [svcs, setSvcs] = useState<any[]>([])
   const [svc, setSvc] = useState('')
@@ -33,10 +102,10 @@ export default function LogsPage() {
   }
   useEffect(() => { loadLogs(svc, tail) }, [svc, tail])
   useEffect(() => {
-    if (!auto) return
+    if (!auto || !active) return
     const x = setInterval(() => loadLogs(svc, tail), 5000)
     return () => clearInterval(x)
-  }, [auto, svc, tail])
+  }, [auto, svc, tail, active])
   // 新日志到达时自动滚到底部
   useEffect(() => { boxRef.current?.scrollTo(0, boxRef.current.scrollHeight) }, [lines])
 
@@ -50,7 +119,6 @@ export default function LogsPage() {
 
   return (
     <div>
-      <h3 style={{ marginTop: 0 }}>{t('logs.title')}</h3>
       <Space style={{ marginBottom: 12 }} wrap>
         <Select value={svc || undefined} style={{ width: 260 }} placeholder={t('logs.service')}
           onChange={(v) => setSvc(v)}
