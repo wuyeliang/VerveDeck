@@ -19,7 +19,11 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("main")
 
-app = FastAPI(title="VerveDeck 大模型微调训练平台", version="1.0")
+APP_VERSION = "1.1"
+APP_LICENSE = "Apache-2.0"
+APP_GITHUB = "https://github.com/wuyeliang/VerveDeck"
+
+app = FastAPI(title="VerveDeck 大模型微调训练平台", version=APP_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 app.add_middleware(AuditMiddleware)
@@ -127,6 +131,19 @@ def startup():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "vervedeck-backend"}
+
+
+@app.get("/api/version")
+def version():
+    """前端页脚展示的软件版本 / 开源 licence / GitHub 仓库。"""
+    return {
+        "name": "VerveDeck",
+        "version": APP_VERSION,
+        "license": APP_LICENSE,
+        "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "github": APP_GITHUB,
+        "service": "vervedeck-backend",
+    }
 
 
 app.include_router(auth.router)

@@ -3,7 +3,7 @@
     "dashboard": "ダッシュボード", "data": "データセンター", "models": "モデルリポジトリ", "train": "トレーニング",
     "evals": "評価", "quant": "モデル量子化", "infer": "推論デプロイ", "cluster": "クラスタ運用", "admin": "システム管理"
   },
-  "header": { "project": "プロジェクト", "selectProject": "プロジェクトを選択", "logout": "ログアウト" },
+  "header": { "project": "プロジェクト", "selectProject": "プロジェクトを選択", "logout": "ログアウト", "theme": "テーマ", "themeLight": "ライト", "themeDark": "ダーク", "themeSystem": "システム" },
   "login": {
     "subtitle": "LLM ファインチューニング＆トレーニングプラットフォーム", "username": "ユーザー名", "password": "パスワード", "loginBtn": "ログイン",
     "requiredUser": "ユーザー名を入力してください", "requiredPw": "パスワードを入力してください", "welcome": "ログインしました"

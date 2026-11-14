@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
-import { Layout, Menu, Dropdown, Avatar, Select, Tag } from 'antd'
+import { Layout, Menu, Dropdown, Avatar, Select, Tag, theme as antTheme, Tooltip } from 'antd'
 import { useTranslation } from 'react-i18next'
 import {
   DashboardOutlined, DatabaseOutlined, ContainerOutlined, ExperimentOutlined,
   BarChartOutlined, CloudServerOutlined, ClusterOutlined, SettingOutlined,
   LogoutOutlined, RocketOutlined, GlobalOutlined, ShrinkOutlined,
+  SunOutlined, MoonOutlined, DesktopOutlined, GithubOutlined,
 } from '@ant-design/icons'
+import { useTheme } from './theme'
 import Login from './pages/login'
 import Dashboard from './pages/dashboard'
 import DataCenter from './pages/data'
@@ -29,8 +31,12 @@ function Shell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null)
   const [projects, setProjects] = useState<any[]>([])
   const [projectId, setProjectId] = useState<number>(Number(localStorage.getItem('projectId') || 0))
+  const { token } = antTheme.useToken()
+  const { mode, setMode, dark } = useTheme()
+  const [version, setVersion] = useState<any>(null)
 
   useEffect(() => {
+    api.get('/api/version').then((r) => setVersion(r.data)).catch(() => {})
     api.get('/api/auth/me').then((r) => setUser(r.data)).catch(() => nav('/login'))
     getProjects().then((ps) => {
       setProjects(ps)
@@ -68,6 +74,19 @@ function Shell({ children }: { children: React.ReactNode }) {
       onChange={(v) => setLang(v)} suffixIcon={<GlobalOutlined />} />
   )
 
+  const themeIcon = mode === 'dark' ? <MoonOutlined /> : mode === 'light' ? <SunOutlined /> : <DesktopOutlined />
+  const themeToggle = (
+    <Tooltip title={t('header.theme', { defaultValue: 'Theme' })}>
+      <Select size="small" style={{ width: 130 }} value={mode}
+        options={[
+          { value: 'light', label: <><SunOutlined /> {t('header.themeLight', { defaultValue: 'Light' })}</> },
+          { value: 'dark', label: <><MoonOutlined /> {t('header.themeDark', { defaultValue: 'Dark' })}</> },
+          { value: 'system', label: <><DesktopOutlined /> {t('header.themeSystem', { defaultValue: 'System' })}</> },
+        ]}
+        onChange={(v) => setMode(v)} suffixIcon={themeIcon} />
+    </Tooltip>
+  )
+
   const userMenu = (
     <Dropdown menu={{
       items: [
@@ -75,39 +94,49 @@ function Shell({ children }: { children: React.ReactNode }) {
       ],
     }}>
       <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Avatar size="small" icon={<RocketOutlined />} style={{ background: '#1677ff' }} />
+        <Avatar size="small" icon={<RocketOutlined />} style={{ background: token.colorPrimary }} />
         <span>{user?.full_name || user?.username}</span>
       </div>
     </Dropdown>
   )
 
+  const footer = (
+    <Layout.Footer style={{ padding: '12px 24px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 14, color: token.colorTextTertiary, fontSize: 12, background: token.colorBgLayout, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+      <span>{version ? `VerveDeck v${version.version}` : 'VerveDeck'}</span>
+      {version && <a href={version.license_url} target="_blank" rel="noreferrer" style={{ color: token.colorTextTertiary }}>{version.license}</a>}
+      {version && <a href={version.github} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: token.colorTextTertiary }}><GithubOutlined /> GitHub</a>}
+    </Layout.Footer>
+  )
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={210} theme="dark">
-        <div style={{ color: '#fff', padding: '16px 20px', fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+    <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
+      <Sider width={210} theme={dark ? 'dark' : 'light'}>
+        <div style={{ color: token.colorText, padding: '16px 20px', fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
           <img src="/logo.svg" alt="VerveDeck" style={{ width: 28, height: 28, borderRadius: 7 }} /> VerveDeck
         </div>
-        <Menu theme="dark" mode="inline" selectedKeys={[loc.pathname]}
+        <Menu theme={dark ? 'dark' : 'light'} mode="inline" selectedKeys={[loc.pathname]}
           items={menu.map((m) => ({ key: m.key, icon: m.icon, label: m.label }))}
           onClick={({ key }) => nav(key)} />
       </Sider>
       <Layout>
-        <Header style={{ background: '#fff', padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Header style={{ background: token.colorBgContainer, padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ color: '#888', fontSize: 13 }}>{t('header.project')}</span>
+            <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>{t('header.project')}</span>
             <Select size="small" style={{ width: 200 }} value={projectId || undefined}
               placeholder={t('header.selectProject')} onChange={changeProject}
               options={projects.filter((p) => p.can_access).map((p) => ({ value: p.id, label: p.name }))} />
             {user && <Tag color={user.role === 'super_admin' ? 'gold' : 'blue'}>{user.role}</Tag>}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {themeToggle}
             {langSelect}
             {userMenu}
           </div>
         </Header>
-        <Content style={{ margin: 16, padding: 16, background: '#fff', borderRadius: 8, minHeight: 280 }}>
+        <Content style={{ margin: 16, padding: 16, background: token.colorBgContainer, borderRadius: 8, minHeight: 280 }}>
           {children}
         </Content>
+        {footer}
       </Layout>
     </Layout>
   )

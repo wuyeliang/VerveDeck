@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { ConfigProvider } from 'antd'
 import { useTranslation } from 'react-i18next'
+import { ThemeProvider } from './theme'
 import zhCN from 'antd/locale/zh_CN'
 import zhTW from 'antd/locale/zh_TW'
 import jaJP from 'antd/locale/ja_JP'
@@ -30,13 +31,16 @@ function LocaleBridge({ children }: { children: React.ReactNode }) {
     return () => { t.off('languageChanged', onLang) }
   }, [t])
   useEffect(() => { dayjs.locale(DAY_LOCALES[lang] || 'zh-cn') }, [lang])
-  return <ConfigProvider locale={ANT_LOCALES[lang] || zhCN} theme={{ token: { colorPrimary: '#1677ff', borderRadius: 6 } }}>{children}</ConfigProvider>
+  // 主题（亮/暗/跟随系统）由外层 ThemeProvider 的 antd algorithm 控制，这里只设 locale
+  return <ConfigProvider locale={ANT_LOCALES[lang] || zhCN}>{children}</ConfigProvider>
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <LocaleBridge>
-      <App />
-    </LocaleBridge>
+    <ThemeProvider>
+      <LocaleBridge>
+        <App />
+      </LocaleBridge>
+    </ThemeProvider>
   </React.StrictMode>,
 )

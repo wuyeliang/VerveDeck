@@ -3,7 +3,7 @@
     "dashboard": "Dashboard", "data": "Data Center", "models": "Model Repo", "train": "Training",
     "evals": "Evaluation", "quant": "Compression", "infer": "Inference", "cluster": "Cluster Ops", "admin": "Admin"
   },
-  "header": { "project": "Project", "selectProject": "Select project", "logout": "Sign out" },
+  "header": { "project": "Project", "selectProject": "Select project", "logout": "Sign out", "theme": "Theme", "themeLight": "Light", "themeDark": "Dark", "themeSystem": "System" },
   "login": {
     "subtitle": "LLM Fine-tuning & Training Platform", "username": "Username", "password": "Password", "loginBtn": "Sign in",
     "requiredUser": "Please enter username", "requiredPw": "Please enter password", "welcome": "Signed in"

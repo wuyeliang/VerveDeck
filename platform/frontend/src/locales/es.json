@@ -3,7 +3,7 @@
     "dashboard": "Panel", "data": "Centro de datos", "models": "Repositorio de modelos", "train": "Entrenamiento",
     "evals": "Evaluación", "quant": "Compresión", "infer": "Despliegue de inferencia", "cluster": "Operación del clúster", "admin": "Administración"
   },
-  "header": { "project": "Proyecto", "selectProject": "Seleccionar proyecto", "logout": "Cerrar sesión" },
+  "header": { "project": "Proyecto", "selectProject": "Seleccionar proyecto", "logout": "Cerrar sesión", "theme": "Tema", "themeLight": "Claro", "themeDark": "Oscuro", "themeSystem": "Sistema" },
   "login": {
     "subtitle": "Plataforma de fine-tuning y entrenamiento de LLM", "username": "Usuario", "password": "Contraseña", "loginBtn": "Iniciar sesión",
     "requiredUser": "Ingrese el usuario", "requiredPw": "Ingrese la contraseña", "welcome": "Sesión iniciada"

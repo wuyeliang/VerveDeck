@@ -3,7 +3,7 @@
     "dashboard": "儀表盤", "data": "數據中心", "models": "模型倉庫", "train": "訓練中心",
     "evals": "評測中心", "quant": "模型壓縮", "infer": "推理部署", "cluster": "集群運維", "admin": "系統管理"
   },
-  "header": { "project": "項目空間", "selectProject": "選擇項目", "logout": "登出" },
+  "header": { "project": "項目空間", "selectProject": "選擇項目", "logout": "登出", "theme": "主題", "themeLight": "亮色", "themeDark": "暗色", "themeSystem": "跟隨系統" },
   "login": {
     "subtitle": "大模型微調訓練平台", "username": "用戶名", "password": "密碼", "loginBtn": "登 錄",
     "requiredUser": "請輸入用戶名", "requiredPw": "請輸入密碼", "welcome": "登入成功"
