@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
-import { Layout, Menu, Dropdown, Avatar, Select, Tag, theme as antTheme, Tooltip,
+import { Layout, Menu, Dropdown, Avatar, Select, Tag, theme as antTheme,
   Modal, Form, Input, Button, Card, message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import {
   DashboardOutlined, DatabaseOutlined, ContainerOutlined, ExperimentOutlined,
   BarChartOutlined, CloudServerOutlined, ClusterOutlined, SettingOutlined,
-  LogoutOutlined, RocketOutlined, GlobalOutlined, ShrinkOutlined,
-  SunOutlined, MoonOutlined, DesktopOutlined, GithubOutlined,
-  KeyOutlined, ApartmentOutlined,
+  LogoutOutlined, RocketOutlined, ShrinkOutlined,
+  GithubOutlined, KeyOutlined, FileTextOutlined,
 } from '@ant-design/icons'
 import { useTheme } from './theme'
 import Login from './pages/login'
@@ -20,10 +19,9 @@ import EvalCenter from './pages/evals'
 import QuantCenter from './pages/quantize'
 import Inference from './pages/infer'
 import ClusterOps from './pages/cluster'
-import OrgSpace from './pages/org'
+import LogsPage from './pages/logs'
 import AdminPanel from './pages/admin'
 import { api, getProjects } from './api'
-import i18n, { LANGS, setLang } from './i18n'
 
 const { Sider, Header, Content } = Layout
 
@@ -65,12 +63,12 @@ function ChangePasswordPanel({ onDone, submitLabel }: { onDone: () => void; subm
 function Shell({ children }: { children: React.ReactNode }) {
   const nav = useNavigate()
   const loc = useLocation()
-  const { t, i18n: ti18n } = useTranslation()
+  const { t } = useTranslation()
   const [user, setUser] = useState<any>(null)
   const [projects, setProjects] = useState<any[]>([])
   const [projectId, setProjectId] = useState<number>(Number(localStorage.getItem('projectId') || 0))
   const { token } = antTheme.useToken()
-  const { mode, setMode, dark } = useTheme()
+  const { dark } = useTheme()
   const [version, setVersion] = useState<any>(null)
   const [pwOpen, setPwOpen] = useState(false)
 
@@ -94,7 +92,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   }
 
   const isSuper = user?.role === 'super_admin'
-  const canOrg = isSuper || user?.role === 'tenant_admin'  // 租户/项目空间管理（超管 + 租户管理员）
   const MENU = [
     { key: '/', icon: <DashboardOutlined />, label: t('nav.dashboard') },
     { key: '/data', icon: <DatabaseOutlined />, label: t('nav.data') },
@@ -103,30 +100,19 @@ function Shell({ children }: { children: React.ReactNode }) {
     { key: '/evals', icon: <BarChartOutlined />, label: t('nav.evals') },
     { key: '/quantize', icon: <ShrinkOutlined />, label: t('nav.quant') },
     { key: '/infer', icon: <CloudServerOutlined />, label: t('nav.infer') },
-    { key: '/cluster', icon: <ClusterOutlined />, label: t('nav.cluster') },
-    ...(canOrg ? [{ key: '/org', icon: <ApartmentOutlined />, label: t('nav.org') }] : []),
-    ...(isSuper ? [{ key: '/admin', icon: <SettingOutlined />, label: t('nav.admin') }] : []),
+    {
+      key: '/cluster', icon: <ClusterOutlined />, label: t('nav.cluster'),
+      children: [
+        { key: '/cluster/nodes', label: t('cluster.tabNodes') },
+        { key: '/cluster/gpus', label: t('cluster.tabGpus') },
+        { key: '/cluster/monitor', label: t('cluster.tabMonitor') },
+      ],
+    },
+    ...(isSuper ? [
+      { key: '/logs', icon: <FileTextOutlined />, label: t('nav.logs') },
+      { key: '/admin', icon: <SettingOutlined />, label: t('nav.admin') },
+    ] : []),
   ]
-
-  // 语言选择器独立放 Header（不能嵌在 Dropdown 菜单项内：点击会冒泡触发菜单项关闭，下拉瞬间消失无法选中）
-  const langSelect = (
-    <Select size="small" style={{ width: 140 }} value={ti18n.language}
-      options={LANGS.map((l) => ({ value: l.code, label: l.label }))}
-      onChange={(v) => setLang(v)} suffixIcon={<GlobalOutlined />} />
-  )
-
-  const themeIcon = mode === 'dark' ? <MoonOutlined /> : mode === 'light' ? <SunOutlined /> : <DesktopOutlined />
-  const themeToggle = (
-    <Tooltip title={t('header.theme', { defaultValue: 'Theme' })}>
-      <Select size="small" style={{ width: 130 }} value={mode}
-        options={[
-          { value: 'light', label: <><SunOutlined /> {t('header.themeLight', { defaultValue: 'Light' })}</> },
-          { value: 'dark', label: <><MoonOutlined /> {t('header.themeDark', { defaultValue: 'Dark' })}</> },
-          { value: 'system', label: <><DesktopOutlined /> {t('header.themeSystem', { defaultValue: 'System' })}</> },
-        ]}
-        onChange={(v) => setMode(v)} suffixIcon={themeIcon} />
-    </Tooltip>
-  )
 
   const forcePw = !!user?.must_change_password
 
@@ -160,7 +146,8 @@ function Shell({ children }: { children: React.ReactNode }) {
           <img src="/logo.svg" alt="VerveDeck" style={{ width: 28, height: 28, borderRadius: 7 }} /> VerveDeck
         </div>
         <Menu theme={dark ? 'dark' : 'light'} mode="inline" selectedKeys={[loc.pathname]}
-          items={MENU.map((m) => ({ key: m.key, icon: m.icon, label: m.label }))}
+          defaultOpenKeys={['/cluster']}
+          items={MENU}
           onClick={({ key }) => nav(key)} />
       </Sider>
       <Layout>
@@ -173,12 +160,11 @@ function Shell({ children }: { children: React.ReactNode }) {
             {user && <Tag color={user.role === 'super_admin' ? 'gold' : 'blue'}>{user.role}</Tag>}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {themeToggle}
-            {langSelect}
             {userMenu}
           </div>
         </Header>
-        <Content style={{ margin: 16, padding: 16, background: token.colorBgContainer, borderRadius: 8, minHeight: 280 }}>
+        {/* key=projectId：切换项目时整体重挂载页面，数据随项目刷新（无需手动刷新页面） */}
+        <Content key={projectId} style={{ margin: 16, padding: 16, background: token.colorBgContainer, borderRadius: 8, minHeight: 280 }}>
           {forcePw ? (
             <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 48 }}>
               <Card title={<><KeyOutlined /> {t('auth.forceTitle')}</>} style={{ width: 460, textAlign: 'left' }}>
@@ -201,28 +187,40 @@ function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** 路由表放在 Router 内部组件里：订阅 location 变化后重渲染，
+ *  保证 hasToken 始终读取最新 localStorage（修复：登录成功后不立即跳转、需手动刷新的问题） */
+function AppRoutes() {
+  useLocation()
+  const hasToken = !!localStorage.getItem('token')
+  return (
+    <Routes>
+      <Route path="/login" element={hasToken ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/" element={hasToken ? <Shell><Dashboard /></Shell> : <Navigate to="/login" />} />
+      <Route path="/data" element={hasToken ? <Shell><DataCenter /></Shell> : <Navigate to="/login" />} />
+      <Route path="/models" element={hasToken ? <Shell><ModelRepo /></Shell> : <Navigate to="/login" />} />
+      <Route path="/train" element={hasToken ? <Shell><TrainCenter /></Shell> : <Navigate to="/login" />} />
+      <Route path="/evals" element={hasToken ? <Shell><EvalCenter /></Shell> : <Navigate to="/login" />} />
+      <Route path="/quantize" element={hasToken ? <Shell><QuantCenter /></Shell> : <Navigate to="/login" />} />
+      <Route path="/infer" element={hasToken ? <Shell><Inference /></Shell> : <Navigate to="/login" />} />
+      <Route path="/cluster" element={hasToken ? <Shell><Navigate to="/cluster/nodes" replace /></Shell> : <Navigate to="/login" />} />
+      <Route path="/cluster/nodes" element={hasToken ? <Shell><ClusterOps tab="nodes" /></Shell> : <Navigate to="/login" />} />
+      <Route path="/cluster/gpus" element={hasToken ? <Shell><ClusterOps tab="gpus" /></Shell> : <Navigate to="/login" />} />
+      <Route path="/cluster/monitor" element={hasToken ? <Shell><ClusterOps tab="monitor" /></Shell> : <Navigate to="/login" />} />
+      <Route path="/logs" element={hasToken ? <Shell><LogsPage /></Shell> : <Navigate to="/login" />} />
+      <Route path="/admin" element={hasToken ? <Shell><AdminPanel /></Shell> : <Navigate to="/login" />} />
+    </Routes>
+  )
+}
+
 export default function App() {
   const [ready, setReady] = useState(false)
   const { t } = useTranslation()
   useEffect(() => { setReady(true) }, [])
   useEffect(() => { document.title = `VerveDeck · ${t('login.subtitle')}` }, [t])
   if (!ready) return null
-  const hasToken = !!localStorage.getItem('token')
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={hasToken ? <Navigate to="/" replace /> : <Login />} />
-        <Route path="/" element={hasToken ? <Shell><Dashboard /></Shell> : <Navigate to="/login" />} />
-        <Route path="/data" element={hasToken ? <Shell><DataCenter /></Shell> : <Navigate to="/login" />} />
-        <Route path="/models" element={hasToken ? <Shell><ModelRepo /></Shell> : <Navigate to="/login" />} />
-        <Route path="/train" element={hasToken ? <Shell><TrainCenter /></Shell> : <Navigate to="/login" />} />
-        <Route path="/evals" element={hasToken ? <Shell><EvalCenter /></Shell> : <Navigate to="/login" />} />
-        <Route path="/quantize" element={hasToken ? <Shell><QuantCenter /></Shell> : <Navigate to="/login" />} />
-        <Route path="/infer" element={hasToken ? <Shell><Inference /></Shell> : <Navigate to="/login" />} />
-        <Route path="/cluster" element={hasToken ? <Shell><ClusterOps /></Shell> : <Navigate to="/login" />} />
-        <Route path="/org" element={hasToken ? <Shell><OrgSpace /></Shell> : <Navigate to="/login" />} />
-        <Route path="/admin" element={hasToken ? <Shell><AdminPanel /></Shell> : <Navigate to="/login" />} />
-      </Routes>
+      <AppRoutes />
     </BrowserRouter>
   )
 }

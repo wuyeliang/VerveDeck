@@ -18,6 +18,7 @@ export default function ModelRepo() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [q, setQ] = useState('')
   const [filter, setFilter] = useState('')
   const [catFilter, setCatFilter] = useState('all')
   const [view, setView] = useState<'list' | 'tiled'>('list')
@@ -40,8 +41,8 @@ export default function ModelRepo() {
   const [upPct, setUpPct] = useState<number | null>(null)
 
   const load = useCallback(() => {
-    api.get('/api/models', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
-  }, [projectId])
+    api.get('/api/models', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
+  }, [projectId, q])
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [load])
 
   // 分类筛选（选项随当前列表动态生成）+ 平铺/列表可见数据
@@ -125,6 +126,7 @@ export default function ModelRepo() {
               ...cats.map((c) => ({ value: c, label: c })),
               { value: 'none', label: t('models.categoryNone') },
             ]} />
+          <Input allowClear placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 200 }} />
           <Segmented size="small" value={view} onChange={(v) => setView(v as 'list' | 'tiled')}
             options={[
               { value: 'list', icon: <UnorderedListOutlined />, label: t('models.viewList') },

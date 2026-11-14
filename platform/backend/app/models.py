@@ -57,6 +57,7 @@ class ApiKey(Base):
     name: Mapped[str] = mapped_column(String(128))
     key_hash: Mapped[str] = mapped_column(String(255))
     key_prefix: Mapped[str] = mapped_column(String(16))
+    model_ids: Mapped[list] = mapped_column(JSON, default=list)  # 限定模型 ID（空 = 项目内全部模型）
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
@@ -275,3 +276,16 @@ class AuditLog(Base):
     ip: Mapped[str] = mapped_column(String(64), default="")
     status_code: Mapped[int] = mapped_column(Integer, default=0)
     detail: Mapped[str] = mapped_column(String(512), default="")
+    action: Mapped[str] = mapped_column(String(64), default="", index=True)  # 动作码（i18n 展示 + 筛选）
+
+
+class StorageQueue(Base):
+    """对象存储同步队列：S3 上传/下载/删除全量留痕，失败可重试"""
+    __tablename__ = "storage_queue"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    op: Mapped[str] = mapped_column(String(8))  # put/get/delete
+    key: Mapped[str] = mapped_column(String(512), default="")  # S3 key（相对 data_dir）
+    local_path: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(16), default="done")  # done/failed
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

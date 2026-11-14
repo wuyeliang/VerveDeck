@@ -1,7 +1,7 @@
 {
   "nav": {
-    "dashboard": "Panel", "data": "Centro de datos", "models": "Repositorio de modelos", "train": "Entrenamiento",
-    "evals": "Evaluación", "quant": "Compresión", "infer": "Despliegue de inferencia", "cluster": "Operación del clúster", "admin": "Administración", "org": "Tenants y Proyectos"
+    "dashboard": "Panel", "data": "Almacén", "models": "Modelos", "train": "Entrenamiento",
+    "evals": "Evaluación", "quant": "Compresión", "infer": "Inferencia", "cluster": "Clúster", "admin": "Administración", "org": "Tenants y Proyectos", "logs": "Registros", "storage": "Almacenamiento de objetos"
   },
   "header": { "project": "Proyecto", "selectProject": "Seleccionar proyecto", "logout": "Cerrar sesión", "theme": "Tema", "themeLight": "Claro", "themeDark": "Oscuro", "themeSystem": "Sistema", "changePassword": "Cambiar contraseña" },
   "login": {
@@ -13,7 +13,7 @@
   "common": {
     "loading": "Cargando...", "id": "ID", "name": "Nombre", "status": "Estado", "type": "Tipo",
     "desc": "Descripción", "createTime": "Creado", "actions": "Acciones", "detail": "Detalles", "delete": "Eliminar",
-    "enabled": "Activado", "disabled": "Deshabilitado", "yes": "Sí", "no": "No", "none": "Ninguno", "optional": "Opcional", "create": "Crear", "required": "Campo obligatorio", "cancel": "Cancelar", "deleted": "Eliminado", "deleteConfirm": "¿Eliminar? Esta acción no se puede deshacer"
+    "enabled": "Activado", "disabled": "Deshabilitado", "yes": "Sí", "no": "No", "none": "Ninguno", "optional": "Opcional", "create": "Crear", "required": "Campo obligatorio", "cancel": "Cancelar", "deleted": "Eliminado", "deleteConfirm": "¿Eliminar? Esta acción no se puede deshacer", "search": "Buscar"
   },
   "dashboard": {
     "gpuUtil": "Uso de GPU", "gpuMem": "Memoria GPU (GB)", "runningJobs": "Tareas en curso",
@@ -195,8 +195,12 @@
     "queueTitle": "Cola de tareas (prioridad: 1-9, mayor primero)", "colTask": "Tarea", "colStage": "Etapa",
     "colPriority": "Prioridad", "top": "Promover", "emptyQueue": "Cola vacía",
     "runningTitle": "Tareas en curso", "emptyRunning": "Sin tareas en curso", "colStart": "Inicio",
-    "nodeInfo": "Nodo {{node}} · Despliegues en línea {{d}} · En entrenamiento {{j}} · Autocuración: timeout del latido GPU (60 s) marca el nodo offline y las tareas asociadas como fallidas (reanudables)"
+    "nodeInfo": "Nodo {{node}} · Despliegues en línea {{d}} · En entrenamiento {{j}} · Autocuración: timeout del latido GPU (60 s) marca el nodo offline y las tareas asociadas como fallidas (reanudables)",
+    "tabNodes": "Nodos de cómputo", "tabGpus": "Dispositivos GPU", "tabMonitor": "Monitorización", "colNode": "Nodo", "colIdx": "Idx", "colMemTemp": "Temp. memoria", "colClocks": "Reloj SM/mem", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Límite", "colHealth": "Salud", "colName": "GPU", "colTemp": "Temp. (°C)"
   },
+  "logs": { "title": "Registros", "service": "Servicio", "tail": "Líneas", "auto": "Autoactualizar", "searchPh": "Filtrar palabras clave", "level": "Nivel", "all": "Todo", "warn": "Aviso", "error": "Error", "empty": "Sin registros", "copy": "Copiar", "copied": "Copiado", "download": "Descargar", "running": "En ejecución", "stopped": "Detenido" },
+  "storage": { "title": "Almacenamiento de objetos", "statusTitle": "Estado del almacenamiento", "enabled": "Habilitado", "disabled": "Deshabilitado (solo local)", "endpoint": "Endpoint", "bucket": "Bucket", "objCount": "Objetos", "totalBytes": "Tamaño total", "disk": "Uso del disco de datos", "diskUsed": "Usado", "browser": "Explorador de objetos", "queue": "Cola de sincronización", "queueEmpty": "La cola está vacía", "colOp": "Op.", "colKey": "Key/prefijo", "colStatus": "Estado", "colError": "Error", "colCreated": "Creado", "retry": "Reintentar", "retriedOk": "Reintento ok", "retriedFail": "Reintento fallido", "clearDone": "Limpiar terminadas", "clearFail": "Limpiar fallidas", "delete": "Eliminar", "delConfirm": "¿Eliminar todos los objetos con este prefijo?", "delOk": "Eliminado", "delFail": "Error al eliminar", "empty": "(vacío)", "updated": "Actualizado", "back": "Subir", "goRoot": "Raíz", "disabledTip": "S3 deshabilitado: los datos quedan solo en disco local", "opPut": "Subir", "opGet": "Descargar", "opDelete": "Eliminar", "stDone": "Hecho", "stFailed": "Fallido", "colSize": "Tamaño", "colTime": "Modificado" },
+  "audit": { "act": { "login": "Inicio de sesión", "change_password": "Cambiar contraseña", "user_create": "Crear usuario", "user_update": "Actualizar/restablecer usuario", "tenant_create": "Crear tenant", "project_create": "Crear proyecto", "project_member": "Cambio de miembro", "apikey_create": "Crear API key", "apikey_revoke": "Revocar API key", "guard_create": "Añadir regla", "guard_delete": "Eliminar regla", "admin_other": "Operación de administración", "dataset_create": "Crear dataset", "dataset_delete": "Eliminar dataset", "dataset_upload": "Subir versión de dataset", "dataset_import_s3": "Importar dataset S3", "dataset_commit": "Commit de versión", "dataset_parse": "Enviar parseo", "dataset_clean": "Enviar limpieza", "dataset_synth": "Enviar síntesis", "dataset_annotate": "Anotación de datos", "dataset_other": "Operación de dataset", "model_register_base": "Registrar modelo base", "model_upload": "Subir modelo", "model_register_artifact": "Registrar artefacto", "model_update_meta": "Actualizar categoría", "model_delete": "Eliminar modelo", "model_other": "Operación de modelo", "training_create": "Enviar entrenamiento", "training_cancel": "Cancelar entrenamiento", "training_resume": "Retomar entrenamiento", "training_delete": "Eliminar entrenamiento", "training_other": "Operación de entrenamiento", "eval_create": "Enviar evaluación", "eval_compare": "Comparar evaluaciones", "eval_delete": "Eliminar evaluación", "eval_other": "Operación de evaluación", "quant_create": "Enviar cuantización", "quant_delete": "Eliminar cuantización", "quant_other": "Operación de cuantización", "deploy_create": "Crear despliegue", "deploy_start": "Iniciar despliegue", "deploy_stop": "Detener despliegue", "deploy_delete": "Eliminar despliegue", "deploy_scale": "Escalar despliegue", "deploy_lora": "Cargar LoRA", "deploy_lora_remove": "Descargar LoRA", "deploy_other": "Operación de despliegue", "cluster_priority": "Cambiar prioridad", "security": "Evento de seguridad (401/403)", "other": "Otra operación" } },
   "admin": {
     "title": "Administración", "tabUsers": "Usuarios y roles (RBAC)", "tabOrg": "Tenants y proyectos", "tabKeys": "Claves API",
     "tabGuard": "Barreras de contenido", "tabAudit": "Registro de auditoría",
@@ -212,7 +216,8 @@
     "scopeBoth": "Entrada + Salida", "scopeInput": "Solo entrada", "scopeOutput": "Solo salida", "descPh": "Nota", "add": "Añadir",
     "colPattern": "Regex", "colScope": "Alcance", "colEnabled": "Activado", "del": "¿Eliminar?",
     "auditFilter": "Filtrar por usuario", "colTime": "Hora", "colUser": "Usuario", "colMethod": "Método",
-    "colPath": "Ruta", "colIp": "IP", "colCode": "Código"
+    "colPath": "Ruta", "colIp": "IP", "colCode": "Código",
+    "auditColAction": "Acción", "auditFilterAction": "Por acción", "auditFilterStatus": "Resultado", "auditFilterMethod": "Método", "auditFilterPath": "Ruta", "auditOk": "OK", "auditErr": "Fallido", "auditAll": "Todo", "tabSettings": "Ajustes", "langLabel": "Idioma", "keyModels": "Limitar a modelos", "keyModelsHint": "Dejar vacío para permitir acceso a todos los modelos del proyecto", "keyScopeAll": "Todos los modelos", "keyScopeN": "Limitado a {{n}} modelo(s)"
   },
   "quant": {
     "title": "Compresión de modelos",

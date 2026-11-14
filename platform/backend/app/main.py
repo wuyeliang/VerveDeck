@@ -13,7 +13,7 @@ from .models import User, Tenant, Project, GpuNode, GuardRule
 from .audit import AuditMiddleware
 from .scheduler import start_scheduler
 from .api import (auth, admin, datasets, models_api, training, evals,
-                  inference, cluster, dashboard, quantize)
+                  inference, cluster, dashboard, quantize, storage, logs)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -47,6 +47,8 @@ def _migrate_columns():
                 ("category", "VARCHAR(64) NOT NULL DEFAULT ''"),
                 ("tags", f"{json_type} NOT NULL DEFAULT '[]'"),
             ],
+            "audit_logs": [("action", "VARCHAR(64) NOT NULL DEFAULT ''")],
+            "api_keys": [("model_ids", f"{json_type} NOT NULL DEFAULT '[]'")],
         }
         with engine.begin() as conn:
             for table, cols in plan.items():
@@ -162,3 +164,5 @@ app.include_router(inference.router)
 app.include_router(cluster.router)
 app.include_router(dashboard.router)
 app.include_router(quantize.router)
+app.include_router(storage.router)
+app.include_router(logs.router)

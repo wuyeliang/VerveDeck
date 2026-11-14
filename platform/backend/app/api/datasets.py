@@ -77,7 +77,8 @@ class DsReq(BaseModel):
 
 
 @router.get("")
-def list_datasets(project_id: int | None = None, db=Depends(get_db), user=Depends(get_current_user)):
+def list_datasets(project_id: int | None = None, q: str = "", db=Depends(get_db), user=Depends(get_current_user)):
+    kw = q.strip()
     q = db.query(Dataset)
     if project_id:
         _proj(db, project_id, user)
@@ -85,6 +86,8 @@ def list_datasets(project_id: int | None = None, db=Depends(get_db), user=Depend
     else:
         pids = [p.id for p in db.query(Project).all() if can_access_project(user, db, p)]
         q = q.filter(Dataset.project_id.in_(pids or [0]))
+    if kw:
+        q = q.filter(Dataset.name.ilike(f"%{kw}%"))
     out = []
     for d in q.all():
         vers = db.query(DatasetVersion).filter_by(dataset_id=d.id).all()

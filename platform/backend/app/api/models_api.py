@@ -51,8 +51,9 @@ def _size(path: str) -> int:
 
 
 @router.get("")
-def list_models(project_id: int | None = None, mtype: str = "", category: str = "",
-                db=Depends(get_db), user=Depends(get_current_user)):
+def list_models(project_id: int | None = None, mtype: str = "", category: str | None = None,
+                q: str = "", db=Depends(get_db), user=Depends(get_current_user)):
+    kw = q.strip()
     if project_id:
         _check_project(db, project_id, user)
         q = db.query(ModelAsset).filter(ModelAsset.project_id == project_id)
@@ -61,10 +62,14 @@ def list_models(project_id: int | None = None, mtype: str = "", category: str = 
         q = db.query(ModelAsset).filter(ModelAsset.project_id.in_(pids or [0]))
     if mtype:
         q = q.filter(ModelAsset.type == mtype)
-    if category == "":  # 空串表示「未分类」
-        q = q.filter((ModelAsset.category.is_(None)) | (ModelAsset.category == ""))
-    elif category != "__all__":
-        q = q.filter(ModelAsset.category == category)
+    # category: None=全部（未传） / ""=仅未分类 / "__all__"=全部 / 其他=精确匹配
+    if category is not None and category != "__all__":
+        if category == "":
+            q = q.filter((ModelAsset.category.is_(None)) | (ModelAsset.category == ""))
+        else:
+            q = q.filter(ModelAsset.category == category)
+    if kw:
+        q = q.filter(ModelAsset.name.ilike(f"%{kw}%"))
     rows = q.order_by(ModelAsset.id.desc()).all()
     out = []
     for a in rows:

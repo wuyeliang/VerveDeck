@@ -344,8 +344,14 @@ async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends
     authed = False
     project_id = dep.project_id
     xkey = request.headers.get("x-api-key", "")
-    if xkey and verify_api_key(db, project_id, xkey):
-        authed = True
+    if xkey:
+        k = verify_api_key(db, project_id, xkey)
+        if k:
+            # 模型范围校验：key 限定了模型时，部署所绑定的模型必须在授权列表内
+            scope = k.model_ids or []
+            if scope and dep.model_asset_id not in scope:
+                raise HTTPException(403, "该 API Key 未授权访问此模型")
+            authed = True
     else:
         auth = request.headers.get("authorization", "")
         if auth.startswith("Bearer "):

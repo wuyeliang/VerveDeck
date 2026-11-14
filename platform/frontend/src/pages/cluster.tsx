@@ -1,10 +1,21 @@
 import React, { useEffect, useState } from 'react'
-import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space } from 'antd'
+import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs } from 'antd'
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
-export default function ClusterOps() {
+const THR_KEYS = ['thermal_slowdown', 'hw_slowdown', 'hw_thermal_slowdown', 'hw_power_brake_slowdown', 'sw_thermal_slowdown']
+const thrCount = (ex: any) => THR_KEYS.filter((k) => Number(ex[k]) > 0).length
+const healthTag = (health: number, t: any) => (
+  <Tag color={health >= 2 ? 'error' : health === 1 ? 'warning' : 'success'}
+    style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px', padding: '0 5px' }}>
+    {health >= 2 ? t('cluster.healthErr') : health === 1 ? t('cluster.healthWarn') : t('cluster.healthOk')}
+  </Tag>
+)
+
+export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' | 'monitor' }) {
+  const nav = useNavigate()
   const { t, i18n: ti18n } = useTranslation()
   const [nodes, setNodes] = useState<any[]>([])
   const [metrics, setMetrics] = useState<any[]>([])
@@ -25,11 +36,27 @@ export default function ClusterOps() {
     api.get('/api/cluster/queue').then((r) => setQueue(r.data)).catch(() => {})
     api.get('/api/cluster/utilization').then((r) => setUtil(r.data)).catch(() => {})
   }
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [])
+  useEffect(() => { load(); const x = setInterval(load, 5000); return () => clearInterval(x) }, [])
+
+  const gpus = nodes.flatMap((n) => (n.gpus || []).map((g: any) => ({ ...g, node: n.name })))
 
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>{t('cluster.title')}</h3>
+      <Tabs activeKey={tab} onChange={(k) => nav(`/cluster/${k}`)} items={[
+        { key: 'nodes', label: t('cluster.tabNodes'), children: <NodesView nodes={nodes} queue={queue} load={load} /> },
+        { key: 'gpus', label: t('cluster.tabGpus'), children: <GpusView gpus={gpus} /> },
+        { key: 'monitor', label: t('cluster.tabMonitor'), children: <MonitorView metrics={metrics} queue={queue} util={util} /> },
+      ]} />
+    </div>
+  )
+}
+
+/** 计算节点：节点卡（含逐卡概览）+ 队列 + 运行中 */
+function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <div>
       <Row gutter={16}>
         {nodes.map((n) => (
           <Col span={8} key={n.id}>
@@ -42,9 +69,6 @@ export default function ClusterOps() {
               </Row>
               {(n.gpus || []).map((g: any) => {
                 const ex = g.extra || {}
-                const thr = ['thermal_slowdown', 'hw_slowdown', 'hw_thermal_slowdown',
-                  'hw_power_brake_slowdown', 'sw_thermal_slowdown']
-                  .filter((k) => Number(ex[k]) > 0).length
                 const health = Number(ex.health) || 0
                 return (
                   <div key={g.index} style={{ marginTop: 8 }}>
@@ -57,13 +81,10 @@ export default function ClusterOps() {
                           sm: Math.round(ex.sm_clock || 0), mc: Math.round(ex.mem_clock || 0),
                           mu: Math.round(ex.mem_util || 0),
                           ecc: `${Math.round(ex.ecc_dbe_agg || 0)}/${Math.round(ex.ecc_sbe_agg || 0)}`,
-                          xid: Math.round(ex.xid_error_count || 0), thr,
+                          xid: Math.round(ex.xid_error_count || 0), thr: thrCount(ex),
                         })}
                       </span>
-                      <Tag color={health >= 2 ? 'error' : health === 1 ? 'warning' : 'success'}
-                        style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px', padding: '0 5px' }}>
-                        {health >= 2 ? t('cluster.healthErr') : health === 1 ? t('cluster.healthWarn') : t('cluster.healthOk')}
-                      </Tag>
+                      {healthTag(health, t)}
                     </div>
                   </div>
                 )
@@ -71,63 +92,108 @@ export default function ClusterOps() {
             </Card>
           </Col>
         ))}
-        <Col span={24}>
-          <Card size="small" title={t('cluster.trend')}>
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={metrics}>
-                <XAxis dataKey="t" fontSize={11} />
-                <YAxis yAxisId="l" domain={[0, 100]} fontSize={11} />
-                <YAxis yAxisId="r" orientation="right" fontSize={11} />
-                <RTooltip /><Legend />
-                <Line yAxisId="l" dataKey="util" name={t('cluster.chartUtil')} stroke="#1677ff" dot={false} />
-                <Line yAxisId="r" dataKey="mem" name={t('cluster.chartMem')} stroke="#52c41a" dot={false} />
-                <Line yAxisId="r" dataKey="power" name={t('cluster.chartPower')} stroke="#fa8c16" dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </Card>
-        </Col>
       </Row>
 
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={12}>
           <Card size="small" title={t('cluster.queueTitle')}>
-            <Table size="small" rowKey="id" dataSource={queue?.queued || []} pagination={false} locale={{ emptyText: t('cluster.emptyQueue') }}
-              columns={[
-                { title: t('common.id'), dataIndex: 'id', width: 55 },
-                { title: t('cluster.colTask'), dataIndex: 'name' },
-                { title: t('cluster.colStage'), dataIndex: 'stage', width: 70 },
-                { title: t('train.dGpu'), dataIndex: 'gpu_count', width: 60 },
-                { title: t('cluster.colPriority'), dataIndex: 'priority', width: 70, render: (v: number) => <Tag color={v >= 7 ? 'red' : v >= 4 ? 'blue' : 'default'}>{v}</Tag> },
-                {
-                  title: t('common.actions'), width: 130, render: (_: any, r: any) => (
-                    <Space size={4}>
-                      <Button size="small" onClick={() => api.put(`/api/cluster/queue/${r.id}`, { priority: Math.min(9, r.priority + 1) }).then(load)}>+1</Button>
-                      <Button size="small" onClick={() => api.put(`/api/cluster/queue/${r.id}`, { priority: Math.max(1, r.priority - 1) }).then(load)}>-1</Button>
-                      <Button size="small" type="primary" onClick={() => api.post(`/api/cluster/queue/${r.id}/promote`).then(() => load())}>{t('cluster.top')}</Button>
-                    </Space>
-                  ),
-                },
-              ]} />
+            <QueueTable queue={queue} load={load} t={t} />
           </Card>
         </Col>
         <Col span={12}>
-          <Card size="small" title={t('cluster.runningTitle')}>
-            <Table size="small" rowKey="id" dataSource={queue?.running || []} pagination={false} locale={{ emptyText: t('cluster.emptyRunning') }}
-              columns={[
-                { title: t('common.id'), dataIndex: 'id', width: 55 },
-                { title: t('cluster.colTask'), dataIndex: 'name' },
-                { title: t('cluster.colStage'), dataIndex: 'stage', width: 70 },
-                { title: t('train.dGpu'), dataIndex: 'gpu_count', width: 60 },
-                { title: t('cluster.colStart'), dataIndex: 'started_at', ellipsis: true },
-              ]} />
-            {util && (
-              <p style={{ marginTop: 12, color: '#888' }}>
-                {t('cluster.nodeInfo', { node: util.node, d: util.running_deployments, j: util.running_jobs })}
-              </p>
-            )}
-          </Card>
+          <RunningTable queue={queue} t={t} />
         </Col>
       </Row>
+    </div>
+  )
+}
+
+function QueueTable({ queue, load, t }: { queue: any; load: () => void; t: any }) {
+  return (
+    <Table size="small" rowKey="id" dataSource={queue?.queued || []} pagination={false} locale={{ emptyText: t('cluster.emptyQueue') }}
+      columns={[
+        { title: t('common.id'), dataIndex: 'id', width: 55 },
+        { title: t('cluster.colTask'), dataIndex: 'name' },
+        { title: t('cluster.colStage'), dataIndex: 'stage', width: 70 },
+        { title: t('train.dGpu'), dataIndex: 'gpu_count', width: 60 },
+        { title: t('cluster.colPriority'), dataIndex: 'priority', width: 70, render: (v: number) => <Tag color={v >= 7 ? 'red' : v >= 4 ? 'blue' : 'default'}>{v}</Tag> },
+        {
+          title: t('common.actions'), width: 130, render: (_: any, r: any) => (
+            <Space size={4}>
+              <Button size="small" onClick={() => api.put(`/api/cluster/queue/${r.id}`, { priority: Math.min(9, r.priority + 1) }).then(load)}>+1</Button>
+              <Button size="small" onClick={() => api.put(`/api/cluster/queue/${r.id}`, { priority: Math.max(1, r.priority - 1) }).then(load)}>-1</Button>
+              <Button size="small" type="primary" onClick={() => api.post(`/api/cluster/queue/${r.id}/promote`).then(() => load())}>{t('cluster.top')}</Button>
+            </Space>
+          ),
+        },
+      ]} />
+  )
+}
+
+function RunningTable({ queue, t, util }: { queue: any; t: any; util?: any }) {
+  return (
+    <Card size="small" title={t('cluster.runningTitle')}>
+      <Table size="small" rowKey="id" dataSource={queue?.running || []} pagination={false} locale={{ emptyText: t('cluster.emptyRunning') }}
+        columns={[
+          { title: t('common.id'), dataIndex: 'id', width: 55 },
+          { title: t('cluster.colTask'), dataIndex: 'name' },
+          { title: t('cluster.colStage'), dataIndex: 'stage', width: 70 },
+          { title: t('train.dGpu'), dataIndex: 'gpu_count', width: 60 },
+          { title: t('cluster.colStart'), dataIndex: 'started_at', ellipsis: true },
+        ]} />
+      {util && (
+        <p style={{ marginTop: 12, color: '#888' }}>
+          {t('cluster.nodeInfo', { node: util.node, d: util.running_deployments, j: util.running_jobs })}
+        </p>
+      )}
+    </Card>
+  )
+}
+
+/** GPU 设备：全集群 GPU 明细表（含 DCGM 指标） */
+function GpusView({ gpus }: { gpus: any[] }) {
+  const { t } = useTranslation()
+  return (
+    <Table size="small" rowKey={(r) => `${r.node}-${r.index}`} dataSource={gpus} pagination={false}
+      columns={[
+        { title: t('cluster.colNode'), dataIndex: 'node', width: 110 },
+        { title: t('cluster.colIdx'), dataIndex: 'index', width: 60 },
+        { title: t('cluster.colName'), dataIndex: 'name', width: 170, render: (v: string) => v || '-' },
+        { title: t('cluster.chartUtil'), dataIndex: 'util', width: 140, render: (v: number) => <Progress percent={v} size="small" /> },
+        { title: t('cluster.chartMem'), width: 130, render: (_: any, r: any) => `${(r.mem_used / 1024).toFixed(1)} / ${(r.mem_total / 1024).toFixed(0)} GB` },
+        { title: t('cluster.chartPower'), dataIndex: 'power', width: 90, render: (v: number) => `${v} W` },
+        { title: t('cluster.colTemp'), dataIndex: 'temp', width: 90, render: (v: number) => `${v} °C` },
+        { title: t('cluster.colMemTemp'), width: 90, render: (_: any, r: any) => r.extra?.mem_temp ? `${Math.round(r.extra.mem_temp)} °C` : '-' },
+        { title: t('cluster.colClocks'), width: 130, render: (_: any, r: any) => `${Math.round(r.extra?.sm_clock || 0)} / ${Math.round(r.extra?.mem_clock || 0)} MHz` },
+        { title: t('cluster.colEcc'), width: 90, render: (_: any, r: any) => `${Math.round(r.extra?.ecc_dbe_agg || 0)} / ${Math.round(r.extra?.ecc_sbe_agg || 0)}` },
+        { title: t('cluster.colXid'), width: 70, render: (_: any, r: any) => Math.round(r.extra?.xid_error_count || 0) },
+        { title: t('cluster.colThr'), width: 70, render: (_: any, r: any) => thrCount(r.extra || {}) },
+        { title: t('cluster.colHealth'), width: 80, render: (_: any, r: any) => healthTag(Number(r.extra?.health) || 0, t) },
+      ]} />
+  )
+}
+
+/** 监控大屏：趋势图 + 运行中 + 利用率统计 */
+function MonitorView({ metrics, queue, util }: { metrics: any[]; queue: any; util: any }) {
+  const { t } = useTranslation()
+  return (
+    <div>
+      <Card size="small" title={t('cluster.trend')}>
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={metrics}>
+            <XAxis dataKey="t" fontSize={11} />
+            <YAxis yAxisId="l" domain={[0, 100]} fontSize={11} />
+            <YAxis yAxisId="r" orientation="right" fontSize={11} />
+            <RTooltip /><Legend />
+            <Line yAxisId="l" dataKey="util" name={t('cluster.chartUtil')} stroke="#1677ff" dot={false} />
+            <Line yAxisId="r" dataKey="mem" name={t('cluster.chartMem')} stroke="#52c41a" dot={false} />
+            <Line yAxisId="r" dataKey="power" name={t('cluster.chartPower')} stroke="#fa8c16" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </Card>
+      <div style={{ marginTop: 16 }}>
+        <RunningTable queue={queue} t={t} util={util} />
+      </div>
     </div>
   )
 }

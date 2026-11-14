@@ -1,7 +1,7 @@
 {
   "nav": {
-    "dashboard": "ダッシュボード", "data": "データセンター", "models": "モデルリポジトリ", "train": "トレーニング",
-    "evals": "評価", "quant": "モデル量子化", "infer": "推論デプロイ", "cluster": "クラスタ運用", "admin": "システム管理", "org": "テナントとプロジェクト"
+    "dashboard": "ダッシュボード", "data": "データ", "models": "モデル", "train": "訓練",
+    "evals": "評価", "quant": "量子化", "infer": "推論", "cluster": "クラスタ", "admin": "管理", "org": "テナントとプロジェクト", "logs": "ログ", "storage": "オブジェクトストレージ"
   },
   "header": { "project": "プロジェクト", "selectProject": "プロジェクトを選択", "logout": "ログアウト", "theme": "テーマ", "themeLight": "ライト", "themeDark": "ダーク", "themeSystem": "システム", "changePassword": "パスワード変更" },
   "login": {
@@ -13,7 +13,7 @@
   "common": {
     "loading": "読み込み中...", "id": "ID", "name": "名前", "status": "状態", "type": "種類",
     "desc": "説明", "createTime": "作成日時", "actions": "操作", "detail": "詳細", "delete": "削除",
-    "enabled": "有効", "disabled": "無効", "yes": "はい", "no": "いいえ", "none": "なし", "optional": "任意", "create": "作成", "required": "必須入力項目です", "cancel": "キャンセル", "deleted": "削除しました", "deleteConfirm": "削除しますか？この操作は取り消せません"
+    "enabled": "有効", "disabled": "無効", "yes": "はい", "no": "いいえ", "none": "なし", "optional": "任意", "create": "作成", "required": "必須入力項目です", "cancel": "キャンセル", "deleted": "削除しました", "deleteConfirm": "削除しますか？この操作は取り消せません", "search": "検索"
   },
   "dashboard": {
     "gpuUtil": "GPU 使用率", "gpuMem": "GPU メモリ (GB)", "runningJobs": "実行中ジョブ",
@@ -195,8 +195,12 @@
     "queueTitle": "ジョブキュー（優先度スケジューリング：1-9、大きいほど先）", "colTask": "ジョブ", "colStage": "ステージ",
     "colPriority": "優先度", "top": "最上位", "emptyQueue": "キューは空です",
     "runningTitle": "実行中ジョブ", "emptyRunning": "実行中ジョブなし", "colStart": "開始",
-    "nodeInfo": "ノード {{node}} · オンラインデプロイ {{d}} · トレーニング中 {{j}} · 自動修復：GPU agent ハートビート 60s 超過でオフライン判定、関連ジョブは失敗扱いで再開可能"
+    "nodeInfo": "ノード {{node}} · オンラインデプロイ {{d}} · トレーニング中 {{j}} · 自動修復：GPU agent ハートビート 60s 超過でオフライン判定、関連ジョブは失敗扱いで再開可能",
+    "tabNodes": "計算ノード", "tabGpus": "GPU デバイス", "tabMonitor": "モニター", "colNode": "ノード", "colIdx": "No.", "colMemTemp": "メモリ温度", "colClocks": "SM/メモリクロック", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "スロットル", "colHealth": "健全性", "colName": "GPU", "colTemp": "温度 (°C)"
   },
+  "logs": { "title": "ログ", "service": "サービス", "tail": "行数", "auto": "自動更新", "searchPh": "キーワードで絞り込み", "level": "レベル", "all": "すべて", "warn": "警告", "error": "エラー", "empty": "ログなし", "copy": "コピー", "copied": "コピーしました", "download": "ダウンロード", "running": "実行中", "stopped": "停止中" },
+  "storage": { "title": "オブジェクトストレージ", "statusTitle": "ストレージ状態", "enabled": "有効", "disabled": "無効（ローカルのみ）", "endpoint": "エンドポイント", "bucket": "バケット", "objCount": "オブジェクト数", "totalBytes": "合計サイズ", "disk": "データディスク使用量", "diskUsed": "使用中", "browser": "オブジェクトブラウザ", "queue": "同期キュー", "queueEmpty": "キューは空です", "colOp": "操作", "colKey": "Key/プレフィックス", "colStatus": "状態", "colError": "エラー", "colCreated": "作成", "retry": "再試行", "retriedOk": "再試行完了", "retriedFail": "再試行失敗", "clearDone": "完了を削除", "clearFail": "失敗を削除", "delete": "削除", "delConfirm": "このプレフィックス配下の全オブジェクトを削除しますか？", "delOk": "削除しました", "delFail": "削除失敗", "empty": "（空）", "updated": "更新日時", "back": "上へ", "goRoot": "ルート", "disabledTip": "S3 無効：データはローカルディスクのみに保存", "opPut": "アップロード", "opGet": "ダウンロード", "opDelete": "削除", "stDone": "完了", "stFailed": "失敗", "colSize": "サイズ", "colTime": "修正日時" },
+  "audit": { "act": { "login": "ログイン", "change_password": "パスワード変更", "user_create": "ユーザー作成", "user_update": "ユーザー更新/リセット", "tenant_create": "テナント作成", "project_create": "プロジェクト作成", "project_member": "プロジェクトメンバー変更", "apikey_create": "API Key 作成", "apikey_revoke": "API Key 失効", "guard_create": "ガードルール追加", "guard_delete": "ガードルール削除", "admin_other": "システム管理操作", "dataset_create": "データセット作成", "dataset_delete": "データセット削除", "dataset_upload": "バージョンアップロード", "dataset_import_s3": "S3 データセット取り込み", "dataset_commit": "バージョンコミット", "dataset_parse": "解析タスク提出", "dataset_clean": "クリーニングタスク提出", "dataset_synth": "合成タスク提出", "dataset_annotate": "データアノテーション", "dataset_other": "データセット操作", "model_register_base": "基座モデル登録", "model_upload": "モデルアップロード", "model_register_artifact": "モデル成果物登録", "model_update_meta": "モデルカテゴリ変更", "model_delete": "モデル削除", "model_other": "モデル操作", "training_create": "学習タスク提出", "training_cancel": "学習タスクキャンセル", "training_resume": "断点再開", "training_delete": "学習タスク削除", "training_other": "学習操作", "eval_create": "評価タスク提出", "eval_compare": "評価比較", "eval_delete": "評価タスク削除", "eval_other": "評価操作", "quant_create": "量子化タスク提出", "quant_delete": "量子化タスク削除", "quant_other": "量子化操作", "deploy_create": "推論デプロイ作成", "deploy_start": "デプロイ開始", "deploy_stop": "デプロイ停止", "deploy_delete": "デプロイ削除", "deploy_scale": "デプロイスケーリング", "deploy_lora": "LoRA ホットロード", "deploy_lora_remove": "LoRA 解放", "deploy_other": "デプロイ操作", "cluster_priority": "タスク優先度変更", "security": "セキュリティイベント（401/403）", "other": "その他操作" } },
   "admin": {
     "title": "システム管理", "tabUsers": "ユーザーとロール (RBAC)", "tabOrg": "テナントとプロジェクト", "tabKeys": "API Keys",
     "tabGuard": "コンテンツ安全ガードレール", "tabAudit": "監査ログ",
@@ -212,7 +216,8 @@
     "scopeBoth": "入力+出力", "scopeInput": "入力のみ", "scopeOutput": "出力のみ", "descPh": "説明", "add": "追加",
     "colPattern": "正規表現", "colScope": "スコープ", "colEnabled": "有効", "del": "削除しますか？",
     "auditFilter": "ユーザー名で絞り込み", "colTime": "時間", "colUser": "ユーザー", "colMethod": "メソッド",
-    "colPath": "パス", "colIp": "IP", "colCode": "ステータス"
+    "colPath": "パス", "colIp": "IP", "colCode": "ステータス",
+    "auditColAction": "アクション", "auditFilterAction": "アクションで", "auditFilterStatus": "結果", "auditFilterMethod": "メソッド", "auditFilterPath": "パス", "auditOk": "成功", "auditErr": "失敗", "auditAll": "すべて", "tabSettings": "設定", "langLabel": "言語", "keyModels": "モデルを限定", "keyModelsHint": "空欄の場合、プロジェクト内の全モデルにアクセス可能", "keyScopeAll": "全モデル", "keyScopeN": "{{n}} 件のモデルに限定"
   },
   "quant": {
     "title": "モデル量子化",

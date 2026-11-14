@@ -164,7 +164,8 @@ def list_keys(pid: int, db=Depends(get_db), user=Depends(get_current_user)):
     if not can_access_project(user, db, proj):
         raise HTTPException(403, "无权限")
     return [{"id": k.id, "name": k.name, "key_prefix": k.key_prefix,
-             "is_active": k.is_active, "created_at": str(k.created_at)} for k in
+             "model_ids": k.model_ids or [], "is_active": k.is_active,
+             "created_at": str(k.created_at)} for k in
             db.query(ApiKey).filter_by(project_id=pid).all()]
 
 
@@ -176,7 +177,12 @@ def create_key(pid: int, req: dict, db=Depends(get_db), user=Depends(get_current
     if not can_access_project(user, db, proj):
         raise HTTPException(403, "无权限")
     raw, h = new_api_key()
-    k = ApiKey(project_id=pid, name=req.get("name", "default"), key_hash=h, key_prefix=raw[:12])
+    try:
+        model_ids = [int(x) for x in (req.get("model_ids") or [])]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "model_ids 必须是整数数组")
+    k = ApiKey(project_id=pid, name=str(req.get("name") or "default")[:128],
+               key_hash=h, key_prefix=raw[:12], model_ids=model_ids)
     db.add(k)
     db.commit()
     return {"key": raw, "name": k.name, "prefix": raw[:12]}  # key 只展示一次
@@ -225,14 +231,42 @@ def delete_rule(rid: int, db=Depends(get_db), user=Depends(require_role("super_a
 # ---------- 审计日志 ----------
 
 @router.get("/audit")
-def audit_logs(limit: int = 100, offset: int = 0, username: str = "",
+def audit_logs(limit: int = 100, offset: int = 0, username: str = "", action: str = "",
+               method: str = "", status: str = "", path_q: str = "", since: int = 0,
+               until: int = 0,
                db=Depends(get_db), user=Depends(require_role("super_admin", "tenant_admin"))):
+    """审计日志查询：支持 用户/动作码/方法/结果(ok|err)/路径模糊/时间范围 组合筛选"""
     q = db.query(AuditLog)
     if username:
         q = q.filter(AuditLog.username == username)
+    if action:
+        q = q.filter(AuditLog.action == action)
+    if method:
+        q = q.filter(AuditLog.method == method.upper())
+    if status == "ok":
+        q = q.filter(AuditLog.status_code < 400)
+    elif status == "err":
+        q = q.filter(AuditLog.status_code >= 400)
+    if path_q:
+        q = q.filter(AuditLog.path.like(f"%{path_q}%"))
+    if since:
+        q = q.filter(AuditLog.ts >= int(since))
+    if until:
+        q = q.filter(AuditLog.ts <= int(until))
     total = q.count()
     rows = (q.order_by(AuditLog.id.desc()).offset(offset).limit(min(limit, 500)).all())
     return {"total": total, "items": [
         {"id": r.id, "ts": r.ts, "username": r.username, "method": r.method,
-         "path": r.path, "ip": r.ip, "status_code": r.status_code, "detail": r.detail}
+         "path": r.path, "ip": r.ip, "status_code": r.status_code, "detail": r.detail,
+         "action": r.action}
         for r in rows]}
+
+
+@router.get("/audit/actions")
+def audit_actions(db=Depends(get_db), user=Depends(require_role("super_admin", "tenant_admin"))):
+    """已出现过的动作码（供前端筛选下拉）"""
+    from sqlalchemy import func
+    rows = (db.query(AuditLog.action, func.count(AuditLog.id))
+            .filter(AuditLog.action != "")
+            .group_by(AuditLog.action).order_by(func.count(AuditLog.id).desc()).all())
+    return [{"action": a, "count": n} for a, n in rows if a]

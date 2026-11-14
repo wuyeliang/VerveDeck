@@ -5,6 +5,10 @@ import {
 import { PlusOutlined, CopyOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useTheme } from '../theme'
+import { LANGS, setLang } from '../i18n'
+import OrgSpace from './org'
+import StorageTab from './storage'
 
 const ROLE_COLOR: Record<string, string> = { super_admin: 'gold', tenant_admin: 'purple', developer: 'blue', viewer: 'default' }
 
@@ -16,9 +20,12 @@ export default function AdminPanel() {
       <h3 style={{ marginTop: 0 }}>{t('admin.title')}</h3>
       <Tabs activeKey={tab} onChange={setTab} items={[
         { key: 'users', label: t('admin.tabUsers'), children: <UsersTab /> },
+        { key: 'org', label: t('admin.tabOrg'), children: <OrgSpace /> },
         { key: 'keys', label: t('admin.tabKeys'), children: <KeysTab /> },
         { key: 'guard', label: t('admin.tabGuard'), children: <GuardTab /> },
         { key: 'audit', label: t('admin.tabAudit'), children: <AuditTab /> },
+        { key: 'storage', label: t('storage.title'), children: <StorageTab /> },
+        { key: 'settings', label: t('admin.tabSettings'), children: <SettingsTab /> },
       ]} />
     </div>
   )
@@ -92,15 +99,22 @@ function KeysTab() {
   const { t } = useTranslation()
   const [projects, setProjects] = useState<any[]>([])
   const [keys, setKeys] = useState<any[]>([])
+  const [models, setModels] = useState<any[]>([])
   const [pid, setPid] = useState<number>(0)
   const [newKey, setNewKey] = useState('')
+  const [open, setOpen] = useState(false)
+  const [form] = Form.useForm()
   const load = () => {
     api.get('/api/admin/projects').then((r) => {
       setProjects(r.data)
       if (r.data.length && !r.data.find((p) => p.id === pid)) setPid(r.data[0].id)
     }).catch(() => {})
   }
-  const loadKeys = () => pid && api.get(`/api/admin/projects/${pid}/api-keys`).then((r) => setKeys(r.data)).catch(() => {})
+  const loadKeys = () => {
+    if (!pid) return
+    api.get(`/api/admin/projects/${pid}/api-keys`).then((r) => setKeys(r.data)).catch(() => {})
+    api.get('/api/models', { params: { project_id: pid } }).then((r) => setModels(r.data || [])).catch(() => {})
+  }
   useEffect(() => { load() }, [])
   useEffect(() => { loadKeys() }, [pid])
   return (
@@ -108,10 +122,7 @@ function KeysTab() {
       <Space style={{ marginBottom: 12 }}>
         <Select value={pid || undefined} style={{ width: 240 }} placeholder={t('admin.selectProject')}
           options={projects.map((p) => ({ value: p.id, label: p.name }))} onChange={setPid} />
-        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={async () => {
-          const r = await api.post(`/api/admin/projects/${pid}/api-keys`, { name: 'default' })
-          setNewKey(r.data.key)
-        }}>{t('admin.createKey')}</Button>
+        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>{t('admin.createKey')}</Button>
       </Space>
       {newKey && (
         <Card size="small" style={{ marginBottom: 12, borderColor: '#fa8c16' }}>
@@ -126,6 +137,12 @@ function KeysTab() {
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
           { title: t('admin.colPrefix'), dataIndex: 'key_prefix', render: (v: string) => <code>{v}…</code> },
+          {
+            title: t('admin.keyModels'), dataIndex: 'model_ids', width: 160,
+            render: (ids: number[]) => (!ids || !ids.length)
+              ? <Tag>{t('admin.keyScopeAll')}</Tag>
+              : <Tag color="blue">{t('admin.keyScopeN', { n: ids.length })}</Tag>,
+          },
           { title: t('common.status'), dataIndex: 'is_active', width: 80, render: (v: boolean) => v ? <Tag color="success">{t('common.enabled')}</Tag> : <Tag>{t('common.disabled')}</Tag> },
           {
             title: t('common.actions'), width: 90, render: (_: any, r: any) => (
@@ -135,6 +152,20 @@ function KeysTab() {
             ),
           },
         ]} />
+      <Modal title={t('admin.createKey')} open={open} onCancel={() => setOpen(false)}
+        onOk={async () => {
+          const v = await form.validateFields()
+          const r = await api.post(`/api/admin/projects/${pid}/api-keys`, v)
+          setNewKey(r.data.key); setOpen(false); loadKeys()
+        }}>
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label={t('common.name')} rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="model_ids" label={t('admin.keyModels')} extra={t('admin.keyModelsHint')}>
+            <Select mode="multiple" allowClear optionFilterProp="label" placeholder={t('admin.keyScopeAll')}
+              options={models.map((m: any) => ({ value: m.id, label: m.name }))} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }
@@ -172,26 +203,76 @@ function AuditTab() {
   const [data, setData] = useState<any>({ items: [], total: 0 })
   const [page, setPage] = useState(1)
   const [user, setUser] = useState('')
+  const [action, setAction] = useState('')
+  const [method, setMethod] = useState('')
+  const [status, setStatus] = useState('')
+  const [pathQ, setPathQ] = useState('')
+  const [actions, setActions] = useState<any[]>([])
+
+  useEffect(() => {
+    api.get('/api/admin/audit/actions').then((r) => setActions(r.data || [])).catch(() => {})
+  }, [])
   const load = useCallback(() => {
-    api.get('/api/admin/audit', { params: { limit: 20, offset: (page - 1) * 20, username: user } })
-      .then((r) => setData(r.data)).catch(() => {})
-  }, [page, user])
+    api.get('/api/admin/audit', {
+      params: { limit: 20, offset: (page - 1) * 20, username: user, action, method, status, path_q: pathQ },
+    }).then((r) => setData(r.data)).catch(() => {})
+  }, [page, user, action, method, status, pathQ])
   useEffect(() => { load() }, [load])
+  const actLabel = (code: string) => t(`audit.act.${code}`, { defaultValue: code || '-' })
   return (
     <div>
-      <Space style={{ marginBottom: 12 }}>
-        <Input placeholder={t('admin.auditFilter')} value={user} onChange={(e) => { setUser(e.target.value); setPage(1) }} style={{ width: 200 }} />
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Input placeholder={t('admin.auditFilter')} value={user} onChange={(e) => { setUser(e.target.value); setPage(1) }} style={{ width: 140 }} />
+        <Select allowClear placeholder={t('admin.auditFilterAction')} value={action || undefined}
+          onChange={(v) => { setAction(v || ''); setPage(1) }} style={{ width: 170 }}
+          options={actions.map((a) => ({ value: a.action, label: `${actLabel(a.action)} (${a.count})` }))} />
+        <Select allowClear placeholder={t('admin.auditFilterMethod')} value={method || undefined}
+          onChange={(v) => { setMethod(v || ''); setPage(1) }} style={{ width: 110 }}
+          options={['GET', 'POST', 'PUT', 'DELETE'].map((x) => ({ value: x, label: x }))} />
+        <Select allowClear placeholder={t('admin.auditFilterStatus')} value={status || undefined}
+          onChange={(v) => { setStatus(v || ''); setPage(1) }} style={{ width: 100 }}
+          options={[{ value: 'ok', label: t('admin.auditOk') }, { value: 'err', label: t('admin.auditErr') }]} />
+        <Input placeholder={t('admin.auditFilterPath')} value={pathQ} onChange={(e) => { setPathQ(e.target.value); setPage(1) }} style={{ width: 160 }} />
       </Space>
       <Table size="small" rowKey="id" dataSource={data.items}
         pagination={{ current: page, total: data.total, pageSize: 20, onChange: setPage }}
         columns={[
-          { title: t('admin.colTime'), dataIndex: 'ts', width: 170, render: (ts: number) => new Date(ts * 1000).toLocaleString(ti18n.language) },
-          { title: t('admin.colUser'), dataIndex: 'username', width: 110 },
+          { title: t('admin.colTime'), dataIndex: 'ts', width: 160, render: (ts: number) => new Date(ts * 1000).toLocaleString(ti18n.language) },
+          { title: t('admin.colUser'), dataIndex: 'username', width: 100 },
+          { title: t('admin.auditColAction'), dataIndex: 'action', width: 130,
+            render: (v: string) => <Tag color={v ? 'blue' : 'default'}>{actLabel(v)}</Tag> },
           { title: t('admin.colMethod'), dataIndex: 'method', width: 70 },
           { title: t('admin.colPath'), dataIndex: 'path', ellipsis: true },
-          { title: t('admin.colIp'), dataIndex: 'ip', width: 130 },
-          { title: t('admin.colCode'), dataIndex: 'status_code', width: 80 },
+          { title: t('admin.colIp'), dataIndex: 'ip', width: 120 },
+          { title: t('admin.colCode'), dataIndex: 'status_code', width: 70,
+            render: (v: number) => <Tag color={v >= 400 ? 'error' : 'success'}>{v}</Tag> },
         ]} />
     </div>
+  )
+}
+
+/** 平台设置：主题 + 语言（原 Header 右上角入口迁至此） */
+function SettingsTab() {
+  const { t, i18n: ti18n } = useTranslation()
+  const { mode, setMode } = useTheme()
+  return (
+    <Card size="small" title={t('admin.tabSettings')} style={{ maxWidth: 480 }}>
+      <Form layout="vertical">
+        <Form.Item label={t('header.theme')}>
+          <Select value={mode} style={{ width: 200 }}
+            options={[
+              { value: 'light', label: t('header.themeLight') },
+              { value: 'dark', label: t('header.themeDark') },
+              { value: 'system', label: t('header.themeSystem') },
+            ]}
+            onChange={(v) => setMode(v)} />
+        </Form.Item>
+        <Form.Item label={t('admin.langLabel')}>
+          <Select value={ti18n.language} style={{ width: 200 }}
+            options={LANGS.map((l) => ({ value: l.code, label: l.label }))}
+            onChange={(v) => setLang(v)} />
+        </Form.Item>
+      </Form>
+    </Card>
   )
 }

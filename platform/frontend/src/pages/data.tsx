@@ -14,6 +14,7 @@ export default function DataCenter() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [q, setQ] = useState('')
   const [cur, setCur] = useState<any>(null)
   const [drawer, setDrawer] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -28,8 +29,8 @@ export default function DataCenter() {
   const [s3Fmt, setS3Fmt] = useState('alpaca')
 
   const load = useCallback(() => {
-    api.get('/api/datasets', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
-  }, [projectId])
+    api.get('/api/datasets', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
+  }, [projectId, q])
   useEffect(() => { load() }, [load])
 
   const openDs = (id: number) => {
@@ -92,7 +93,10 @@ export default function DataCenter() {
     <div>
       <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
         <h3 style={{ margin: 0 }}>{t('data.title')}</h3>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('data.newDataset')}</Button>
+        <Space wrap>
+          <Input allowClear placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 220 }} />
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('data.newDataset')}</Button>
+        </Space>
       </Space>
       <Table rowKey="id" dataSource={list} pagination={{ pageSize: 10 }}
         columns={[

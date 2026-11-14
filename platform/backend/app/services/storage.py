@@ -12,11 +12,30 @@ import os
 import logging
 
 from ..config import settings
+from ..database import SessionLocal
+from ..models import StorageQueue
 
 log = logging.getLogger("storage")
 
 _client = None
 _bucket_ready = False
+
+
+def record(op: str, key: str, local_path: str, ok: bool, err: str = "") -> None:
+    """对象存储同步留痕（同步队列）：每个上传/下载/删除操作一条记录。
+
+    在后台线程中调用，独立短会话；写库失败仅告警，绝不影响主流程。
+    """
+    try:
+        db = SessionLocal()
+        try:
+            db.add(StorageQueue(op=op, key=key[:500], local_path=local_path[:500],
+                                status="done" if ok else "failed", error=(err or "")[:1000]))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning("storage queue record failed: %s", e)
 
 
 def enabled() -> bool:
@@ -72,12 +91,18 @@ def put_file(local_path: str) -> bool:
     try:
         ensure_bucket()
         c = client()
+        key = _key(local_path)
         stat = os.stat(local_path)
-        c.fput_object(settings.s3_bucket, _key(local_path), local_path)
-        log.info("s3 upload %s (%d bytes)", _key(local_path), stat.st_size)
+        c.fput_object(settings.s3_bucket, key, local_path)
+        log.info("s3 upload %s (%d bytes)", key, stat.st_size)
+        record("put", key, local_path, True)
         return True
     except Exception as e:
         log.warning("s3 upload %s failed: %s", local_path, e)
+        try:
+            record("put", _key(local_path), local_path, False, str(e))
+        except Exception:
+            pass
         return False
 
 
@@ -109,9 +134,14 @@ def ensure_local(local_path: str) -> bool:
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         c.fget_object(settings.s3_bucket, key, local_path)
         log.info("s3 download %s -> %s", key, local_path)
+        record("get", key, local_path, True)
         return True
     except Exception as e:
         log.warning("s3 download %s failed: %s", local_path, e)
+        try:
+            record("get", _key(local_path), local_path, False, str(e))
+        except Exception:
+            pass
         return False
 
 
@@ -119,16 +149,24 @@ def delete_dir(local_dir: str) -> None:
     """删除 S3 上对应前缀（数据集删除时调用，失败仅告警）"""
     if not enabled() or not os.path.isdir(local_dir):
         return
+    prefix = ""
+    try:
+        prefix = _key(local_dir.rstrip(os.sep)) + "/"
+    except ValueError:
+        return
+    ok, err, n = False, "", 0
     try:
         ensure_bucket()
         c = client()
-        prefix = _key(local_dir.rstrip(os.sep)) + "/"
-        objs = c.list_objects(settings.s3_bucket, prefix=prefix, recursive=True)
-        for o in objs:
+        for o in c.list_objects(settings.s3_bucket, prefix=prefix, recursive=True):
             c.remove_object(settings.s3_bucket, o.object_name)
-        log.info("s3 deleted prefix %s", prefix)
+            n += 1
+        ok = True
+        log.info("s3 deleted prefix %s (%d objects)", prefix, n)
     except Exception as e:
+        err = str(e)
         log.warning("s3 delete prefix %s failed: %s", local_dir, e)
+    record("delete", prefix, local_dir, ok, err if not ok else f"{n} objects")
 
 
 def health() -> dict:
@@ -140,3 +178,54 @@ def health() -> dict:
         return {"enabled": True, "endpoint": settings.s3_endpoint, "bucket": settings.s3_bucket, "ok": True}
     except Exception as e:
         return {"enabled": True, "endpoint": settings.s3_endpoint, "bucket": settings.s3_bucket, "ok": False, "detail": str(e)[:200]}
+
+
+def list_objects(prefix: str = "", limit: int = 200) -> list[dict]:
+    """浏览对象（模拟目录：delimiter=/ 时前缀聚合为「文件夹」条目）"""
+    if not enabled():
+        return []
+    ensure_bucket()
+    c = client()
+    out = []
+    for o in c.list_objects(settings.s3_bucket, prefix=prefix, delimiter="/", recursive=False):
+        if o.is_dir:
+            out.append({"name": o.object_name, "is_dir": True, "size": 0, "last_modified": ""})
+        else:
+            out.append({"name": o.object_name, "is_dir": False,
+                        "size": o.size or 0,
+                        "last_modified": str(o.last_modified) if o.last_modified else ""})
+        if len(out) >= max(1, min(int(limit), 500)):
+            break
+    return out
+
+
+def delete_prefix(prefix: str, cap: int = 5000) -> int:
+    """删除前缀下全部对象（管理页手动删除用），返回删除数；超 cap 抛异常防误删"""
+    if not enabled():
+        return 0
+    ensure_bucket()
+    c = client()
+    deleted = 0
+    for o in c.list_objects(settings.s3_bucket, prefix=prefix, recursive=True):
+        c.remove_object(settings.s3_bucket, o.object_name)
+        deleted += 1
+        if deleted > cap:
+            raise RuntimeError(f"prefix 下对象超过 {cap} 个，已中止（防误删）")
+    record("delete", prefix, "", True, f"{deleted} objects (manual)")
+    return deleted
+
+
+def stats() -> dict:
+    """桶统计：对象数 / 总字节（上限 1 万，超出只标注截断）"""
+    if not enabled():
+        return {"objects": 0, "bytes": 0, "truncated": False}
+    ensure_bucket()
+    c = client()
+    n, total, truncated = 0, 0, False
+    for o in c.list_objects(settings.s3_bucket, recursive=True):
+        n += 1
+        total += o.size or 0
+        if n >= 10000:
+            truncated = True
+            break
+    return {"objects": n, "bytes": total, "truncated": truncated}
