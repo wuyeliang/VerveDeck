@@ -42,6 +42,11 @@ def _migrate_columns():
                 ("scenario", "VARCHAR(16) NOT NULL DEFAULT 'text'"),
             ],
             "deployments": [("description", "TEXT NOT NULL DEFAULT ''")],
+            "users": [("must_change_password", "BOOLEAN NOT NULL DEFAULT 'false'")],
+            "model_assets": [
+                ("category", "VARCHAR(64) NOT NULL DEFAULT ''"),
+                ("tags", f"{json_type} NOT NULL DEFAULT '[]'"),
+            ],
         }
         with engine.begin() as conn:
             for table, cols in plan.items():
@@ -64,7 +69,8 @@ def init_db():
         if not admin:
             admin = User(username="admin",
                          password_hash=hash_password(settings.admin_password),
-                         full_name="平台管理员", role="super_admin")
+                         full_name="平台管理员", role="super_admin",
+                         must_change_password=True)  # 默认密码，首登强制修改
             db.add(admin)
             db.flush()
         # 默认租户 + 项目

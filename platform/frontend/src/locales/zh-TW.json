@@ -1,14 +1,15 @@
 {
   "nav": {
     "dashboard": "儀表盤", "data": "數據中心", "models": "模型倉庫", "train": "訓練中心",
-    "evals": "評測中心", "quant": "模型壓縮", "infer": "推理部署", "cluster": "集群運維", "admin": "系統管理"
+    "evals": "評測中心", "quant": "模型壓縮", "infer": "推理部署", "cluster": "集群運維", "admin": "系統管理", "org": "租戶與項目空間"
   },
-  "header": { "project": "項目空間", "selectProject": "選擇項目", "logout": "登出", "theme": "主題", "themeLight": "亮色", "themeDark": "暗色", "themeSystem": "跟隨系統" },
+  "header": { "project": "項目空間", "selectProject": "選擇項目", "logout": "登出", "theme": "主題", "themeLight": "亮色", "themeDark": "暗色", "themeSystem": "跟隨系統", "changePassword": "修改密碼" },
   "login": {
     "subtitle": "大模型微調訓練平台", "username": "用戶名", "password": "密碼", "loginBtn": "登 錄",
     "requiredUser": "請輸入用戶名", "requiredPw": "請輸入密碼", "welcome": "登入成功"
   },
   "api": { "requestFailed": "請求失敗" },
+  "auth": { "changePwTitle": "修改密碼", "oldPw": "目前密碼", "newPw": "新密碼", "newPwHint": "至少 6 位，且不能與原密碼相同", "confirmPw": "確認新密碼", "pwMismatch": "兩次輸入的新密碼不一致", "pwChanged": "密碼已修改", "forceTitle": "請修改密碼", "forceHint": "出於安全考慮，您的帳號正在使用初始密碼，請修改後再繼續使用平台。" },
   "common": {
     "loading": "加載中...", "id": "ID", "name": "名稱", "status": "狀態", "type": "類型",
     "desc": "描述", "createTime": "創建時間", "actions": "操作", "detail": "詳情", "delete": "刪除",
@@ -74,7 +75,8 @@
     "nameInRepo": "倉庫內名稱", "namePh": "如：qwen2.5-0.5b-instruct", "hfId": "HuggingFace ID",
     "hfIdPh": "如：Qwen/Qwen2.5-0.5B-Instruct", "note": "備註",
     "lineageTitle": "血緣追蹤：{{name}}", "colJob": "訓練任務", "inheritance": "繼承鏈（自基座）",
-    "children": "由其派生的模型", "colTask": "任務", "relatedDs": "關聯數據集版本", "path": "路徑"
+    "children": "由其派生的模型", "colTask": "任務", "relatedDs": "關聯數據集版本", "path": "路徑",
+    "viewList": "列表", "viewTiled": "平鋪", "colCategory": "分類", "categoryAll": "全部分類", "categoryNone": "未分類", "category": "分類", "setCategory": "設置分類", "tags": "標籤", "tagsPh": "輸入後回車添加（可多個）", "categoryPh": "如：對話 / 代碼 / 數學 / 醫療（可留空）", "categorySaved": "分類已更新"
   },
   "train": {
     "title": "訓練任務（CPT / SFT / DPO / 合併）", "newJob": "新建訓練任務",
@@ -199,7 +201,7 @@
     "title": "系統管理", "tabUsers": "用戶與角色 (RBAC)", "tabOrg": "租戶與項目空間", "tabKeys": "API Keys",
     "tabGuard": "內容安全護欄", "tabAudit": "審計日誌",
     "newUser": "新建用戶", "colUsername": "用戶名", "colName": "姓名", "colRole": "角色", "colTenant": "租戶",
-    "resetPwConfirm": "重置密碼為 admin123？", "resetPw": "重置密碼", "resetOk": "已重置", "created": "已創建",
+    "resetPwConfirm": "重置密碼為 admin123？", "resetPw": "重置密碼", "resetOk": "已重置", "created": "已創建","resetPwModal": "重設密碼", "resetPwLabel": "新密碼", "resetPwHint": "重設後該用戶下次登入將被強制修改密碼", "mustChange": "待改密",
     "initPw": "初始密碼", "role": "角色",
     "tenants": "租戶（多租戶隔離）", "newTenant": "新建租戶", "projects": "項目空間", "newProject": "新建項目",
     "colMembers": "成員", "addMember": "添加成員", "tenantName": "租戶名稱", "projectModal": "新建項目空間",

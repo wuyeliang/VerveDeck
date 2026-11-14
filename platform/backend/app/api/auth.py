@@ -104,11 +104,17 @@ def me(user: User = Depends(get_current_user)):
 def change_password(req: PwReq, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not verify_password(req.old_password, user.password_hash):
         raise HTTPException(400, "原密码错误")
+    if req.new_password == req.old_password:
+        raise HTTPException(400, "新密码不能与原密码相同")
+    if len(req.new_password) < 6:
+        raise HTTPException(400, "新密码至少 6 位")
     user.password_hash = hash_password(req.new_password)
+    user.must_change_password = False  # 改密后解除首登强制
     db.commit()
     return {"ok": True}
 
 
 def _user_brief(u: User):
     return {"id": u.id, "username": u.username, "full_name": u.full_name,
-            "role": u.role, "tenant_id": u.tenant_id}
+            "role": u.role, "tenant_id": u.tenant_id,
+            "must_change_password": bool(u.must_change_password)}

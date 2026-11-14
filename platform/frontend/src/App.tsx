@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
-import { Layout, Menu, Dropdown, Avatar, Select, Tag, theme as antTheme, Tooltip } from 'antd'
+import { Layout, Menu, Dropdown, Avatar, Select, Tag, theme as antTheme, Tooltip,
+  Modal, Form, Input, Button, Card, message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import {
   DashboardOutlined, DatabaseOutlined, ContainerOutlined, ExperimentOutlined,
   BarChartOutlined, CloudServerOutlined, ClusterOutlined, SettingOutlined,
   LogoutOutlined, RocketOutlined, GlobalOutlined, ShrinkOutlined,
   SunOutlined, MoonOutlined, DesktopOutlined, GithubOutlined,
+  KeyOutlined, ApartmentOutlined,
 } from '@ant-design/icons'
 import { useTheme } from './theme'
 import Login from './pages/login'
@@ -18,11 +20,47 @@ import EvalCenter from './pages/evals'
 import QuantCenter from './pages/quantize'
 import Inference from './pages/infer'
 import ClusterOps from './pages/cluster'
+import OrgSpace from './pages/org'
 import AdminPanel from './pages/admin'
 import { api, getProjects } from './api'
 import i18n, { LANGS, setLang } from './i18n'
 
 const { Sider, Header, Content } = Layout
+
+/** 改密表单（复用：用户菜单弹框 + 首登强制改密页） */
+function ChangePasswordPanel({ onDone, submitLabel }: { onDone: () => void; submitLabel: string }) {
+  const { t } = useTranslation()
+  const [form] = Form.useForm()
+  const [busy, setBusy] = useState(false)
+  return (
+    <Form form={form} layout="vertical" style={{ maxWidth: 380 }}
+      onFinish={async (v: any) => {
+        if (v.new_password !== v.confirm) { message.error(t('auth.pwMismatch')); return }
+        setBusy(true)
+        try {
+          await api.put('/api/auth/password', { old_password: v.old_password, new_password: v.new_password })
+          message.success(t('auth.pwChanged'))
+          onDone()
+        } catch (e: any) {
+          message.error(e.response?.data?.detail || t('api.requestFailed'))
+        } finally {
+          setBusy(false)
+        }
+      }}>
+      <Form.Item name="old_password" label={t('auth.oldPw')} rules={[{ required: true }]}>
+        <Input.Password autoComplete="current-password" />
+      </Form.Item>
+      <Form.Item name="new_password" label={t('auth.newPw')} rules={[{ required: true, min: 6 }]}
+        extra={t('auth.newPwHint')}>
+        <Input.Password autoComplete="new-password" />
+      </Form.Item>
+      <Form.Item name="confirm" label={t('auth.confirmPw')} rules={[{ required: true }]}>
+        <Input.Password autoComplete="new-password" />
+      </Form.Item>
+      <Button type="primary" htmlType="submit" block loading={busy}>{submitLabel}</Button>
+    </Form>
+  )
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   const nav = useNavigate()
@@ -34,6 +72,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const { token } = antTheme.useToken()
   const { mode, setMode, dark } = useTheme()
   const [version, setVersion] = useState<any>(null)
+  const [pwOpen, setPwOpen] = useState(false)
 
   useEffect(() => {
     api.get('/api/version').then((r) => setVersion(r.data)).catch(() => {})
@@ -55,6 +94,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   }
 
   const isSuper = user?.role === 'super_admin'
+  const canOrg = isSuper || user?.role === 'tenant_admin'  // 租户/项目空间管理（超管 + 租户管理员）
   const MENU = [
     { key: '/', icon: <DashboardOutlined />, label: t('nav.dashboard') },
     { key: '/data', icon: <DatabaseOutlined />, label: t('nav.data') },
@@ -64,8 +104,9 @@ function Shell({ children }: { children: React.ReactNode }) {
     { key: '/quantize', icon: <ShrinkOutlined />, label: t('nav.quant') },
     { key: '/infer', icon: <CloudServerOutlined />, label: t('nav.infer') },
     { key: '/cluster', icon: <ClusterOutlined />, label: t('nav.cluster') },
+    ...(canOrg ? [{ key: '/org', icon: <ApartmentOutlined />, label: t('nav.org') }] : []),
+    ...(isSuper ? [{ key: '/admin', icon: <SettingOutlined />, label: t('nav.admin') }] : []),
   ]
-  const menu = isSuper ? [...MENU, { key: '/admin', icon: <SettingOutlined />, label: t('nav.admin') }] : MENU
 
   // 语言选择器独立放 Header（不能嵌在 Dropdown 菜单项内：点击会冒泡触发菜单项关闭，下拉瞬间消失无法选中）
   const langSelect = (
@@ -87,9 +128,13 @@ function Shell({ children }: { children: React.ReactNode }) {
     </Tooltip>
   )
 
+  const forcePw = !!user?.must_change_password
+
   const userMenu = (
     <Dropdown menu={{
       items: [
+        { key: 'changepw', icon: <KeyOutlined />, label: t('header.changePassword'), onClick: () => setPwOpen(true) },
+        { type: 'divider' },
         { key: 'logout', icon: <LogoutOutlined />, label: t('header.logout'), onClick: () => { localStorage.removeItem('token'); nav('/login') } },
       ],
     }}>
@@ -115,7 +160,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           <img src="/logo.svg" alt="VerveDeck" style={{ width: 28, height: 28, borderRadius: 7 }} /> VerveDeck
         </div>
         <Menu theme={dark ? 'dark' : 'light'} mode="inline" selectedKeys={[loc.pathname]}
-          items={menu.map((m) => ({ key: m.key, icon: m.icon, label: m.label }))}
+          items={MENU.map((m) => ({ key: m.key, icon: m.icon, label: m.label }))}
           onClick={({ key }) => nav(key)} />
       </Sider>
       <Layout>
@@ -134,8 +179,22 @@ function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </Header>
         <Content style={{ margin: 16, padding: 16, background: token.colorBgContainer, borderRadius: 8, minHeight: 280 }}>
-          {children}
+          {forcePw ? (
+            <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 48 }}>
+              <Card title={<><KeyOutlined /> {t('auth.forceTitle')}</>} style={{ width: 460, textAlign: 'left' }}>
+                <p style={{ color: token.colorTextSecondary, fontSize: 13, marginTop: 0 }}>{t('auth.forceHint')}</p>
+                <ChangePasswordPanel submitLabel={t('auth.changePwTitle')}
+                  onDone={() => setUser({ ...user, must_change_password: false })} />
+              </Card>
+            </div>
+          ) : children}
         </Content>
+        {!forcePw && (
+          <Modal title={t('auth.changePwTitle')} open={pwOpen} onCancel={() => setPwOpen(false)} footer={null} destroyOnClose>
+            <ChangePasswordPanel submitLabel={t('auth.changePwTitle')}
+              onDone={() => { setPwOpen(false); setUser({ ...user, must_change_password: false }) }} />
+          </Modal>
+        )}
         {footer}
       </Layout>
     </Layout>
@@ -161,6 +220,7 @@ export default function App() {
         <Route path="/quantize" element={hasToken ? <Shell><QuantCenter /></Shell> : <Navigate to="/login" />} />
         <Route path="/infer" element={hasToken ? <Shell><Inference /></Shell> : <Navigate to="/login" />} />
         <Route path="/cluster" element={hasToken ? <Shell><ClusterOps /></Shell> : <Navigate to="/login" />} />
+        <Route path="/org" element={hasToken ? <Shell><OrgSpace /></Shell> : <Navigate to="/login" />} />
         <Route path="/admin" element={hasToken ? <Shell><AdminPanel /></Shell> : <Navigate to="/login" />} />
       </Routes>
     </BrowserRouter>

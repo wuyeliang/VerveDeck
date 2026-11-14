@@ -26,6 +26,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(32), default="developer")  # super_admin/tenant_admin/developer/viewer
     tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)  # 首登/被重置后强制改密
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -114,6 +115,8 @@ class ModelAsset(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
     name: Mapped[str] = mapped_column(String(160))
     type: Mapped[str] = mapped_column(String(32))  # base/lora/merged
+    category: Mapped[str] = mapped_column(String(64), default="")  # 业务分类（对话/代码/数学/...），空=未分类
+    tags: Mapped[list] = mapped_column(JSON, default=list)  # 自由标签
     path: Mapped[str] = mapped_column(String(512), default="")
     source: Mapped[str] = mapped_column(String(512), default="")  # hf:org/repo 或 本地路径
     hf_id: Mapped[str] = mapped_column(String(255), default="")

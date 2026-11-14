@@ -16,7 +16,6 @@ export default function AdminPanel() {
       <h3 style={{ marginTop: 0 }}>{t('admin.title')}</h3>
       <Tabs activeKey={tab} onChange={setTab} items={[
         { key: 'users', label: t('admin.tabUsers'), children: <UsersTab /> },
-        { key: 'org', label: t('admin.tabOrg'), children: <OrgTab /> },
         { key: 'keys', label: t('admin.tabKeys'), children: <KeysTab /> },
         { key: 'guard', label: t('admin.tabGuard'), children: <GuardTab /> },
         { key: 'audit', label: t('admin.tabAudit'), children: <AuditTab /> },
@@ -30,6 +29,8 @@ function UsersTab() {
   const [list, setList] = useState<any[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
+  const [resetUser, setResetUser] = useState<any>(null)
+  const [resetForm] = Form.useForm()
   const load = () => api.get('/api/admin/users').then((r) => setList(r.data)).catch(() => {})
   useEffect(() => { load() }, [])
   return (
@@ -38,7 +39,11 @@ function UsersTab() {
       <Table size="small" rowKey="id" dataSource={list} pagination={false}
         columns={[
           { title: t('common.id'), dataIndex: 'id', width: 55 },
-          { title: t('admin.colUsername'), dataIndex: 'username' },
+          {
+            title: t('admin.colUsername'), dataIndex: 'username', render: (v: string, r: any) => (
+              <Space size={4}>{v}{r.must_change_password && <Tag color="orange">{t('admin.mustChange')}</Tag>}</Space>
+            ),
+          },
           { title: t('admin.colName'), dataIndex: 'full_name' },
           { title: t('admin.colRole'), dataIndex: 'role', width: 140, render: (v: string) => <Tag color={ROLE_COLOR[v]}>{v}</Tag> },
           { title: t('admin.colTenant'), dataIndex: 'tenant_id', width: 70 },
@@ -49,9 +54,7 @@ function UsersTab() {
                 <Select size="small" value={r.role} style={{ width: 130 }}
                   options={Object.keys(ROLE_COLOR).map((x) => ({ value: x, label: x }))}
                   onChange={async (v) => { await api.put(`/api/admin/users/${r.id}`, { role: v }); load() }} />
-                <Popconfirm title={t('admin.resetPwConfirm')} onConfirm={async () => { await api.put(`/api/admin/users/${r.id}`, { password: 'admin123' }); message.success(t('admin.resetOk')) }}>
-                  <Button size="small">{t('admin.resetPw')}</Button>
-                </Popconfirm>
+                <Button size="small" onClick={() => { resetForm.resetFields(); setResetUser(r) }}>{t('admin.resetPw')}</Button>
               </Space>
             ),
           },
@@ -69,62 +72,16 @@ function UsersTab() {
           <Form.Item name="role" label={t('admin.role')}><Select options={Object.keys(ROLE_COLOR).map((x) => ({ value: x, label: x }))} /></Form.Item>
         </Form>
       </Modal>
-    </div>
-  )
-}
-
-function OrgTab() {
-  const { t } = useTranslation()
-  const [tenants, setTenants] = useState<any[]>([])
-  const [projects, setProjects] = useState<any[]>([])
-  const [users, setUsers] = useState<any[]>([])
-  const [tOpen, setTOpen] = useState(false)
-  const [pOpen, setPOpen] = useState(false)
-  const [tForm] = Form.useForm()
-  const [pForm] = Form.useForm()
-  const load = () => {
-    api.get('/api/admin/tenants').then((r) => setTenants(r.data)).catch(() => {})
-    api.get('/api/admin/projects').then((r) => setProjects(r.data)).catch(() => {})
-    api.get('/api/admin/users').then((r) => setUsers(r.data)).catch(() => {})
-  }
-  useEffect(() => { load() }, [])
-  return (
-    <div>
-      <Card size="small" title={t('admin.tenants')} style={{ marginBottom: 12 }}>
-        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => { tForm.resetFields(); setTOpen(true) }}>{t('admin.newTenant')}</Button>
-        <Table size="small" rowKey="id" dataSource={tenants} pagination={false} style={{ marginTop: 8 }}
-          columns={[{ title: t('common.id'), dataIndex: 'id', width: 60 }, { title: t('common.name'), dataIndex: 'name' }]} />
-      </Card>
-      <Card size="small" title={t('admin.projects')}>
-        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => { pForm.resetFields(); setPOpen(true) }}>{t('admin.newProject')}</Button>
-        <Table size="small" rowKey="id" dataSource={projects} pagination={false} style={{ marginTop: 8 }}
-          columns={[
-            { title: t('common.id'), dataIndex: 'id', width: 60 },
-            { title: t('common.name'), dataIndex: 'name' },
-            { title: t('admin.colTenant'), dataIndex: 'tenant_id', width: 70 },
-            { title: t('common.desc'), dataIndex: 'description', ellipsis: true },
-            {
-              title: t('admin.colMembers'), width: 220, render: (_: any, r: any) => (
-                <Select size="small" mode="multiple" style={{ width: 190 }} placeholder={t('admin.addMember')}
-                  options={users.map((u: any) => ({ value: u.id, label: u.username }))}
-                  onChange={async (vals) => {
-                    const all = users.map((u) => u.id)
-                    const removed = all.filter((id) => !vals.includes(id))
-                    for (const id of removed) await api.delete(`/api/admin/projects/${r.id}/members/${id}`).catch(() => {})
-                    for (const id of vals) await api.put(`/api/admin/projects/${r.id}/members`, { user_id: id, role: 'developer' }).catch(() => {})
-                  }} />
-              ),
-            },
-          ]} />
-      </Card>
-      <Modal title={t('admin.newTenant')} open={tOpen} onCancel={() => setTOpen(false)} onOk={async () => { await api.post('/api/admin/tenants', await tForm.validateFields()); message.success(t('admin.created')); setTOpen(false); load() }}>
-        <Form form={tForm} layout="vertical"><Form.Item name="name" label={t('admin.tenantName')} rules={[{ required: true }]}><Input /></Form.Item></Form>
-      </Modal>
-      <Modal title={t('admin.projectModal')} open={pOpen} onCancel={() => setPOpen(false)} onOk={async () => { await api.post('/api/admin/projects', await pForm.validateFields()); message.success(t('admin.created')); setPOpen(false); load() }}>
-        <Form form={pForm} layout="vertical">
-          <Form.Item name="tenant_id" label={t('admin.ownerTenant')} rules={[{ required: true }]}><Select options={tenants.map((t) => ({ value: t.id, label: t.name }))} /></Form.Item>
-          <Form.Item name="name" label={t('admin.projectName')} rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="description" label={t('common.desc')}><Input /></Form.Item>
+      <Modal title={`${t('admin.resetPwModal')}: ${resetUser?.username || ''}`} open={!!resetUser}
+        onCancel={() => setResetUser(null)}
+        onOk={async () => {
+          const v = await resetForm.validateFields()
+          await api.put(`/api/admin/users/${resetUser.id}`, { password: v.password })
+          message.success(t('admin.resetOk')); setResetUser(null); load()
+        }}>
+        <p style={{ color: '#888', fontSize: 12, marginTop: 0 }}>{t('admin.resetPwHint')}</p>
+        <Form form={resetForm} layout="vertical">
+          <Form.Item name="password" label={t('admin.resetPwLabel')} rules={[{ required: true, min: 6 }]}><Input.Password autoComplete="new-password" /></Form.Item>
         </Form>
       </Modal>
     </div>

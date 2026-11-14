@@ -1,14 +1,15 @@
 {
   "nav": {
     "dashboard": "ダッシュボード", "data": "データセンター", "models": "モデルリポジトリ", "train": "トレーニング",
-    "evals": "評価", "quant": "モデル量子化", "infer": "推論デプロイ", "cluster": "クラスタ運用", "admin": "システム管理"
+    "evals": "評価", "quant": "モデル量子化", "infer": "推論デプロイ", "cluster": "クラスタ運用", "admin": "システム管理", "org": "テナントとプロジェクト"
   },
-  "header": { "project": "プロジェクト", "selectProject": "プロジェクトを選択", "logout": "ログアウト", "theme": "テーマ", "themeLight": "ライト", "themeDark": "ダーク", "themeSystem": "システム" },
+  "header": { "project": "プロジェクト", "selectProject": "プロジェクトを選択", "logout": "ログアウト", "theme": "テーマ", "themeLight": "ライト", "themeDark": "ダーク", "themeSystem": "システム", "changePassword": "パスワード変更" },
   "login": {
     "subtitle": "LLM ファインチューニング＆トレーニングプラットフォーム", "username": "ユーザー名", "password": "パスワード", "loginBtn": "ログイン",
     "requiredUser": "ユーザー名を入力してください", "requiredPw": "パスワードを入力してください", "welcome": "ログインしました"
   },
   "api": { "requestFailed": "リクエストに失敗しました" },
+  "auth": { "changePwTitle": "パスワード変更", "oldPw": "現在のパスワード", "newPw": "新しいパスワード", "newPwHint": "6文字以上で、現在のパスワードと異なる必要があります", "confirmPw": "新しいパスワード（確認）", "pwMismatch": "新しいパスワードが一致しません", "pwChanged": "パスワードを変更しました", "forceTitle": "パスワード変更が必要です", "forceHint": "セキュリティのため、アカウントは初期パスワードのままです。継続使用前に変更してください。" },
   "common": {
     "loading": "読み込み中...", "id": "ID", "name": "名前", "status": "状態", "type": "種類",
     "desc": "説明", "createTime": "作成日時", "actions": "操作", "detail": "詳細", "delete": "削除",
@@ -74,7 +75,8 @@
     "nameInRepo": "リポジトリ内名称", "namePh": "例：qwen2.5-0.5b-instruct", "hfId": "HuggingFace ID",
     "hfIdPh": "例：Qwen/Qwen2.5-0.5B-Instruct", "note": "備考",
     "lineageTitle": "系譜追跡：{{name}}", "colJob": "トレーニングジョブ", "inheritance": "継承チェーン（ベースから）",
-    "children": "派生したモデル", "colTask": "ジョブ", "relatedDs": "関連データセットバージョン", "path": "パス"
+    "children": "派生したモデル", "colTask": "ジョブ", "relatedDs": "関連データセットバージョン", "path": "パス",
+    "viewList": "リスト", "viewTiled": "タイル", "colCategory": "カテゴリ", "categoryAll": "すべてのカテゴリ", "categoryNone": "未分類", "category": "カテゴリ", "setCategory": "カテゴリ設定", "tags": "タグ", "tagsPh": "Enter で追加（複数可）", "categoryPh": "例：対話 / コード / 数学 / 医療（任意）", "categorySaved": "カテゴリを更新しました"
   },
   "train": {
     "title": "トレーニングジョブ（CPT / SFT / DPO / マージ）", "newJob": "新規トレーニングジョブ",
@@ -199,7 +201,7 @@
     "title": "システム管理", "tabUsers": "ユーザーとロール (RBAC)", "tabOrg": "テナントとプロジェクト", "tabKeys": "API Keys",
     "tabGuard": "コンテンツ安全ガードレール", "tabAudit": "監査ログ",
     "newUser": "新規ユーザー", "colUsername": "ユーザー名", "colName": "氏名", "colRole": "ロール", "colTenant": "テナント",
-    "resetPwConfirm": "パスワードを admin123 にリセットしますか？", "resetPw": "パスワードリセット", "resetOk": "リセットしました", "created": "作成しました",
+    "resetPwConfirm": "パスワードを admin123 にリセットしますか？", "resetPw": "パスワードリセット", "resetOk": "リセットしました", "created": "作成しました","resetPwModal": "パスワードリセット", "resetPwLabel": "新しいパスワード", "resetPwHint": "リセット後、ユーザーは次回ログイン時にパスワード変更が強制されます", "mustChange": "変更待ち",
     "initPw": "初期パスワード", "role": "ロール",
     "tenants": "テナント（マルチテナント分離）", "newTenant": "新規テナント", "projects": "プロジェクト", "newProject": "新規プロジェクト",
     "colMembers": "メンバー", "addMember": "メンバーを追加", "tenantName": "テナント名", "projectModal": "新規プロジェクト",

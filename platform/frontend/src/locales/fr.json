@@ -1,14 +1,15 @@
 {
   "nav": {
     "dashboard": "Tableau de bord", "data": "Données", "models": "Dépôt de modèles", "train": "Formation",
-    "evals": "Évaluation", "quant": "Compression", "infer": "Déploiement d'inférence", "cluster": "Exploitation du cluster", "admin": "Administration"
+    "evals": "Évaluation", "quant": "Compression", "infer": "Déploiement d'inférence", "cluster": "Exploitation du cluster", "admin": "Administration", "org": "Tenant & Projets"
   },
-  "header": { "project": "Projet", "selectProject": "Choisir un projet", "logout": "Se déconnecter", "theme": "Thème", "themeLight": "Clair", "themeDark": "Sombre", "themeSystem": "Système" },
+  "header": { "project": "Projet", "selectProject": "Choisir un projet", "logout": "Se déconnecter", "theme": "Thème", "themeLight": "Clair", "themeDark": "Sombre", "themeSystem": "Système", "changePassword": "Changer le mot de passe" },
   "login": {
     "subtitle": "Plateforme de fine-tuning et d'entraînement de LLM", "username": "Nom d'utilisateur", "password": "Mot de passe", "loginBtn": "Se connecter",
     "requiredUser": "Veuillez saisir le nom d'utilisateur", "requiredPw": "Veuillez saisir le mot de passe", "welcome": "Connexion réussie"
   },
   "api": { "requestFailed": "Échec de la requête" },
+  "auth": { "changePwTitle": "Changer le mot de passe", "oldPw": "Mot de passe actuel", "newPw": "Nouveau mot de passe", "newPwHint": "Au moins 6 caractères et différent de l’actuel", "confirmPw": "Confirmer le nouveau mot de passe", "pwMismatch": "Les nouveaux mots de passe ne correspondent pas", "pwChanged": "Mot de passe modifié", "forceTitle": "Changement de mot de passe requis", "forceHint": "Pour des raisons de sécurité, votre compte utilise encore le mot de passe initial. Veuillez le modifier avant de continuer." },
   "common": {
     "loading": "Chargement...", "id": "ID", "name": "Nom", "status": "Statut", "type": "Type",
     "desc": "Description", "createTime": "Créé le", "actions": "Actions", "detail": "Détails", "delete": "Supprimer",
@@ -74,7 +75,8 @@
     "nameInRepo": "Nom dans le dépôt", "namePh": "ex. : qwen2.5-0.5b-instruct", "hfId": "ID HuggingFace",
     "hfIdPh": "ex. : Qwen/Qwen2.5-0.5B-Instruct", "note": "Note",
     "lineageTitle": "Lignée : {{name}}", "colJob": "Tâche de formation", "inheritance": "Chaîne d'héritage (depuis la base)",
-    "children": "Modèles dérivés", "colTask": "Tâche", "relatedDs": "Versions de données liées", "path": "Chemin"
+    "children": "Modèles dérivés", "colTask": "Tâche", "relatedDs": "Versions de données liées", "path": "Chemin",
+    "viewList": "Liste", "viewTiled": "Mosaïque", "colCategory": "Catégorie", "categoryAll": "Toutes les catégories", "categoryNone": "Sans catégorie", "category": "Catégorie", "setCategory": "Définir la catégorie", "tags": "Tags", "tagsPh": "Entrée pour ajouter (plusieurs)", "categoryPh": "ex. discussion / code / maths / médical (facultatif)", "categorySaved": "Catégorie mise à jour"
   },
   "train": {
     "title": "Tâches de formation (CPT / SFT / DPO / Fusion)", "newJob": "Nouvelle tâche de formation",
@@ -199,7 +201,7 @@
     "title": "Administration", "tabUsers": "Utilisateurs et rôles (RBAC)", "tabOrg": "Tenant et projets", "tabKeys": "Clés API",
     "tabGuard": "Garde-fous de contenu", "tabAudit": "Journal d'audit",
     "newUser": "Nouvel utilisateur", "colUsername": "Nom d'utilisateur", "colName": "Nom complet", "colRole": "Rôle", "colTenant": "Tenant",
-    "resetPwConfirm": "Réinitialiser le mot de passe en admin123 ?", "resetPw": "Réinitialiser", "resetOk": "Réinitialisé", "created": "Créé",
+    "resetPwConfirm": "Réinitialiser le mot de passe en admin123 ?", "resetPw": "Réinitialiser", "resetOk": "Réinitialisé", "created": "Créé","resetPwModal": "Réinitialiser le mot de passe", "resetPwLabel": "Nouveau mot de passe", "resetPwHint": "Après réinitialisation, l’utilisateur devra le changer à sa prochaine connexion", "mustChange": "Changement requis",
     "initPw": "Mot de passe initial", "role": "Rôle",
     "tenants": "Tenants (isolation multi-tenant)", "newTenant": "Nouveau tenant", "projects": "Projets", "newProject": "Nouveau projet",
     "colMembers": "Membres", "addMember": "Ajouter un membre", "tenantName": "Nom du tenant", "projectModal": "Nouveau projet",

@@ -25,6 +25,7 @@ def _brief(a: ModelAsset, db: Session) -> dict:
     base = db.get(ModelAsset, a.parent_asset_id) if a.parent_asset_id else None
     return {
         "id": a.id, "project_id": a.project_id, "name": a.name, "type": a.type,
+        "category": a.category or "", "tags": a.tags or [],
         "path": a.path, "source": a.source, "hf_id": a.hf_id,
         "size_bytes": a.size_bytes, "status": a.status,
         "parent_name": base.name if base else "",
@@ -50,8 +51,8 @@ def _size(path: str) -> int:
 
 
 @router.get("")
-def list_models(project_id: int | None = None, mtype: str = "", db=Depends(get_db),
-                user=Depends(get_current_user)):
+def list_models(project_id: int | None = None, mtype: str = "", category: str = "",
+                db=Depends(get_db), user=Depends(get_current_user)):
     if project_id:
         _check_project(db, project_id, user)
         q = db.query(ModelAsset).filter(ModelAsset.project_id == project_id)
@@ -60,6 +61,10 @@ def list_models(project_id: int | None = None, mtype: str = "", db=Depends(get_d
         q = db.query(ModelAsset).filter(ModelAsset.project_id.in_(pids or [0]))
     if mtype:
         q = q.filter(ModelAsset.type == mtype)
+    if category == "":  # 空串表示「未分类」
+        q = q.filter((ModelAsset.category.is_(None)) | (ModelAsset.category == ""))
+    elif category != "__all__":
+        q = q.filter(ModelAsset.category == category)
     rows = q.order_by(ModelAsset.id.desc()).all()
     out = []
     for a in rows:
@@ -76,6 +81,8 @@ class BaseReq(BaseModel):
     name: str
     hf_id: str  # 如 Qwen/Qwen2.5-0.5B-Instruct
     note: str = ""
+    category: str = ""
+    tags: list[str] = []
 
 
 @router.post("/base")
@@ -86,6 +93,7 @@ def register_base(req: BaseReq, db=Depends(get_db), user=Depends(get_current_use
     path = os.path.join(settings.data_dir, "models", "hub", req.name)
     a = ModelAsset(project_id=req.project_id, name=req.name, type="base", path=path,
                    source=f"hf:{req.hf_id}", hf_id=req.hf_id,
+                   category=req.category or "", tags=req.tags or [],
                    status="pending_download" if not os.path.exists(path) else "ready",
                    note=req.note, created_by=user.id)
     if os.path.exists(path):
@@ -143,7 +151,8 @@ def search_models(source: str = "hf", q: str = "", limit: int = 20,
 
 @router.post("/upload")
 async def upload_model(project_id: int = Form(...), name: str = Form(...),
-                       note: str = Form(""),
+                       note: str = Form(""), category: str = Form(""),
+                       tags: str = Form(""),
                        file: UploadFile = File(...),
                        db=Depends(get_db), user=Depends(get_current_user)):
     """本地上传：zip 包（含 config.json / *.safetensors 的完整模型目录）→ 解压入仓"""
@@ -187,6 +196,8 @@ async def upload_model(project_id: int = Form(...), name: str = Form(...),
         raise HTTPException(400, "zip 不是完整模型目录（缺 config.json 或 *.safetensors）")
     a = ModelAsset(project_id=project_id, name=name, type="base", path=dest,
                    source="upload", status="ready", size_bytes=_size(dest),
+                   category=category or "",
+                   tags=[t.strip() for t in tags.split(",") if t.strip()],
                    note=note or f"local upload: {file.filename}", created_by=user.id)
     db.add(a)
     db.commit()
@@ -201,6 +212,8 @@ class ArtifactReq(BaseModel):
     path: str
     base_model_name: str = ""
     note: str = ""
+    category: str = ""
+    tags: list[str] = []
 
 
 @router.post("")
@@ -217,9 +230,34 @@ def register_artifact(req: ArtifactReq, db=Depends(get_db), user=Depends(get_cur
         parent = db.query(ModelAsset).filter_by(project_id=req.project_id, name=req.base_model_name).first()
     a = ModelAsset(project_id=req.project_id, name=req.name, type=req.type, path=req.path,
                    source=req.base_model_name, parent_asset_id=parent.id if parent else None,
+                   category=req.category or "", tags=req.tags or [],
                    note=req.note, created_by=user.id)
     a.size_bytes = _size(req.path)
     db.add(a)
+    db.commit()
+    db.refresh(a)
+    return _brief(a, db)
+
+
+class MetaReq(BaseModel):
+    category: str | None = None
+    tags: list[str] | None = None
+    note: str | None = None
+
+
+@router.put("/{aid}/meta")
+def update_meta(aid: int, req: MetaReq, db=Depends(get_db), user=Depends(get_current_user)):
+    """修改分类/标签/备注（不碰权重文件）"""
+    a = db.get(ModelAsset, aid)
+    if not a:
+        raise HTTPException(404, "模型不存在")
+    _check_project(db, a.project_id, user)
+    if req.category is not None:
+        a.category = req.category
+    if req.tags is not None:
+        a.tags = [t.strip() for t in req.tags if t.strip()]
+    if req.note is not None:
+        a.note = req.note
     db.commit()
     db.refresh(a)
     return _brief(a, db)

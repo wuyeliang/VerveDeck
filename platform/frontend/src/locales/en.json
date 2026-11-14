@@ -1,14 +1,15 @@
 {
   "nav": {
     "dashboard": "Dashboard", "data": "Data Center", "models": "Model Repo", "train": "Training",
-    "evals": "Evaluation", "quant": "Compression", "infer": "Inference", "cluster": "Cluster Ops", "admin": "Admin"
+    "evals": "Evaluation", "quant": "Compression", "infer": "Inference", "cluster": "Cluster Ops", "admin": "Admin", "org": "Tenants & Projects"
   },
-  "header": { "project": "Project", "selectProject": "Select project", "logout": "Sign out", "theme": "Theme", "themeLight": "Light", "themeDark": "Dark", "themeSystem": "System" },
+  "header": { "project": "Project", "selectProject": "Select project", "logout": "Sign out", "theme": "Theme", "themeLight": "Light", "themeDark": "Dark", "themeSystem": "System", "changePassword": "Change Password" },
   "login": {
     "subtitle": "LLM Fine-tuning & Training Platform", "username": "Username", "password": "Password", "loginBtn": "Sign in",
     "requiredUser": "Please enter username", "requiredPw": "Please enter password", "welcome": "Signed in"
   },
   "api": { "requestFailed": "Request failed" },
+  "auth": { "changePwTitle": "Change Password", "oldPw": "Current Password", "newPw": "New Password", "newPwHint": "At least 6 characters, and must differ from the current one", "confirmPw": "Confirm New Password", "pwMismatch": "New passwords do not match", "pwChanged": "Password changed", "forceTitle": "Password change required", "forceHint": "For security, your account is still using the initial password. Please change it before continuing." },
   "common": {
     "loading": "Loading...", "id": "ID", "name": "Name", "status": "Status", "type": "Type",
     "desc": "Description", "createTime": "Created", "actions": "Actions", "detail": "Details", "delete": "Delete",
@@ -74,7 +75,8 @@
     "nameInRepo": "Repository Name", "namePh": "e.g. qwen2.5-0.5b-instruct", "hfId": "HuggingFace ID",
     "hfIdPh": "e.g. Qwen/Qwen2.5-0.5B-Instruct", "note": "Note",
     "lineageTitle": "Lineage: {{name}}", "colJob": "Training Job", "inheritance": "Inheritance chain (from base)",
-    "children": "Models derived from it", "colTask": "Job", "relatedDs": "Related dataset versions", "path": "Path"
+    "children": "Models derived from it", "colTask": "Job", "relatedDs": "Related dataset versions", "path": "Path",
+    "viewList": "List", "viewTiled": "Tiled", "colCategory": "Category", "categoryAll": "All categories", "categoryNone": "Uncategorized", "category": "Category", "setCategory": "Set category", "tags": "Tags", "tagsPh": "Press Enter to add (multiple allowed)", "categoryPh": "e.g. chat / code / math / medical (optional)", "categorySaved": "Category updated"
   },
   "train": {
     "title": "Training Jobs (CPT / SFT / DPO / Merge)", "newJob": "New Training Job",
@@ -199,7 +201,7 @@
     "title": "System Admin", "tabUsers": "Users & Roles (RBAC)", "tabOrg": "Tenants & Projects", "tabKeys": "API Keys",
     "tabGuard": "Content Guardrails", "tabAudit": "Audit Log",
     "newUser": "New User", "colUsername": "Username", "colName": "Full Name", "colRole": "Role", "colTenant": "Tenant",
-    "resetPwConfirm": "Reset password to admin123?", "resetPw": "Reset Password", "resetOk": "Reset", "created": "Created",
+    "resetPwConfirm": "Reset password to admin123?", "resetPw": "Reset Password", "resetOk": "Reset", "created": "Created","resetPwModal": "Reset Password", "resetPwLabel": "New Password", "resetPwHint": "After reset, the user must change the password at next login", "mustChange": "Change due",
     "initPw": "Initial Password", "role": "Role",
     "tenants": "Tenants (multi-tenant isolation)", "newTenant": "New Tenant", "projects": "Projects", "newProject": "New Project",
     "colMembers": "Members", "addMember": "Add member", "tenantName": "Tenant Name", "projectModal": "New Project",

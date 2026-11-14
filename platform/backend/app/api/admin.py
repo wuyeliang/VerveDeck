@@ -122,6 +122,7 @@ def list_users(db=Depends(get_db), user=Depends(require_role("super_admin", "ten
         q = q.filter(User.tenant_id == user.tenant_id)
     return [{"id": u.id, "username": u.username, "full_name": u.full_name,
              "role": u.role, "tenant_id": u.tenant_id, "is_active": u.is_active,
+             "must_change_password": bool(u.must_change_password),
              "created_at": str(u.created_at)} for u in q.all()]
 
 
@@ -130,7 +131,8 @@ def create_user(req: UserReq, db=Depends(get_db), user=Depends(require_role("sup
     if db.query(User).filter_by(username=req.username).first():
         raise HTTPException(400, "用户名已存在")
     u = User(username=req.username, password_hash=hash_password(req.password),
-             full_name=req.full_name, role=req.role, tenant_id=req.tenant_id)
+             full_name=req.full_name, role=req.role, tenant_id=req.tenant_id,
+             must_change_password=True)  # 管理员代设密码 → 用户首登强制修改
     db.add(u)
     db.commit()
     db.refresh(u)
@@ -147,6 +149,7 @@ def update_user(uid: int, req: dict, db=Depends(get_db), user=Depends(require_ro
             setattr(u, k, req[k])
     if "password" in req and req["password"]:
         u.password_hash = hash_password(req["password"])
+        u.must_change_password = True  # 重置密码 → 用户首登强制修改
     db.commit()
     return {"ok": True}
 

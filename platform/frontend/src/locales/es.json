@@ -1,14 +1,15 @@
 {
   "nav": {
     "dashboard": "Panel", "data": "Centro de datos", "models": "Repositorio de modelos", "train": "Entrenamiento",
-    "evals": "Evaluación", "quant": "Compresión", "infer": "Despliegue de inferencia", "cluster": "Operación del clúster", "admin": "Administración"
+    "evals": "Evaluación", "quant": "Compresión", "infer": "Despliegue de inferencia", "cluster": "Operación del clúster", "admin": "Administración", "org": "Tenants y Proyectos"
   },
-  "header": { "project": "Proyecto", "selectProject": "Seleccionar proyecto", "logout": "Cerrar sesión", "theme": "Tema", "themeLight": "Claro", "themeDark": "Oscuro", "themeSystem": "Sistema" },
+  "header": { "project": "Proyecto", "selectProject": "Seleccionar proyecto", "logout": "Cerrar sesión", "theme": "Tema", "themeLight": "Claro", "themeDark": "Oscuro", "themeSystem": "Sistema", "changePassword": "Cambiar contraseña" },
   "login": {
     "subtitle": "Plataforma de fine-tuning y entrenamiento de LLM", "username": "Usuario", "password": "Contraseña", "loginBtn": "Iniciar sesión",
     "requiredUser": "Ingrese el usuario", "requiredPw": "Ingrese la contraseña", "welcome": "Sesión iniciada"
   },
   "api": { "requestFailed": "Error en la solicitud" },
+  "auth": { "changePwTitle": "Cambiar contraseña", "oldPw": "Contraseña actual", "newPw": "Nueva contraseña", "newPwHint": "Mínimo 6 caracteres y distinta de la actual", "confirmPw": "Confirmar nueva contraseña", "pwMismatch": "Las contraseñas nuevas no coinciden", "pwChanged": "Contraseña cambiada", "forceTitle": "Cambio de contraseña requerido", "forceHint": "Por seguridad, su cuenta sigue usando la contraseña inicial. Cámbiela antes de continuar." },
   "common": {
     "loading": "Cargando...", "id": "ID", "name": "Nombre", "status": "Estado", "type": "Tipo",
     "desc": "Descripción", "createTime": "Creado", "actions": "Acciones", "detail": "Detalles", "delete": "Eliminar",
@@ -74,7 +75,8 @@
     "nameInRepo": "Nombre en el repositorio", "namePh": "ej.: qwen2.5-0.5b-instruct", "hfId": "ID de HuggingFace",
     "hfIdPh": "ej.: Qwen/Qwen2.5-0.5B-Instruct", "note": "Nota",
     "lineageTitle": "Línea: {{name}}", "colJob": "Tarea de entrenamiento", "inheritance": "Cadena de herencia (desde la base)",
-    "children": "Modelos derivados", "colTask": "Tarea", "relatedDs": "Versiones de datos relacionadas", "path": "Ruta"
+    "children": "Modelos derivados", "colTask": "Tarea", "relatedDs": "Versiones de datos relacionadas", "path": "Ruta",
+    "viewList": "Lista", "viewTiled": "Tarjetas", "colCategory": "Categoría", "categoryAll": "Todas las categorías", "categoryNone": "Sin categoría", "category": "Categoría", "setCategory": "Definir categoría", "tags": "Etiquetas", "tagsPh": "Pulse Intro para añadir (varias)", "categoryPh": "p. ej. chat / código / matemáticas / médico (opcional)", "categorySaved": "Categoría actualizada"
   },
   "train": {
     "title": "Tareas de entrenamiento (CPT / SFT / DPO / Fusión)", "newJob": "Nueva tarea de entrenamiento",
@@ -199,7 +201,7 @@
     "title": "Administración", "tabUsers": "Usuarios y roles (RBAC)", "tabOrg": "Tenants y proyectos", "tabKeys": "Claves API",
     "tabGuard": "Barreras de contenido", "tabAudit": "Registro de auditoría",
     "newUser": "Nuevo usuario", "colUsername": "Usuario", "colName": "Nombre completo", "colRole": "Rol", "colTenant": "Tenant",
-    "resetPwConfirm": "¿Restablecer la contraseña a admin123?", "resetPw": "Restablecer contraseña", "resetOk": "Restablecida", "created": "Creado",
+    "resetPwConfirm": "¿Restablecer la contraseña a admin123?", "resetPw": "Restablecer contraseña", "resetOk": "Restablecida", "created": "Creado","resetPwModal": "Restablecer contraseña", "resetPwLabel": "Nueva contraseña", "resetPwHint": "Tras restablecer, el usuario deberá cambiarla en su próximo inicio de sesión", "mustChange": "Pendiente de cambio",
     "initPw": "Contraseña inicial", "role": "Rol",
     "tenants": "Tenants (aislamiento multi-tenant)", "newTenant": "Nuevo tenant", "projects": "Proyectos", "newProject": "Nuevo proyecto",
     "colMembers": "Miembros", "addMember": "Añadir miembro", "tenantName": "Nombre del tenant", "projectModal": "Nuevo proyecto",
