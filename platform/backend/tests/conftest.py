@@ -22,9 +22,6 @@ import requests
 BASE = "http://127.0.0.1:3001"
 SUF = uuid.uuid4().hex[:6]
 
-DEFAULT_PROJECT = 16            # 默认项目空间（基座模型 + 部署 1 所在）
-BASE_MODEL_ASSET_ID = 1         # qwen25-05b 基座（ready）
-DEPLOY_ID = 1                   # 常驻推理部署
 DEPLOY_NAME = "qwen25-05b-base"
 
 
@@ -37,6 +34,44 @@ def login(username: str, password: str) -> str:
 
 def H(tok: str) -> dict:
     return {"Authorization": f"Bearer {tok}"}
+
+
+def _discover_env() -> tuple[int, int, int]:
+    """动态发现 默认项目 / ready 基座资产 / 常驻部署 的 ID。
+
+    全新部署（deploy.sh）后自动种子为：default 租户 + default-project 项目，
+    基座/部署 ID 取决于初始化顺序——因此测试不硬编码任何 ID，任何环境可跑。
+    前提：已完成基座初始化（POST /api/models/base 且 ready + 创建常驻部署）。
+    """
+    tok = login("admin", "admin123")
+    r = requests.get(f"{BASE}/api/admin/projects", headers=H(tok), timeout=15)
+    r.raise_for_status()
+    projs = r.json()
+    proj = next((p for p in projs if p["name"] == "default-project"), projs[0])
+    dp = proj["id"]
+
+    r = requests.get(f"{BASE}/api/models", params={"project_id": dp, "mtype": "base"},
+                     headers=H(tok), timeout=15)
+    r.raise_for_status()
+    rows = r.json()
+    ready = [a for a in rows if a["status"] == "ready"]
+    if not (ready or rows):
+        raise RuntimeError("默认项目缺少基座模型资产，请先完成基座初始化"
+                           "（POST /api/models/base 并等待下载 ready）")
+    asset = (ready or rows)[0]["id"]
+
+    r = requests.get(f"{BASE}/api/inference/deployments", params={"project_id": dp},
+                     headers=H(tok), timeout=15)
+    r.raise_for_status()
+    deps = r.json()
+    if not deps:
+        raise RuntimeError("默认项目缺少推理部署，请先创建常驻部署"
+                           f"（POST /api/inference/deployments，name={DEPLOY_NAME}）")
+    dep = next((d["id"] for d in deps if d["name"] == DEPLOY_NAME), deps[0]["id"])
+    return dp, asset, dep
+
+
+DEFAULT_PROJECT, BASE_MODEL_ASSET_ID, DEPLOY_ID = _discover_env()
 
 
 def poll(fn, timeout: float = 120.0, interval: float = 2.0, desc: str = ""):
@@ -113,7 +148,7 @@ def roles(admin_tok, tenant_a) -> dict:
 
 @pytest.fixture(scope="session")
 def api_key(admin_tok) -> str:
-    """默认项目(16) 的 x-api-key 原值（仅展示一次）"""
+    """默认项目的 x-api-key 原值（仅展示一次）"""
     r = requests.post(f"{BASE}/api/admin/projects/{DEFAULT_PROJECT}/api-keys",
                       headers=H(admin_tok), timeout=15,
                       json={"name": f"500-{SUF}"})

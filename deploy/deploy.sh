@@ -18,6 +18,8 @@ echo "==> [2/5] 准备配置与环境"
 [ -f .env ] || { cp .env.example .env; echo "    已生成 .env（默认值，生产环境请修改密钥）"; }
 mkdir -p /data/models/hub /data/datasets /data/jobs /data/evals /data/uploads \
          /data/gpu /data/argilla /data/postgres /data/redis /data/opensearch
+# opensearch 容器以 UID 1000 运行，bind 挂载的数据目录必须可写（否则节点启动即 AccessDenied 崩溃）
+chown -R 1000:0 /data/opensearch 2>/dev/null || true
 
 # 自签 TLS 证书（Web 强制 HTTPS 443；已有则跳过，生产可替换为正式证书）
 mkdir -p tls

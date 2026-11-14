@@ -1,7 +1,8 @@
 # VerveDeck Deployment Acceptance Report
 
-> Version: v1.0 (2026-11) · Target: single-node 8×RTX 4090 / single-GPU 3080 dev server
-> **Result: all 20 requirements delivered and verified.** Quick integration suite **510 passed / 0 failed**; end-to-end regression **10/10 passed**.
+> Version: v1.1 (2026-11, fresh-deployment re-verification) · Target: single-node 8×RTX 4090 / single-GPU 3080 dev server
+> **Result: all 20 requirements delivered and verified.** Quick integration suite **514 passed / 0 failed**; end-to-end regression **10/10 passed**.
+> 2026-11-14 addendum: **full uninstall → deploy-from-zero → full regression re-verification passed** (see 3.4); fixed 2 real defects exposed by the fresh environment (opensearch ownership, silent synth "false success").
 
 ---
 
@@ -71,7 +72,7 @@
 
 ### 3.1 Quick integration + unit (excluding e2e)
 
-- **510 passed / 0 failed** (~6 min, in-container `pytest`, direct 127.0.0.1:3001).
+- **514 passed / 0 failed** (~6 min, in-container `pytest`, direct 127.0.0.1:3001; 2026-11-14 re-run on the fresh environment, incl. 4 new JSON-extractor cases).
 - Coverage: auth/RBAC/admin, datasets (incl. S3 object storage), models (lineage/search), training (full param-spec assertions), evals, inference (incl. real vLLM deployment lifecycle), cluster/dashboard, storage.
 - Residual: deprecation warnings only (parametrize-generator, Pydantic class-config, short JWT key in unit tests) — non-failing.
 
@@ -101,12 +102,27 @@
 | Deployment 1 could not run | Single-GPU host, replicas=2 won't fit | Scale to 1; scale endpoint GPU-availability check prevents re-scaling to 2 |
 | GPU node offline | DCGM 3.3.9 field-ID changes + `nv-hostengine -n` foreground block | Rewrote 18 valid fields + explicit background in CMD |
 | **TC07 training crash on start** | Spec emitted 4 keys unsupported by LF 0.9.3 (`bias`/`early_stopping_patience`/`early_stopping_threshold`/`lazy_tokenize`) | Removed from `PARAM_GROUPS` + defensive strip in `build_config`; cross-checked all 87 pass-through keys to confirm none else invalid |
+| **opensearch crash on fresh deploy** (fresh-env only) | Container runs as UID 1000; `deploy.sh` created `/data/opensearch` as root → `AccessDeniedException: nodes` | `deploy.sh` now runs `chown -R 1000:0 /data/opensearch` (postgres/redis handle ownership in their entrypoints) |
+| **Synth task silent "false success"** (fresh-env only) | 0.5B base model often emits bare JSON objects (no array brackets) interleaved with prose; old extractor measured 0/10 parseable → task `done` with 0 rows, no error, no log | ① few-shot example in prompt (measured 0/10→8/10) ② extractor switched to brace-balanced multi-object scan ③ per-chunk retry ×3 ④ zero-output now fails the task explicitly with a raw-output sample; 4 new unit cases |
+
+### 3.4 Fresh-Deployment Verification (2026-11-14: full uninstall → rebuild from zero → full regression)
+
+To prove the deployment pipeline is reproducible, a full uninstall + from-zero deploy + full regression was executed:
+
+| Step | What | Result |
+|---|---|---|
+| Uninstall | 9 resident containers + inference container + `fintune_net` network + rustfs data volume + 5 non-heavy images + `/data` (2.2GB) + `/opt/vervedeck`; kept the 4 heavy AI images (vllm/sglang/llama-factory/evalscope, ~52GB pure software) | Zero residue; disk 31G→38G |
+| Deploy | `git clone` latest main (`9e12486`) → `deploy.sh` one-shot | 6 min 17 s; opensearch ownership bug surfaced mid-way (see 3.3), fixed → all 9 services Up, backend healthy |
+| Seed | `default-project` (id=1) + base `qwen25-05b` (asset id=1, ready via hf-mirror in ~90s) + deployment 1 `qwen25-05b-base` running | OpenAI endpoint 200 |
+| Regression | E2E first (produces a succeeded training task) → then quick suite | **E2E 10/10 (183.71s) + quick 514 passed (367.80s)** |
+
+**Test portability fix**: the suite had hardcoded entity IDs from the old environment (e.g. `DEFAULT_PROJECT=16` — environment leakage); on a fresh DB the project id is 1 and the hardcode would always fail. Now `conftest._discover_env()` discovers the default project / ready base asset / resident deployment dynamically, so the full regression runs on any fresh deployment.
 
 ---
 
 ## 4. Consistency Check
 
-- Docs ↔ deployment: service stack, port (443 HTTPS), login field (`token`), default project (16), base model (id=1, qwen25-05b, ready), resident deployment (id=1) all consistent.
+- Docs ↔ deployment: service stack, port (443 HTTPS), login field (`token`), default project (fresh env id=1; tests discover it dynamically via `_discover_env()`, no hardcoding), base model (id=1, qwen25-05b, ready), resident deployment (id=1) all consistent.
 - Code ↔ image: backend rebuilt from latest code (`BUILD_EXIT=0`); in-container code matches the repo; tests re-synced via `docker cp` after each rebuild.
 - Features ↔ tests: all 20 requirements map to passing API/E2E cases; key paths (GPU metrics, guardrails, audit, lineage) are asserted.
 
@@ -119,8 +135,9 @@
 3. **Tests not in image**: the backend image is a lean runtime; test files must be injected via `docker cp` (see `06-testing.md`).
 4. **Deprecation-warning cleanup**: parametrize-generator / Pydantic class-config / short JWT key warnings can be cleaned up later; no functional impact.
 5. **Visual polish**: pixel-level alignment for reference-refactor items can be refined after reference screenshots are provided.
-6. **Code commit**: current changes are uncommitted; recommend a unified `git commit && git push` to `main` after acceptance sign-off.
+6. **Small-model synth quality**: for ≤1B base models the synth feature guarantees "format usability" only (measured 0.5B: 80% single-shot parse rate, ~99% after retries); output quality is limited — use ≥7B or Instruct models for production data synthesis.
+7. **Code commit**: main delivery committed (`9e12486`); the fresh-deployment fixes (opensearch chown / dynamic test discovery / synth robustness) ship with v1.1.
 
 ---
 
-*Report generated at the end of deployment closing, based on measured service state, the 510-case quick suite, and the 10-case E2E regression.*
+*Report v1.1 updated: 2026-11-14 fresh-deployment re-verification (full uninstall → from-zero deploy in 6 min 17 s → E2E 10/10 + quick 514 passed), 2 new real-defect records, and the test-portability fix.*

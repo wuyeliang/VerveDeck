@@ -172,6 +172,15 @@ def test_markdown_to_alpaca_shape():
     ('{"instruction": "q", "output": "a"}', 1),  # 单对象兜底（base 模型常见输出）
     ('{"broken": json', 0),
     ('[1, 2, 3]', 3),
+    # 多裸对象 + 夹杂原文（小 base 模型典型输出，无数组括号）
+    ('Assistant: {"instruction": "1+1?", "input": "", "output": "1"}\n\n水的化学式？\n'
+     '{"instruction": "水的化学式?", "input": "", "output": "H2O"}', 2),
+    # 数组破损但内部对象完整
+    ('[broken {"a": 1}', 1),
+    # 空数组 + 后续对象
+    ('[] 补充 {"a": 1}', 1),
+    # 字符串内含花括号不应干扰平衡扫描
+    ('{"s": "a}b", "n": 1}', 1),
 ])
 def test_extract_json_array(text, expect_n):
     assert len(ds._extract_json_array(text)) == expect_n

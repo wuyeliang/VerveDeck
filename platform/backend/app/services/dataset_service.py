@@ -191,63 +191,113 @@ def markdown_to_alpaca(md: str) -> list[dict]:
 
 # ---------- 合成数据（QA / CoT） ----------
 
+# few-shot 示例对格式合规至关重要：小模型（≤1B base）无示例时经常输出裸 JSON 对象或
+# 直接回答片段内的问题（实测 0.5B base 无示例 0/10 可解析，加示例后 8/10）
+_FEW_SHOT_QA = ("示例（片段：北京是中国的首都。）："
+                "[{{\"instruction\": \"中国的首都是哪里？\", \"input\": \"\", \"output\": \"北京\"}}]\n")
+_FEW_SHOT_COT = ("示例（片段：地球绕太阳公转。）："
+                 "[{{\"instruction\": \"为什么地球上有昼夜交替？\", \"input\": \"\", "
+                 "\"output\": \"思考过程：地球自转导致面向太阳一侧为白天、背向一侧为黑夜，自转一周即一次昼夜交替。\\n最终答案：地球自转。\"}}]\n")
+
 QA_PROMPT = (
     "你是高质量大模型微调数据构造专家。基于下面【文档片段】生成 {n} 个高质量问答对，"
     "要求：问题具体、答案准确且完全基于片段、覆盖片段关键信息、语言为中文。\n"
     "只输出 JSON 数组，元素为 {{\"instruction\": \"问题\", \"input\": \"\", \"output\": \"答案\"}}，"
-    "不要输出任何其他文字。\n\n【文档片段】\n{text}"
+    "不要输出任何其他文字。\n" + _FEW_SHOT_QA +
+    "\n【文档片段】\n{text}"
 )
 
 COT_PROMPT = (
     "你是高质量大模型推理数据构造专家。基于下面【文档片段】构造 {n} 个需要多步推理的问题，"
     "并给出完整思维链（CoT）解答。要求：推理步骤清晰、答案正确、语言为中文。\n"
     "只输出 JSON 数组，元素为 {{\"instruction\": \"问题\", \"input\": \"\", "
-    "\"output\": \"思考过程：...\\n最终答案：...\"}}，不要输出任何其他文字。\n\n【文档片段】\n{text}"
+    "\"output\": \"思考过程：...\\n最终答案：...\"}}，不要输出任何其他文字。\n" + _FEW_SHOT_COT +
+    "\n【文档片段】\n{text}"
 )
 
 
 def _extract_json_array(text: str) -> list:
+    """从模型输出解析 JSON 数组 / 对象。
+
+    小 base 模型格式遵循差：常见输出为多个裸 JSON 对象（无数组括号）夹杂原文。
+    策略：先取整体 JSON 数组；失败/为空时退化为括号平衡扫描，收集所有完整 JSON 对象。
+    """
     m = re.search(r"\[.*\]", text, re.S)
     if m:
         try:
             data = json.loads(m.group(0))
-            return data if isinstance(data, list) else []
+            if isinstance(data, list) and data:
+                return data
         except json.JSONDecodeError:
-            return []
-    # 兼容：base 模型常输出单个 JSON 对象而非数组
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return []
-    try:
-        data = json.loads(m.group(0))
-        return [data] if isinstance(data, dict) else []
-    except json.JSONDecodeError:
-        return []
+            pass
+    objs, depth, start, in_str, esc = [], 0, None, False, False
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        obj = json.loads(text[start:i + 1])
+                        if isinstance(obj, dict):
+                            objs.append(obj)
+                    except json.JSONDecodeError:
+                        pass
+                    start = None
+    return objs
+
+
+# 每 chunk 最多尝试次数：小模型格式违规率高，0 条解析结果时重采样（temperature>0 无 seed，各次独立）
+SYNTH_MAX_ATTEMPTS = 3
 
 
 def synth_from_chunks(chunks: list[str], mode: str, n_per_chunk: int,
                       base_url: str, model: str, api_key: str = "",
-                      progress_cb=None) -> list[dict]:
-    """调用 OpenAI 兼容端点合成 QA/CoT 数据"""
+                      progress_cb=None) -> tuple[list[dict], str]:
+    """调用 OpenAI 兼容端点合成 QA/CoT 数据。
+
+    返回 (rows, last_raw)：last_raw 为最近一次调用的原始输出，全部失败时供任务错误信息附样本。
+    """
     from openai import OpenAI
     client = OpenAI(api_key=api_key or "EMPTY", base_url=base_url)
     tpl = QA_PROMPT if mode == "qa" else COT_PROMPT
-    rows = []
+    rows, last_raw = [], ""
     total = len(chunks)
     for i, c in enumerate(chunks):
-        try:
-            r = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": tpl.format(n=n_per_chunk, text=c[:6000])}],
-                max_tokens=3000, temperature=0.3)
-            content = r.choices[0].message.content or ""
-            rows.extend(_extract_json_array(content))
-        except Exception as e:
-            log.warning("synth chunk %s failed: %s", i, e)
+        for attempt in range(1, SYNTH_MAX_ATTEMPTS + 1):
+            try:
+                r = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": tpl.format(n=n_per_chunk, text=c[:6000])}],
+                    max_tokens=3000, temperature=0.3)
+            except Exception as e:
+                log.warning("synth chunk %s attempt %s call failed: %s", i, attempt, e)
+                time.sleep(0.5)
+                continue
+            last_raw = r.choices[0].message.content or ""
+            got = _extract_json_array(last_raw)
+            if got:
+                rows.extend(got)
+                break
+            log.warning("synth chunk %s attempt %s: 无可解析 JSON（原始输出头: %.120s）",
+                        i, attempt, last_raw)
         if progress_cb:
             progress_cb(i + 1, total)
         time.sleep(0.2)
-    return rows
+    return rows, last_raw
 
 
 # ---------- Argilla 标注推送 ----------

@@ -34,10 +34,8 @@ import requests
 BASE = "http://127.0.0.1:3001"
 ADMIN = ("admin", "admin123")
 SUFFIX = uuid.uuid4().hex[:6]
-DEFAULT_PROJECT = 16            # 默认项目空间
-BASE_MODEL_ASSET_ID = 1         # qwen25-05b 基座（ready）
-DEPLOY_ID = 1                   # 推理部署 id
-DEPLOY_NAME = "qwen25-05b-base"
+# 默认项目 / 基座资产 / 常驻部署 的 ID 由 conftest._discover_env() 动态发现（任何全新部署可跑）
+from conftest import DEFAULT_PROJECT, BASE_MODEL_ASSET_ID, DEPLOY_ID, DEPLOY_NAME
 
 STATE: dict = {}
 

@@ -502,9 +502,15 @@ def synth(req: SynthReq, db=Depends(get_db), user=Depends(get_current_user)):
                 t2.progress = int(i * 100 / total)
                 db2.commit()
 
-            rows = ds.synth_from_chunks(chunks, req.mode, req.n_per_chunk, base_url, model,
-                                        api_key, _cb)
+            rows, last_raw = ds.synth_from_chunks(chunks, req.mode, req.n_per_chunk, base_url,
+                                                  model, api_key, _cb)
             normed = [r for r in (ds.normalize(r, "alpaca") for r in rows) if r]
+            if not normed:
+                # 全部 chunk 零产出时显式失败，避免任务「done 但 0 条」的静默假成功
+                raise RuntimeError(
+                    f"合成完成但 0 条可用样本（{len(chunks)} chunks，model={model}）："
+                    f"模型输出未能解析为 JSON 问答对，建议换用能力更强的模型。"
+                    f"原始输出样本: {last_raw[:300]!r}")
             ver = _create_version(db2, dset, normed, uid, "alpaca",
                                   f"synth:{req.mode} model={model} n={req.n_per_chunk}")
             t.output_version_id = ver.id
