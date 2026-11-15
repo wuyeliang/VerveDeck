@@ -1,7 +1,11 @@
-"""系统管理：租户/项目/用户(RBAC)/API Key/护栏规则/告警规则/审计日志"""
+"""系统管理：租户/项目/用户(RBAC)/API Key/护栏规则/告警规则/审计日志
+
+告警规则（阈值型）与通知通道的变更会异步渲染为 Prometheus / Alertmanager 配置并热加载。
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import threading
 import time
 
 from ..database import get_db
@@ -9,7 +13,18 @@ from ..security import get_current_user, require_role, hash_password, new_api_ke
 from ..models import (Tenant, User, Project, ProjectMember, ApiKey, GuardRule,
                       AuditLog, Dataset, AlertRule, AlertEvent, UpgradeTask)
 from ..services import alert_service
+from ..services import prom_service
 from ..services import upgrade_service
+
+
+def _resync_rules():
+    """规则变更后后台重渲染 Prometheus 规则文件并热加载（不阻塞 API 响应）"""
+    threading.Thread(target=prom_service.sync_rules, daemon=True).start()
+
+
+def _resync_channels():
+    """通道配置变更后后台重渲染 Alertmanager 配置并热加载"""
+    threading.Thread(target=prom_service.sync_channels, daemon=True).start()
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -251,8 +266,8 @@ def _validate_alert(req: AlertRuleReq):
     if req.kind not in ("threshold", "event"):
         raise HTTPException(400, "kind 需为 threshold/event")
     if req.kind == "threshold":
-        if req.metric not in alert_service.METRIC_NAMES:
-            raise HTTPException(400, f"metric 需为 {sorted(alert_service.METRIC_NAMES)} 之一")
+        if req.metric not in prom_service.METRIC_NAMES:
+            raise HTTPException(400, f"metric 需为 {sorted(prom_service.METRIC_NAMES)} 之一")
         if req.op not in (">", "<", ">=", "<="):
             raise HTTPException(400, "op 需为 > < >= <= 之一")
     else:
@@ -287,6 +302,7 @@ def create_alert_rule(req: AlertRuleReq, db=Depends(get_db),
                   enabled=req.enabled)
     db.add(r)
     db.commit()
+    _resync_rules()
     return {"id": r.id}
 
 
@@ -308,6 +324,7 @@ def update_alert_rule(rid: int, req: AlertRuleReq, db=Depends(get_db),
     r.channels = req.channels or []
     r.enabled = req.enabled
     db.commit()
+    _resync_rules()
     return {"ok": True}
 
 
@@ -316,6 +333,7 @@ def delete_alert_rule(rid: int, db=Depends(get_db),
                       user=Depends(require_role("super_admin", "tenant_admin"))):
     db.query(AlertRule).filter_by(id=rid).delete()
     db.commit()
+    _resync_rules()
     return {"ok": True}
 
 
@@ -354,7 +372,9 @@ def save_notify_config(req: NotifyConfigReq, db=Depends(get_db),
         raise HTTPException(400, "SMTP 端口需为 465/587/25/8025 之一")
     if req.wecom_webhook and not req.wecom_webhook.startswith("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?"):
         raise HTTPException(400, "企业微信 webhook 需为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=... 形式")
-    return alert_service.save_config(db, req.model_dump())
+    out = alert_service.save_config(db, req.model_dump())
+    _resync_channels()
+    return out
 
 
 @router.post("/notify-config/test")

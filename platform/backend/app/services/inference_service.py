@@ -16,7 +16,7 @@ import threading
 import requests
 
 from ..config import settings
-from ..models import Deployment, ModelAsset, InferenceMetric
+from ..models import Deployment, ModelAsset
 from ..database import SessionLocal
 from . import taskcontainer as tc
 from . import upgrade_service
@@ -92,7 +92,8 @@ def start_replica(dep: Deployment, replica: int, model_path: str) -> str:
         # "仅本地开发使用"），平台需要它实现 LoRA 热加载，故显式开启。
         env={"VLLM_LOGGING_LEVEL": "warning",
              "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1"},
-        labels={"fintune.deployment": str(dep.id), "fintune.type": "inference"},
+        labels={"fintune.deployment": str(dep.id), "fintune.type": "inference",
+                "fintune.engine": dep.engine},
     )
     cmd = build_cmd(dep, model_path)
     tc.start_task(f"infer-{dep.id}-r{replica}", cid, cmd,
@@ -123,15 +124,21 @@ def wait_ready(dep: Deployment, timeout: int = 600) -> bool:
 
 
 def launch(dep: Deployment, model_path: str) -> None:
+    from . import prom_service
     ids = []
     for i in range(dep.replicas):
         ids.append(start_replica(dep, i, model_path))
     # 等待首副本就绪后登记 endpoint（IP 在创建后即可取）
+    targets = []
     for i in range(dep.replicas):
         ip = tc.container_ip(ids[i])
-        if i == 0 and ip:
-            dep.endpoint = f"{ip}:8000"
+        if ip:
+            targets.append(f"{ip}:8000")
+            if i == 0:
+                dep.endpoint = targets[0]
     dep.container_ids = ids
+    # 登记 Prometheus file_sd target（/metrics 与 OpenAI API 同端口 8000）
+    prom_service.write_infer_sd(dep.id, dep.engine, deployment_container_name(dep, 0), targets)
     db = SessionLocal()
     try:
         d = db.get(Deployment, dep.id)
@@ -144,8 +151,10 @@ def launch(dep: Deployment, model_path: str) -> None:
 
 
 def stop(dep: Deployment) -> None:
+    from . import prom_service
     for i in range(max(dep.replicas, 1)):
         tc.remove_container(deployment_container_name(dep, i), force=True)
+    prom_service.drop_infer_sd(dep.id)  # 摘除 Prometheus target
     dep.container_ids = []
     dep.endpoint = ""
     db = SessionLocal()
@@ -336,8 +345,10 @@ def _scrape_one(dep: Deployment) -> dict | None:
 
 
 def scrape_metrics(db, force: bool = False):
-    """调度器每 tick 调用：约 30s 抓取一次运行中部署的引擎指标入库；
-    连续 3 次抓取失败触发 infer_down 事件（引擎挂死但容器存活时容器探活发现不了）。"""
+    """调度器每 tick 调用：约 30s 探活一次运行中部署的引擎指标端点；
+    连续 3 次抓取失败触发 infer_down 事件（引擎挂死但端口仍监听时，
+    Prometheus 的 up{job="inference"} 发现不了，由本探活兜底）。
+    指标本体由 Prometheus docker_sd 直接抓取 /metrics 入库，不再写 DB。"""
     global _last_scrape
     now = time.time()
     if not force and now - _last_scrape < 30:
@@ -358,7 +369,3 @@ def scrape_metrics(db, force: bool = False):
                                             f"引擎指标端点 {dep.endpoint} 连续 3 次不可达（引擎可能挂死），请查看部署日志")
             continue
         _infer_fail[dep.id] = 0
-        db.add(InferenceMetric(deployment_id=dep.id, ts=int(now), engine=dep.engine,
-                               kv_cache_pct=m["kv"], num_running=int(m["running"]),
-                               num_waiting=int(m["waiting"]), avg_latency_ms=m["latency_ms"]))
-    db.commit()

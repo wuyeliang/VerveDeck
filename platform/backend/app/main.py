@@ -29,6 +29,21 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
 app.add_middleware(AuditMiddleware)
 
 
+def _drop_legacy_metric_tables():
+    """监控告警全新架构：GpuMetric/SystemMetric/InferenceMetric 三张旧 DB 指标表
+    已由 Prometheus（dcgm-exporter/node-exporter/引擎 /metrics）取代，旧库直接删表。幂等。"""
+    from sqlalchemy import inspect, text
+    try:
+        insp = inspect(engine)
+        for t in ("gpu_metrics", "system_metrics", "inference_metrics"):
+            if t in insp.get_table_names():
+                with engine.begin() as conn:
+                    conn.execute(text(f"DROP TABLE IF EXISTS {t}"))
+                log.info("legacy metric table dropped: %s", t)
+    except Exception as e:
+        log.warning("legacy metric tables drop failed: %s", e)
+
+
 def _migrate_columns():
     """旧库补列（create_all 只建缺失表、不补已有表的列）。幂等。"""
     from sqlalchemy import inspect, text
@@ -36,7 +51,6 @@ def _migrate_columns():
         insp = inspect(engine)
         json_type = "JSON" if engine.dialect.name == "sqlite" else "JSONB"
         plan = {
-            "gpu_metrics": [("extra", f"{json_type} NOT NULL DEFAULT '{{}}'")],
             "datasets": [
                 ("kind", "VARCHAR(16) NOT NULL DEFAULT 'train'"),
                 ("scenario", "VARCHAR(16) NOT NULL DEFAULT 'text'"),
@@ -61,8 +75,32 @@ def _migrate_columns():
         log.warning("migration check failed: %s", e)
 
 
+# 默认告警规则（新库 seed；阈值型渲染为 Prometheus 规则、事件型由平台故障收敛点触发）
+# 与 deploy/monitoring/prometheus/rules/alerts.default.yml 首启兜底规则同口径
+DEFAULT_ALERT_RULES = [
+    # (name, kind, metric, op, thr, severity, cooldown, event)
+    ("GPU 温度过高", "threshold", "gpu_temp", ">", 85, "critical", 300, ""),
+    ("GPU 显存过高", "threshold", "gpu_mem", ">", 95, "warning", 300, ""),
+    ("GPU XID 错误", "threshold", "gpu_xid", ">", 0, "critical", 300, ""),
+    ("GPU ECC 双比特错误", "threshold", "gpu_ecc_dbe", ">", 0, "critical", 300, ""),
+    ("宿主 CPU 过高", "threshold", "host_cpu", ">", 90, "warning", 600, ""),
+    ("宿主内存过高", "threshold", "host_mem", ">", 90, "warning", 600, ""),
+    ("宿主磁盘过高", "threshold", "host_disk", ">", 85, "warning", 900, ""),
+    ("推理 KV 缓存过高", "threshold", "kv_cache", ">", 90, "warning", 300, ""),
+    ("推理服务离线", "threshold", "infer_down", "<", 1, "critical", 300, ""),
+    ("监控目标离线", "threshold", "system_up", "<", 1, "warning", 300, ""),
+    ("计算节点离线", "event", "", "", 0, "critical", 300, "node_offline"),
+    ("计算节点恢复在线", "event", "", "", 0, "info", 300, "node_online"),
+    ("训练任务失败", "event", "", "", 0, "critical", 60, "train_failed"),
+    ("量化任务失败", "event", "", "", 0, "warning", 60, "quant_failed"),
+    ("评测任务失败", "event", "", "", 0, "warning", 60, "eval_failed"),
+    ("推理服务不可用", "event", "", "", 0, "critical", 300, "infer_down"),
+]
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    _drop_legacy_metric_tables()
     _migrate_columns()
     db = SessionLocal()
     try:
@@ -96,21 +134,9 @@ def init_db():
                 (r"暴恐|恐怖袭击方法", "暴恐内容（默认护栏）"),
             ]:
                 db.add(GuardRule(project_id=None, pattern=pat, scope="both", description=desc))
-        # 默认告警规则（阈值型：宿主系统/GPU/推理 KV；事件型：节点离线/任务失败/推理不可用）
+        # 默认告警规则（阈值型渲染为 Prometheus 规则；事件型由平台故障收敛点触发）
         if not db.query(AlertRule).first():
-            for name, kind, metric, op, thr, sev, cd, event in [
-                ("GPU 温度过高", "threshold", "gpu_temp", ">", 85, "critical", 300, ""),
-                ("GPU 显存过高", "threshold", "gpu_mem", ">", 95, "warning", 300, ""),
-                ("宿主 CPU 过高", "threshold", "host_cpu", ">", 90, "warning", 300, ""),
-                ("宿主内存过高", "threshold", "host_mem", ">", 90, "warning", 300, ""),
-                ("宿主磁盘过高", "threshold", "host_disk", ">", 85, "warning", 600, ""),
-                ("推理 KV 缓存过高", "threshold", "kv_cache", ">", 90, "warning", 300, ""),
-                ("计算节点离线", "event", "", "", 0, "critical", 300, "node_offline"),
-                ("训练任务失败", "event", "", "", 0, "critical", 60, "train_failed"),
-                ("量化任务失败", "event", "", "", 0, "warning", 60, "quant_failed"),
-                ("评测任务失败", "event", "", "", 0, "warning", 60, "eval_failed"),
-                ("推理服务不可用", "event", "", "", 0, "critical", 300, "infer_down"),
-            ]:
+            for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
                 db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
                                  threshold=thr, event=event, severity=sev, cooldown=cd))
         # 数据目录
@@ -144,18 +170,89 @@ def _s3_bootstrap():
     threading.Thread(target=_loop, name="s3-bootstrap", daemon=True).start()
 
 
+def _monitoring_bootstrap():
+    """后台把「告警规则/通知通道」DB 配置渲染为 Prometheus/Alertmanager 配置并热加载。
+    组件未就绪时反复重试（10s 间隔，最多 10 分钟）；失败不阻塞平台
+    （首启由 alerts.default.yml 兜底，规则变更时 API 会再次触发同步）。"""
+    import threading
+    import time
+
+    def _loop():
+        from .services import prom_service
+        for i in range(60):
+            ok1 = prom_service.sync_rules()
+            ok2 = prom_service.sync_channels()
+            if ok1 and ok2:
+                try:
+                    prom_service.resync_infer_sd()  # 重启后按 DB 重建推理 target 文件（file_sd）
+                except Exception:
+                    log.exception("resync_infer_sd failed")
+                log.info("monitoring config synced (rules + alertmanager + inference sd)")
+                return
+            time.sleep(10)
+        log.warning("monitoring bootstrap gave up（规则/通道变更时会在保存时重试）")
+
+    threading.Thread(target=_loop, name="monitoring-bootstrap", daemon=True).start()
+
+
 @app.on_event("startup")
 def startup():
     init_db()
     start_scheduler()
     if settings.s3_endpoint:
         _s3_bootstrap()
+    _monitoring_bootstrap()
     log.info("VerveDeck backend ready. data_dir=%s", settings.data_dir)
 
 
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "vervedeck-backend"}
+
+
+# ---------- 自监控（/metrics 供 Prometheus backend job 抓取） ----------
+from fastapi import Request  # noqa: E402
+from fastapi.responses import Response, JSONResponse  # noqa: E402
+from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST  # noqa: E402
+from .models import TrainingJob, EvalTask, QuantTask, Deployment  # noqa: E402
+
+_ACTIVE = Gauge("vervedeck_active_tasks", "当前活跃任务数", ["kind"])
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    """backend 自监控指标（active 计数惰性查询；进程/Python 基础指标由 client 自动提供）"""
+    db = SessionLocal()
+    try:
+        _ACTIVE.labels(kind="training").set(
+            db.query(TrainingJob).filter(TrainingJob.status == "running").count())
+        _ACTIVE.labels(kind="eval").set(
+            db.query(EvalTask).filter(EvalTask.status == "running").count())
+        _ACTIVE.labels(kind="quant").set(
+            db.query(QuantTask).filter(QuantTask.status == "running").count())
+        _ACTIVE.labels(kind="inference").set(
+            db.query(Deployment).filter(Deployment.status == "running").count())
+    finally:
+        db.close()
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/api/internal/am-webhook")
+async def am_webhook(req: Request):
+    """Alertmanager 回调（仅内部组件经 X-Vervedeck-Token 头访问）：
+    企微通知 + 告警事件同步入库；邮件由 Alertmanager 原生发出，不重复。"""
+    from .services import prom_service
+    if req.headers.get("x-vervedeck-token") != settings.am_webhook_token:
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    try:
+        payload = await req.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    db = SessionLocal()
+    try:
+        return prom_service.am_webhook(db, payload or {})
+    finally:
+        db.close()
 
 
 @app.get("/api/version")

@@ -1,0 +1,54 @@
+# VerveDeck Prometheus 配置（监控数据底座）
+# 数据源：DCGM（dcgm-exporter）+ Linux 系统（node-exporter）+ 平台自监控（backend）+ 推理引擎（docker_sd 动态发现）
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+# 告警规则由平台 backend 从「告警规则」UI 渲染写入（/data/monitoring/rules/*.yml）；
+# 首启兜底规则见 rules/alerts.default.yml（backend 启动后即被接管覆盖）
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # Prometheus 自监控
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # DCGM GPU 指标（NVIDIA 官方 dcgm-exporter，内嵌 hostengine，采集 DCGM_FI_DEV_* 全量字段）
+  - job_name: dcgm-exporter
+    static_configs:
+      - targets: ["dcgm-exporter:9400"]
+
+  # Linux 宿主系统指标（node-exporter：CPU/内存/磁盘/网络/负载）
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # 平台 backend 自监控（请求计数/任务队列/部署状态，/metrics）
+  - job_name: backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:3001"]
+
+  # Alertmanager 自身
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  # 动态推理容器：vLLM/SGLang 在 8000 端口同时暴露 OpenAI 兼容 API 与 /metrics（Prometheus 格式）。
+  # 用 file_sd：backend 在部署 start/stop 时把容器 target 写入 /data/monitoring/sd/infer-<id>.yml
+  # （不用 docker_sd：docker 29 移除了 state filter，且 target 生成依赖容器 exposed ports，
+  #  而平台推理容器镜像无 EXPOSE 声明，发现不了；file_sd 由平台自持，语义明确且免 docker.sock）
+  - job_name: inference
+    scrape_interval: 15s
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ["/etc/prometheus/sd/*.yml"]
+        refresh_interval: 10s

@@ -15,6 +15,7 @@ from ..database import get_db, SessionLocal
 from ..security import get_current_user, can_access_project, verify_api_key
 from ..models import (Deployment, ModelAsset, Project, User, GuardRule, ApiKey)
 from ..services import inference_service as inf
+from ..services import prom_service
 from ..services import taskcontainer as tc
 from ..services import image_ops
 from ..services import upgrade_service
@@ -290,6 +291,14 @@ def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curre
     d.replicas = want
     d.container_ids = [inf.deployment_container_name(d, i) for i in range(want)]
     db.commit()
+    # 扩缩容后容器 IP 变化，刷新 Prometheus file_sd target
+    tgs = []
+    for i in range(want):
+        ip = tc.container_ip(inf.deployment_container_name(d, i))
+        if ip:
+            tgs.append(f"{ip}:8000")
+    if tgs:
+        prom_service.write_infer_sd(d.id, d.engine, inf.deployment_container_name(d, 0), tgs)
     return _brief(d, db)
 
 
@@ -313,19 +322,32 @@ def deploy_logs(did: int, tail: int = 200, replica: int = 0, db=Depends(get_db),
 
 @router.get("/api/inference/deployments/{did}/metrics")
 def deploy_metrics(did: int, minutes: int = 60, db=Depends(get_db), user=Depends(get_current_user)):
-    """推理引擎监控（KV 缓存占用 / 运行中·排队请求 / 平均延迟；约 30s 抓取一次，保留 24h）"""
+    """推理引擎监控（KV 缓存占用 / 运行中·排队请求 / P95 延迟）
+    指标由 Prometheus 经 docker_sd 直接抓引擎 /metrics（按 deployment_id 标签过滤），保留 15d"""
     d = db.get(Deployment, did)
     if not d:
         raise HTTPException(404, "部署不存在")
     _check(db, d.project_id, user)
-    from ..models import InferenceMetric
-    since = int(time.time()) - minutes * 60
-    rows = (db.query(InferenceMetric)
-            .filter(InferenceMetric.deployment_id == did, InferenceMetric.ts >= since)
-            .order_by(InferenceMetric.ts.asc()).all())
-    return {"engine": d.engine,
-            "series": [{"ts": r.ts, "kv": r.kv_cache_pct, "running": r.num_running,
-                        "waiting": r.num_waiting, "latency_ms": r.avg_latency_ms} for r in rows]}
+    sel = f'{{deployment_id="{did}"}}'
+    exprs = [
+        ("kv", f"max(vllm:kv_cache_usage_perc{sel} or sglang:token_usage{sel}) * 100"),
+        ("running", f"max(vllm:num_requests_running{sel} or sglang:num_running_requests{sel})"),
+        ("waiting", f"max(vllm:num_requests_waiting{sel} or sglang:num_queue_requests{sel})"),
+        ("latency_ms",
+         f"histogram_quantile(0.95, sum by (le) "
+         f"(rate(vllm:e2e_request_latency_seconds_bucket{sel}[5m]))) * 1000"),
+    ]
+    per_ts: dict[int, dict] = {}
+    for key, expr in exprs:
+        try:
+            results = prom_service.prom_range(expr, minutes=minutes, step="30s")
+        except Exception:
+            continue
+        for r in results:
+            for ts, v in r.get("values", []):
+                t = int(float(ts))
+                per_ts.setdefault(t, {"ts": t})[key] = prom_service._f(v)
+    return {"engine": d.engine, "series": [per_ts[t] for t in sorted(per_ts)]}
 
 
 # ---------- 多 LoRA 动态热加载 ----------

@@ -127,6 +127,7 @@ function ChannelConfigCard() {
         <Col span={5}><Form.Item name="smtp_from" noStyle><Input size="small" placeholder={t('admin.smtpFromPh')} allowClear /></Form.Item></Col>
         <Col span={5}><Form.Item name="smtp_to" noStyle><Input size="small" placeholder={t('admin.smtpToPh')} allowClear /></Form.Item></Col>
       </Row>
+      <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>{t('admin.promHint')}</div>
     </Card>
   )
 }
@@ -300,8 +301,10 @@ function GuardTab() {
   )
 }
 
-/** 告警：阈值规则（系统/GPU/推理）+ 事件规则 + 告警事件 + 通道测试 */
-const METRICS = ['host_cpu', 'host_mem', 'host_disk', 'gpu_util', 'gpu_temp', 'gpu_mem', 'kv_cache']
+/** 告警：阈值规则（宿主/GPU/推理/监控自身，Prometheus 评估）+ 事件规则（平台故障收敛点）+ 告警事件 */
+const METRICS = ['host_cpu', 'host_mem', 'host_disk', 'gpu_util', 'gpu_temp', 'gpu_mem',
+  'gpu_mem_temp', 'gpu_power', 'gpu_xid', 'gpu_ecc_dbe', 'kv_cache', 'infer_waiting',
+  'infer_latency_p95', 'infer_down', 'system_up']
 const EVENTS = ['node_offline', 'node_online', 'train_failed', 'eval_failed', 'quant_failed', 'infer_down']
 
 function AlertsTab() {
@@ -317,7 +320,11 @@ function AlertsTab() {
   const mLabel = (m: string) => ({
     host_cpu: t('admin.mHostCpu'), host_mem: t('admin.mHostMem'), host_disk: t('admin.mHostDisk'),
     gpu_util: t('admin.mGpuUtil'), gpu_temp: t('admin.mGpuTemp'), gpu_mem: t('admin.mGpuMem'),
-    kv_cache: t('admin.mKvCache'),
+    gpu_mem_temp: t('admin.mGpuMemTemp'), gpu_power: t('admin.mGpuPower'),
+    gpu_xid: t('admin.mGpuXid'), gpu_ecc_dbe: t('admin.mGpuEccDbe'),
+    kv_cache: t('admin.mKvCache'), infer_waiting: t('admin.mInferWaiting'),
+    infer_latency_p95: t('admin.mInferLatency'), infer_down: t('admin.mInferDown'),
+    system_up: t('admin.mSystemUp'),
   }[m] || m)
   const eLabel = (e: string) => ({
     node_offline: t('admin.evNodeOffline'), node_online: t('admin.evNodeOnline'),

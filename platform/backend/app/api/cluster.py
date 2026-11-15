@@ -1,50 +1,73 @@
-"""算力调度与运维：GPU 节点池、利用率监控、多任务排队与优先级、故障自愈视图"""
+"""算力调度与运维：GPU 节点池、利用率监控、多任务排队与优先级、故障自愈视图
+
+指标数据底座 = Prometheus（dcgm-exporter / node-exporter / 推理引擎 /metrics），
+本模块只做查询与组装，不再读 GpuMetric/SystemMetric/InferenceMetric 旧表。
+"""
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from ..config import settings
 from ..database import get_db
 from ..security import get_current_user
-from ..models import (GpuNode, GpuMetric, SystemMetric, TrainingJob, Deployment, User, Project)
+from ..models import GpuNode, TrainingJob, Deployment
 from .. import scheduler
+from ..services import prom_service
 
 router = APIRouter(prefix="/api/cluster", tags=["cluster"])
+
+
+def _f(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _merged_series(exprs: list[tuple[str, str]], minutes: int, step: str = "60s") -> list[dict]:
+    """多路 PromQL 区间查询 → 按 ts 合并的行 [{ts, <key>...}]（Prometheus 不可达时返回 []）"""
+    per_ts: dict[int, dict] = {}
+    for key, expr in exprs:
+        try:
+            results = prom_service.prom_range(expr, minutes=minutes, step=step)
+        except Exception:
+            continue
+        for r in results:
+            for ts, v in r.get("values", []):
+                t = int(float(ts))
+                per_ts.setdefault(t, {"ts": t})[key] = _f(v)
+    return [per_ts[t] for t in sorted(per_ts)]
+
+
+def _gpu_series(exprs: list[tuple[str, str]], minutes: int) -> dict[str, list[dict]]:
+    """按 gpu 标签分组的区间序列 {gpu_index: [{ts, <key>...}]}"""
+    out: dict[int, dict[int, dict]] = {}
+    for key, expr in exprs:
+        try:
+            results = prom_service.prom_range(expr, minutes=minutes, step="60s")
+        except Exception:
+            continue
+        for r in results:
+            g = r["metric"].get("gpu")
+            if g is None:
+                continue
+            idx = int(g)
+            for ts, v in r.get("values", []):
+                t = int(float(ts))
+                out.setdefault(idx, {}).setdefault(t, {"ts": t})[key] = _f(v)
+    return {str(i): [out[i][t] for t in sorted(out[i])] for i in sorted(out)}
 
 
 @router.get("/nodes")
 def nodes(db=Depends(get_db), user=Depends(get_current_user)):
     out = []
     for n in db.query(GpuNode).all():
-        last_ts = (db.query(func.max(GpuMetric.ts))
-                   .filter(GpuMetric.node_id == n.id).scalar())
-        rows = ((db.query(GpuMetric)
-                 .filter(GpuMetric.node_id == n.id, GpuMetric.ts == last_ts)
-                 .order_by(GpuMetric.gpu_index.asc()).all())
-                if last_ts else [])
-        # 防御：同 ts 历史重复行（tick/采集周期相位漂移的旧数据），按 gpu_index 去重
-        _seen = set()
-        deduped = []
-        for r in rows:
-            if r.gpu_index in _seen:
-                continue
-            _seen.add(r.gpu_index)
-            deduped.append(r)
-        rows = deduped
-        meta_names = (n.meta or {}).get("names", []) or []
         out.append({
             "id": n.id, "name": n.name, "gpu_count": n.gpu_count, "status": n.status,
             "last_heartbeat": str(n.last_heartbeat) if n.last_heartbeat else "",
             "meta": n.meta,
-            "gpus": ([{"index": r.gpu_index,
-                       "name": (meta_names[r.gpu_index]
-                                if r.gpu_index < len(meta_names) else ""),
-                       "mem_used": r.mem_used, "mem_total": r.mem_total,
-                       "util": r.util, "power": r.power, "temp": r.temp,
-                       "extra": r.extra or {}} for r in rows]),
+            "gpus": prom_service.gpu_snapshot(n),
             "gpu_in_use": scheduler._gpu_in_use(db),
         })
     return out
@@ -52,46 +75,53 @@ def nodes(db=Depends(get_db), user=Depends(get_current_user)):
 
 @router.get("/nodes/{nid}/metrics")
 def node_metrics(nid: int, minutes: int = 60, db=Depends(get_db), user=Depends(get_current_user)):
+    """单节点 GPU 指标趋势（DCGM 区间查询；监控大屏主视图已改 Grafana 嵌入）"""
     n = db.get(GpuNode, nid)
     if not n:
         raise HTTPException(404, "节点不存在")
-    since = int(time.time()) - minutes * 60
-    rows = (db.query(GpuMetric)
-            .filter(GpuMetric.node_id == nid, GpuMetric.ts >= since)
-            .order_by(GpuMetric.ts.asc()).all())
-    series = {}
-    for r in rows:
-        series.setdefault(r.gpu_index, []).append({
-            "ts": r.ts, "util": r.util, "mem_used": r.mem_used,
-            "power": r.power, "temp": r.temp,
-        })
+    series = _gpu_series([
+        ("util", "DCGM_FI_DEV_GPU_UTIL"),
+        ("temp", "DCGM_FI_DEV_GPU_TEMP"),
+        ("power", "DCGM_FI_DEV_POWER_USAGE"),
+        ("mem_used", "DCGM_FI_DEV_FB_USED"),
+    ], minutes)
     return {"node": n.name, "series": series}
 
 
 @router.get("/system")
 def system_metrics(minutes: int = 60, db=Depends(get_db), user=Depends(get_current_user)):
-    """宿主 Linux 系统指标（CPU/内存/磁盘/负载/网络）：最新快照 + 时间序列（gpu-agent 5s 采集）"""
+    """宿主 Linux 系统指标（node-exporter）：最新快照 + CPU/内存/磁盘/负载趋势"""
     node = db.query(GpuNode).filter_by(name=settings.node_name).first()
-    if not node:
-        return {"node": "", "latest": None, "series": []}
-    since = int(time.time()) - minutes * 60
-    rows = (db.query(SystemMetric)
-            .filter(SystemMetric.node_id == node.id, SystemMetric.ts >= since)
-            .order_by(SystemMetric.ts.asc()).all())
-    last = rows[-1] if rows else None
-    return {
-        "node": node.name,
-        "latest": (None if not last else {
-            "ts": last.ts, "cpu_pct": last.cpu_pct, "cpu_count": last.cpu_count,
-            "load1": last.load1, "load5": last.load5, "load15": last.load15,
-            "mem_total_mb": last.mem_total_mb, "mem_used_mb": last.mem_used_mb, "mem_pct": last.mem_pct,
-            "disk_total_mb": last.disk_total_mb, "disk_used_mb": last.disk_used_mb, "disk_pct": last.disk_pct,
-            "net_rx_mbps": last.net_rx_mbps, "net_tx_mbps": last.net_tx_mbps,
-        }),
-        "series": [{"ts": r.ts, "cpu": r.cpu_pct, "mem": r.mem_pct, "disk": r.disk_pct,
-                    "load1": r.load1, "net_rx": r.net_rx_mbps, "net_tx": r.net_tx_mbps}
-                   for r in rows],
-    }
+    P = prom_service.PROMQL
+
+    def inst(expr):
+        try:
+            r = prom_service.prom_instant(expr)
+            return _f(r[0]["value"][1]) if r else None
+        except Exception:
+            return None
+
+    cpu = inst(P["host_cpu"])
+    mem = inst(P["host_mem"])
+    disk = inst(P["host_disk"])
+    latest = (None if cpu is None else {
+        "ts": int(time.time()),
+        "cpu_pct": cpu,
+        "cpu_count": int(inst('count(count by (cpu)(node_cpu_seconds_total{mode="idle"}))') or 0),
+        "mem_pct": mem if mem is not None else 0,
+        "disk_pct": disk if disk is not None else 0,
+        "load1": inst("node_load1") or 0,
+        "load5": inst("node_load5") or 0,
+        "load15": inst("node_load15") or 0,
+        "uptime_s": inst("node_time_seconds - node_boot_time_seconds") or 0,
+    })
+    series = _merged_series([
+        ("cpu", P["host_cpu"]),
+        ("mem", P["host_mem"]),
+        ("disk", P["host_disk"]),
+        ("load1", "node_load1"),
+    ], minutes)
+    return {"node": node.name if node else "", "latest": latest, "series": series}
 
 
 class PriorityReq(BaseModel):
@@ -148,23 +178,30 @@ def utilization(db=Depends(get_db), user=Depends(get_current_user)):
 
 @router.get("/inference")
 def inference_overview(db=Depends(get_db), user=Depends(get_current_user)):
-    """推理服务总览（监控大屏用）：运行中部署 + 最新引擎指标 + 近 1h KV/请求趋势"""
-    from ..models import InferenceMetric
+    """推理服务总览（vLLM/SGLang 指标按 docker_sd 的 deployment_id 标签过滤）"""
     deps = db.query(Deployment).filter(Deployment.status == "running").all()
-    since = int(time.time()) - 3600
     out = []
     for d in deps:
-        last = (db.query(InferenceMetric).filter(InferenceMetric.deployment_id == d.id)
-                .order_by(InferenceMetric.ts.desc()).first())
-        rows = (db.query(InferenceMetric).filter(InferenceMetric.deployment_id == d.id,
-                                                 InferenceMetric.ts >= since)
-                .order_by(InferenceMetric.ts.asc()).all())
-        out.append({
-            "id": d.id, "name": d.name, "engine": d.engine,
-            "latest": (None if not last else {
-                "kv": last.kv_cache_pct, "running": last.num_running,
-                "waiting": last.num_waiting, "latency_ms": last.avg_latency_ms}),
-            "series": [{"ts": r.ts, "kv": r.kv_cache_pct, "running": r.num_running}
-                       for r in rows],
-        })
+        sel = f'{{deployment_id="{d.id}"}}'
+        kv_q = f"max(vllm:kv_cache_usage_perc{sel} or sglang:token_usage{sel}) * 100"
+        run_q = f"max(vllm:num_requests_running{sel} or sglang:num_running_requests{sel})"
+        wait_q = f"max(vllm:num_requests_waiting{sel} or sglang:num_queue_requests{sel})"
+        lat_q = (f"histogram_quantile(0.95, sum by (le) "
+                 f"(rate(vllm:e2e_request_latency_seconds_bucket{sel}[5m]))) * 1000")
+
+        def inst(expr):
+            try:
+                r = prom_service.prom_instant(expr)
+                return _f(r[0]["value"][1]) if r else None
+            except Exception:
+                return None
+
+        kv = inst(kv_q)
+        latest = None if kv is None else {
+            "kv": kv, "running": int(inst(run_q) or 0), "waiting": int(inst(wait_q) or 0),
+            "latency_ms": round(inst(lat_q) or 0, 1),
+        }
+        series = _merged_series([("kv", kv_q), ("running", run_q)], 60)
+        out.append({"id": d.id, "name": d.name, "engine": d.engine,
+                    "latest": latest, "series": series})
     return {"items": out}

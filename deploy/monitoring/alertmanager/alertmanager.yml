@@ -1,0 +1,21 @@
+# VerveDeck Alertmanager 初始配置（占位：不通知）。
+# backend 启动时从「通知通道」DB 配置渲染覆盖本文件并热加载：
+#   邮件 → smtp（原生支持）；企业微信 → webhook 到 backend /api/internal/am-webhook
+# 注意：AM 不允许 receiver: null，未配置通道时用名为 "null" 的空 receiver 兜底。
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'null'
+  group_by: ["alertname", "instance"]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: 'null'
+      repeat_interval: 1h
+
+receivers:
+  - name: 'null'

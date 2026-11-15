@@ -1,0 +1,82 @@
+# VerveDeck 默认告警规则（首启兜底；backend 启动后由「告警规则」UI 渲染的 alerts.vervedeck.yml 接管）
+# 通知：Alertmanager → 邮件（原生）+ 企业微信（backend 内部 webhook 适配）
+groups:
+  - name: vervedeck-default
+    rules:
+      - alert: GpuTempHigh
+        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        for: 2m
+        labels: {severity: critical, source: vervedeck, metric: gpu_temp}
+        annotations:
+          summary: "GPU 温度过高 {{`{{ $labels.gpu }}`}}"
+          description: "GPU {{`{{ $labels.gpu }}`}} 温度 {{`{{ printf \"%.0f\" $value }}`}}°C 超过 85°C，持续 2 分钟"
+
+      - alert: GpuMemHigh
+        expr: 100 * DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE) > 95
+        for: 5m
+        labels: {severity: warning, source: vervedeck, metric: gpu_mem}
+        annotations:
+          summary: "GPU 显存占用过高 {{`{{ $labels.gpu }}`}}"
+          description: "GPU {{`{{ $labels.gpu }}`}} 显存占用 {{`{{ printf \"%.0f\" $value }}`}}% 超过 95%，持续 5 分钟"
+
+      - alert: GpuXidError
+        expr: increase(DCGM_FI_DEV_XID_ERROR[5m]) > 0
+        labels: {severity: critical, source: vervedeck, metric: gpu_xid}
+        annotations:
+          summary: "GPU XID 错误 {{`{{ $labels.gpu }}`}}"
+          description: "GPU {{`{{ $labels.gpu }}`}} 上报 XID 错误（硬件/驱动级异常），需查看 dmesg 与容器日志"
+
+      - alert: GpuEccDbe
+        expr: increase(DCGM_FI_DEV_ECC_DBE_AGG_TOTAL[1h]) > 0
+        labels: {severity: critical, source: vervedeck, metric: gpu_ecc_dbe}
+        annotations:
+          summary: "GPU ECC 双比特错误 {{`{{ $labels.gpu }}`}}"
+          description: "GPU {{`{{ $labels.gpu }}`}} 近 1 小时出现 ECC 双比特不可纠正错误，显存可能存在硬件故障"
+
+      - alert: HostCpuHigh
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 90
+        for: 5m
+        labels: {severity: warning, source: vervedeck, metric: host_cpu}
+        annotations:
+          summary: "宿主 CPU 使用率过高"
+          description: "CPU 使用率 {{`{{ printf \"%.0f\" $value }}`}}% 超过 90%，持续 5 分钟"
+
+      - alert: HostMemHigh
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels: {severity: warning, source: vervedeck, metric: host_mem}
+        annotations:
+          summary: "宿主内存使用率过高"
+          description: "内存使用率 {{`{{ printf \"%.0f\" $value }}`}}% 超过 90%，持续 5 分钟"
+
+      - alert: HostDiskHigh
+        expr: 100 * (1 - (node_filesystem_avail_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"})) > 85
+        for: 10m
+        labels: {severity: warning, source: vervedeck, metric: host_disk}
+        annotations:
+          summary: "宿主磁盘空间不足"
+          description: "根分区使用率 {{`{{ printf \"%.0f\" $value }}`}}% 超过 85%，持续 10 分钟"
+
+      - alert: KvCacheHigh
+        expr: (max by (container) (vllm:kv_cache_usage_perc) * 100 or max by (container) (sglang:token_usage) * 100) > 90
+        for: 5m
+        labels: {severity: warning, source: vervedeck, metric: kv_cache}
+        annotations:
+          summary: "推理 KV 缓存占用过高 {{`{{ $labels.container }}`}}"
+          description: "{{`{{ $labels.container }}`}} KV 缓存占用 {{`{{ printf \"%.0f\" $value }}`}}% 超过 90%，可能开始抢占/拒绝请求"
+
+      - alert: InferDown
+        expr: up{job="inference"} == 0
+        for: 2m
+        labels: {severity: critical, source: vervedeck, metric: infer_down}
+        annotations:
+          summary: "推理服务指标不可达 {{`{{ $labels.container }}`}}"
+          description: "推理容器 {{`{{ $labels.container }}`}}（部署 {{`{{ $labels.deployment_id }}`}}）指标端点 2 分钟不可达，服务可能已挂死"
+
+      - alert: MonitorTargetDown
+        expr: up{job=~"dcgm-exporter|node-exporter|backend"} == 0
+        for: 5m
+        labels: {severity: warning, source: vervedeck, metric: system_up}
+        annotations:
+          summary: "监控目标离线 {{`{{ $labels.job }}`}}"
+          description: "监控采集目标 {{`{{ $labels.job }}`}} 连续 5 分钟不可达，相关监控数据将中断"

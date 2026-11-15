@@ -239,49 +239,13 @@ class GpuNode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
-class GpuMetric(Base):
-    __tablename__ = "gpu_metrics"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    node_id: Mapped[int] = mapped_column(ForeignKey("gpu_nodes.id"), index=True)
-    ts: Mapped[int] = mapped_column(Integer, index=True)  # unix ts
-    gpu_index: Mapped[int] = mapped_column(Integer, default=0)
-    mem_used: Mapped[float] = mapped_column(Float, default=0)
-    mem_total: Mapped[float] = mapped_column(Float, default=0)
-    util: Mapped[float] = mapped_column(Float, default=0)
-    power: Mapped[float] = mapped_column(Float, default=0)
-    temp: Mapped[float] = mapped_column(Float, default=0)
-    # DCGM 扩展指标（mem_temp/clocks/ecc_*/throttle_*/health/xid_error_count 等）
-    extra: Mapped[dict] = mapped_column(JSON, default=dict)
-
-
-class SystemMetric(Base):
-    """宿主 Linux 系统指标（gpu-agent 读 /proc 采集，5s 周期）"""
-    __tablename__ = "system_metrics"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    node_id: Mapped[int] = mapped_column(ForeignKey("gpu_nodes.id"), index=True)
-    ts: Mapped[int] = mapped_column(Integer, index=True)  # unix ts
-    cpu_pct: Mapped[float] = mapped_column(Float, default=0)
-    cpu_count: Mapped[int] = mapped_column(Integer, default=0)
-    load1: Mapped[float] = mapped_column(Float, default=0)
-    load5: Mapped[float] = mapped_column(Float, default=0)
-    load15: Mapped[float] = mapped_column(Float, default=0)
-    mem_total_mb: Mapped[float] = mapped_column(Float, default=0)
-    mem_used_mb: Mapped[float] = mapped_column(Float, default=0)
-    mem_pct: Mapped[float] = mapped_column(Float, default=0)
-    disk_total_mb: Mapped[float] = mapped_column(Float, default=0)
-    disk_used_mb: Mapped[float] = mapped_column(Float, default=0)
-    disk_pct: Mapped[float] = mapped_column(Float, default=0)
-    net_rx_mbps: Mapped[float] = mapped_column(Float, default=0)
-    net_tx_mbps: Mapped[float] = mapped_column(Float, default=0)
-
-
 class AlertRule(Base):
     """告警规则：threshold=指标阈值（metric+op+threshold），event=平台事件（event 码）"""
     __tablename__ = "alert_rules"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
     kind: Mapped[str] = mapped_column(String(16), default="threshold")  # threshold/event
-    metric: Mapped[str] = mapped_column(String(32), default="")  # threshold: host_cpu/host_mem/host_disk/gpu_util/gpu_temp/gpu_mem/kv_cache
+    metric: Mapped[str] = mapped_column(String(32), default="")  # threshold: host_cpu/host_mem/host_disk/gpu_util/gpu_temp/gpu_mem/gpu_mem_temp/gpu_power/gpu_xid/gpu_ecc_dbe/kv_cache/infer_waiting/infer_latency_p95/infer_down/system_up
     op: Mapped[str] = mapped_column(String(4), default=">")  # > < >= <=
     threshold: Mapped[float] = mapped_column(Float, default=0)
     event: Mapped[str] = mapped_column(String(32), default="")  # event: node_offline/node_online/train_failed/eval_failed/quant_failed/infer_down
@@ -298,7 +262,7 @@ class AlertEvent(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     ts: Mapped[int] = mapped_column(Integer, index=True)  # unix ts
     rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
-    level: Mapped[str] = mapped_column(String(16), default="warning")  # warning/critical
+    level: Mapped[str] = mapped_column(String(16), default="warning")  # warning/critical/info
     target: Mapped[str] = mapped_column(String(128), default="")  # node-1 / gpu:0 / train:12 / deploy:3
     title: Mapped[str] = mapped_column(String(255), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
@@ -322,21 +286,6 @@ class AlertChannelConfig(Base):
     smtp_from: Mapped[str] = mapped_column(String(128), default="")
     smtp_to: Mapped[str] = mapped_column(String(512), default="")  # 收件人，逗号分隔
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
-
-
-class InferenceMetric(Base):
-    """推理部署引擎指标（vLLM /metrics、SGLang /get_server_info，约 30s 抓取一次）"""
-    __tablename__ = "inference_metrics"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    deployment_id: Mapped[int] = mapped_column(Integer, index=True)
-    ts: Mapped[int] = mapped_column(Integer, index=True)  # unix ts
-    engine: Mapped[str] = mapped_column(String(16), default="vllm")
-    kv_cache_pct: Mapped[float] = mapped_column(Float, default=0)  # KV 缓存占用%
-    num_running: Mapped[int] = mapped_column(Integer, default=0)  # 运行中请求数
-    num_waiting: Mapped[int] = mapped_column(Integer, default=0)  # 排队请求数
-    avg_latency_ms: Mapped[float] = mapped_column(Float, default=0)  # 平均端到端延迟
-    extra: Mapped[dict] = mapped_column(JSON, default=dict)
-    __table_args__ = (Index("ix_infer_metrics_dep_ts", "deployment_id", "ts"),)
 
 
 class GuardRule(Base):

@@ -10,14 +10,12 @@ from ..database import get_db
 from ..security import get_current_user
 from ..config import settings
 from ..models import (Dataset, DatasetVersion, ModelAsset, TrainingJob, EvalTask,
-                      Deployment, GpuNode, GpuMetric, AuditLog, User, Project,
+                      Deployment, GpuNode, AuditLog, User, Project,
                       ApiKey, DataTask)
 from .. import scheduler
+from ..services import prom_service
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
-
-_THROTTLE_KEYS = ("thermal_slowdown", "hw_slowdown", "hw_thermal_slowdown",
-                  "hw_power_brake_slowdown", "sw_thermal_slowdown")
 
 
 def _status_counts(db, model, pids, statuses):
@@ -38,10 +36,11 @@ def summary(db=Depends(get_db), user=Depends(get_current_user)):
     pids = pids or [0]  # 无项目时查不到任何行
 
     node = db.query(GpuNode).filter_by(name="node-1").first()
-    last = db.query(GpuMetric).order_by(GpuMetric.ts.desc()).first()
-    util = last.util if last else 0
-    mem_used = last.mem_used if last else 0
-    mem_total = last.mem_total if last else 0
+    # GPU 快照 = DCGM 即时查询（Prometheus 底座），口径与旧 GpuMetric 行一致
+    gpus = prom_service.gpu_snapshot(node)
+    util = round(sum(g["util"] for g in gpus) / len(gpus), 1) if gpus else 0
+    mem_used = sum(g["mem_used"] for g in gpus)
+    mem_total = sum(g["mem_total"] for g in gpus)
 
     # 各模块状态分布
     jobs = _status_counts(db, TrainingJob, pids,
@@ -72,27 +71,6 @@ def summary(db=Depends(get_db), user=Depends(get_current_user)):
               .group_by(DataTask.status).all())
     data_tasks = {"total": sum(dt.values()), "running": dt.get("pending", 0) + dt.get("running", 0),
                   "done": dt.get("done", 0), "failed": dt.get("failed", 0)}
-
-    # 每卡最新指标（含 DCGM 扩展）
-    gpus = []
-    latest_ts = db.query(func.max(GpuMetric.ts)).scalar()
-    if latest_ts:
-        names = (node.meta or {}).get("names", []) if node else []
-        for m in (db.query(GpuMetric).filter(GpuMetric.ts == latest_ts)
-                  .order_by(GpuMetric.gpu_index).all()):
-            e = m.extra or {}
-            gpus.append({
-                "index": m.gpu_index,
-                "name": names[m.gpu_index] if m.gpu_index < len(names) else f"GPU {m.gpu_index}",
-                "util": m.util, "mem_used": m.mem_used, "mem_total": m.mem_total,
-                "power": m.power, "temp": m.temp,
-                "sm_clock": e.get("sm_clock", 0), "mem_clock": e.get("mem_clock", 0),
-                "mem_temp": e.get("mem_temp", 0),
-                "health": e.get("health", 0), "xid": e.get("xid_error_count", 0),
-                "remap": e.get("row_remap_pending", 0),
-                "ecc_sbe": e.get("ecc_sbe_agg", 0), "ecc_dbe": e.get("ecc_dbe_agg", 0),
-                "throttle": sum(1 for k in _THROTTLE_KEYS if e.get(k)),
-            })
 
     # 最近评测 / 部署 / 操作日志
     recent_evals = []

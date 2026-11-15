@@ -141,7 +141,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-vervedeck-datasets}
       # 宿主源码树（只读）：镜像管理页在线重建自构镜像的构建上下文
       VERVEDECK_REPO: /repo
-      # 告警通知通道（留空=不启用对应通道；告警规则在 系统管理→告警 页配置）
+      # 告警通知通道（DB「通知通道」页配置优先，此处为兜底；阈值告警由 Alertmanager 发出）
       WECOM_WEBHOOK: ${WECOM_WEBHOOK:-}            # 企业微信群机器人 webhook
       SMTP_HOST: ${SMTP_HOST:-}                    # 如 smtp.qq.com / smtp.exmail.qq.com
       SMTP_PORT: ${SMTP_PORT:-465}
@@ -149,6 +149,9 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}            # 邮箱授权码
       SMTP_FROM: ${SMTP_FROM:-}                    # 发件人（默认同 SMTP_USER）
       ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}          # 告警收件人，逗号分隔
+      # 监控告警栈（指标底座 Prometheus；本服务渲染规则/通知配置到 /data/monitoring 并热加载）
+      PROMETHEUS_URL: http://prometheus:9090
+      ALERTMANAGER_URL: http://alertmanager:9093
     volumes:
       - /data:/data
       - /var/run/docker.sock:/var/run/docker.sock
@@ -180,19 +183,17 @@ services:
       - backend
     networks: [fintune]
 
-  # GPU 监控 Agent：直接用 NVIDIA 开源 nvidia/dcgm 镜像（DCGM 全套官方预装，本地零构建），
-  # 只读挂载 collect.sh 采集脚本并覆盖 entrypoint：后台拉起 nv-hostengine 后进入 5s 周期
-  # 采集循环（温度/功耗/时钟/ECC/降频/健康度/XID 等 28 项扩展指标 + 宿主机系统指标）
+  # 节点心跳 Agent：GPU 指标已由 dcgm-exporter（Prometheus 链路）采集，本容器只负责
+  # 节点在线判定（agent.ts 心跳）与 GPU 型号登记（agent.names），供平台节点表/离线事件使用
   gpu-agent:
     image: nvidia/dcgm:4.7.1-ubuntu24.04
     entrypoint: ["bash", "-lc"]
-    command: ["nv-hostengine -n >/tmp/hostengine.log 2>&1 & sleep 2; exec bash /usr/local/bin/collect.sh"]
+    command: ["exec bash /usr/local/bin/heartbeat.sh"]
     restart: unless-stopped
-    ipc: host   # DCGM hostengine 需要宿主共享内存
-    network_mode: host   # 采集宿主网卡流量（/proc/net/dev 随网络命名空间隔离，bridge 下只能看到容器自身）
+    network_mode: host
     volumes:
       - /data/gpu:/data/gpu
-      - ../images/gpu-agent/collect.sh:/usr/local/bin/collect.sh:ro
+      - ../images/gpu-agent/heartbeat.sh:/usr/local/bin/heartbeat.sh:ro
     deploy:
       resources:
         reservations:
@@ -200,6 +201,89 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  # ---------- 监控告警栈：Prometheus + Grafana + Alertmanager（指标底座=DCGM+Linux 系统） ----------
+
+  # DCGM GPU 指标导出器（NVIDIA 官方）：内嵌 hostengine，暴露 DCGM_FI_DEV_* 字段（温度/显存/功耗/时钟/降频…）
+  # 字段集 = 镜像默认 + VerveDeck 扩展（6 个降频 VIOLATION + ECC 双/单位），见 monitoring/dcgm/counters.csv；
+  # 目录挂载（非单文件）：改 CSV 后 exporter 自动热加载，且不受 bind mount inode 替换影响
+  dcgm-exporter:
+    image: nvidia/dcgm-exporter:4.6.1-4.8.4   # Docker Hub 官方镜像（nvcr.io 需 NGC 登录，改用 Hub）
+    restart: unless-stopped
+    cap_add: [SYS_ADMIN]
+    command: ["--collectors", "/etc/dcgm-exporter/custom/counters.csv"]
+    volumes:
+      - ./monitoring/dcgm:/etc/dcgm-exporter/custom:ro
+    networks: [fintune]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Linux 宿主系统指标（node-exporter：CPU/内存/磁盘/网络/负载/系统信息）
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|tmp)($$|/)
+    pid: host
+    volumes:
+      - /:/host:ro
+    networks: [fintune]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1   # 2.53 的 docker client 与 docker 29 daemon 发现不兼容（静默空 target），2.55 修复
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle   # POST /-/reload 热加载配置/规则（backend 渲染后调用）
+    ports:
+      - "127.0.0.1:9090:9090"    # 仅本机调试；UI 入口为 Grafana
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /data/monitoring/rules:/etc/prometheus/rules:ro   # 告警规则由 backend 从 UI 渲染写入
+      - /data/monitoring/sd:/etc/prometheus/sd:ro         # 推理 target 由 backend 在部署 start/stop 时写入（file_sd）
+      - /data/prometheus:/prometheus
+    networks: [fintune]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/am
+    volumes:
+      - /data/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml  # backend 从「通知通道」渲染写入
+      - /data/monitoring/am-data:/am
+    networks: [fintune]
+
+  grafana:
+    image: grafana/grafana:11.6.2
+    restart: unless-stopped
+    environment:
+      GF_PATHS_DATA: /data
+      GF_AUTH_ANONYMOUS_ENABLED: "true"           # 平台 iframe 嵌入免登录（只读 Viewer）
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_SIGNUP: "true"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-vervedeck-grafana}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:3000:3000"    # 仅本机调试；平台内走 web 容器 /grafana 反向代理
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - /data/grafana:/data
+    networks: [fintune]
 
 networks:
   fintune:

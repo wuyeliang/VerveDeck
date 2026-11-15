@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     smtp_password: str = ""  # 邮箱授权码（非登录密码）
     smtp_from: str = ""      # 发件人地址（默认同 smtp_user）
     alert_email_to: str = ""  # 告警收件人，逗号分隔
+    # 监控告警栈：指标底座 Prometheus，规则/通知配置由 backend 渲染到 /data/monitoring 并热加载
+    prometheus_url: str = "http://prometheus:9090"
+    alertmanager_url: str = "http://alertmanager:9093"
+    backend_internal_url: str = "http://backend:3001"  # Alertmanager webhook 回调地址
+    am_webhook_token: str = "vervedeck-am-internal"  # /api/internal/am-webhook 鉴权头（防公网伪造回调）
 
     class Config:
         env_file = ".env"

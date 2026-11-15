@@ -1,0 +1,136 @@
+{
+  "uid": "vervedeck-infer",
+  "title": "VerveDeck · 推理服务（vLLM / SGLang）",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["vervedeck", "inference"],
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "在线推理容器",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "count(up{job=\"inference\"} == 1)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "最高 KV 占用",
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "max(max by (container) (vllm:kv_cache_usage_perc) * 100 or max by (container) (sglang:token_usage) * 100)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "运行中请求",
+      "gridPos": { "h": 4, "w": 4, "x": 9, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum(max by (container) (vllm:num_requests_running or sglang:num_running_requests))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "排队请求",
+      "gridPos": { "h": 4, "w": 4, "x": 13, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum(max by (container) (vllm:num_requests_waiting or sglang:num_queue_requests))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 20 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 5, "type": "stat", "title": "Token 生成速率",
+      "gridPos": { "h": 4, "w": 4, "x": 17, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(vllm:generation_tokens_total[1m]) or rate(sglang:num_generated_tokens_total[1m]))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 1 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 6, "type": "stat", "title": "采集目标状态",
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "min(up{job=\"inference\"})", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none",
+          "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "KV 缓存占用 (%)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container) (vllm:kv_cache_usage_perc) * 100 or max by (container) (sglang:token_usage) * 100", "legendFormat": "{{container}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 15, "lineWidth": 2 }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 90 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "运行中 / 排队请求",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container) (vllm:num_requests_running or sglang:num_running_requests)", "legendFormat": "{{container}} 运行中", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "max by (container) (vllm:num_requests_waiting or sglang:num_queue_requests)", "legendFormat": "{{container}} 排队", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "请求延迟分位数（vLLM，s）",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le, container) (rate(vllm:e2e_request_latency_seconds_bucket[5m])))", "legendFormat": "{{container}} p50", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le, container) (rate(vllm:e2e_request_latency_seconds_bucket[5m])))", "legendFormat": "{{container}} p95", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le, container) (rate(vllm:e2e_request_latency_seconds_bucket[5m])))", "legendFormat": "{{container}} p99", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Token 吞吐 (tokens/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (container) (rate(vllm:generation_tokens_total[1m]) or rate(sglang:num_generated_tokens_total[1m]))", "legendFormat": "{{container}} 生成", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "sum by (container) (rate(vllm:prompt_tokens_total[1m]))", "legendFormat": "{{container}} 输入", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "请求速率 (req/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (container) (rate(vllm:request_success_total[5m]) or rate(vllm:num_requests_total[5m]))", "legendFormat": "{{container}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "目标在线状态（1=UP）",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "up{job=\"inference\"}", "legendFormat": "{{container}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1, "custom": { "fillOpacity": 30, "lineWidth": 1 } }, "overrides": [] }
+    }
+  ]
+}

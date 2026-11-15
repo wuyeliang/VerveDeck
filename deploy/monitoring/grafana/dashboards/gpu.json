@@ -1,0 +1,141 @@
+{
+  "uid": "vervedeck-gpu",
+  "title": "VerveDeck · GPU 监控（DCGM）",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["vervedeck", "gpu"],
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "GPU 总数",
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "count(DCGM_FI_DEV_GPU_UTIL)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "平均利用率",
+      "gridPos": { "h": 4, "w": 4, "x": 3, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "avg(DCGM_FI_DEV_GPU_UTIL)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 95 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "最高温度",
+      "gridPos": { "h": 4, "w": 4, "x": 7, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "max(DCGM_FI_DEV_GPU_TEMP)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "celsius",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 85 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "显存占用",
+      "gridPos": { "h": 4, "w": 5, "x": 11, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "100 * sum(DCGM_FI_DEV_FB_USED) / sum(DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 95 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 5, "type": "stat", "title": "总功耗",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum(DCGM_FI_DEV_POWER_USAGE)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "watt" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 6, "type": "gauge", "title": "各卡利用率",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "DCGM_FI_DEV_GPU_UTIL", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "displayName": "GPU" }, "overrides": [] },
+      "options": { "minVizHeight": 75, "minVizWidth": 75, "legend": { "placement": "bottom", "displayMode": "list" } }
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "GPU 利用率 (%)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "DCGM_FI_DEV_GPU_UTIL", "legendFormat": "GPU {{gpu}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "显存占用 (MiB)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "DCGM_FI_DEV_FB_USED", "legendFormat": "GPU {{gpu}} 已用", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE", "legendFormat": "GPU {{gpu}} 总量", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "mibytes", "custom": { "fillOpacity": 5, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "温度 (°C)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "DCGM_FI_DEV_GPU_TEMP", "legendFormat": "GPU {{gpu}} 核心", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "DCGM_FI_DEV_MEMORY_TEMP", "legendFormat": "GPU {{gpu}} 显存", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "celsius", "custom": { "lineWidth": 2 }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 85 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "功耗 (W)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "DCGM_FI_DEV_POWER_USAGE", "legendFormat": "GPU {{gpu}} 实际", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "DCGM_FI_DEV_POWER_MGMT_LIMIT", "legendFormat": "GPU {{gpu}} 上限", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "watt", "custom": { "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "时钟 (MHz)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "DCGM_FI_DEV_SM_CLOCK", "legendFormat": "GPU {{gpu}} SM", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "DCGM_FI_DEV_MEM_CLOCK", "legendFormat": "GPU {{gpu}} 显存", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "mhz", "custom": { "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "ECC 错误（1h 增量）",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "increase(DCGM_FI_DEV_ECC_SBE_AGG_TOTAL[1h])", "legendFormat": "GPU {{gpu}} 单比特(可纠正)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "increase(DCGM_FI_DEV_ECC_DBE_AGG_TOTAL[1h])", "legendFormat": "GPU {{gpu}} 双比特(不可纠正)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 30, "lineWidth": 1 } }, "overrides": [] }
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "XID 错误与降频",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "increase(DCGM_FI_DEV_XID_ERRORS[1h])", "legendFormat": "GPU {{gpu}} XID(1h)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "clamp_max(increase(DCGM_FI_DEV_POWER_VIOLATION[1h]) + increase(DCGM_FI_DEV_THERMAL_VIOLATION[1h]) + increase(DCGM_FI_DEV_BOARD_LIMIT_VIOLATION[1h]), 3600)", "legendFormat": "GPU {{gpu}} 降频秒(1h)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 30, "lineWidth": 1 } }, "overrides": [] }
+    }
+  ]
+}

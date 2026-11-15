@@ -198,28 +198,3 @@ def test_test_channel_email_success(sdb, env_cfg, monkeypatch):
     monkeypatch.setattr(asvc.smtplib, "SMTP_SSL", _FakeSMTP)
     r = asvc.test_channel(sdb, "email")
     assert r["ok"] is True
-
-
-# ---------------- evaluate() GPU 指标键映射回归 ----------------
-
-def test_evaluate_gpu_rules_key_mapping(sdb, monkeypatch):
-    """回归：规则指标名 gpu_temp/gpu_mem/gpu_util 须映射到 _gpu_rows 列键（曾 KeyError 'gpu_temp'）"""
-    fired = []
-    monkeypatch.setattr(asvc, "fire",
-                        lambda db, rule, target, title, detail="": fired.append((rule.metric, target)))
-    for metric in ("gpu_temp", "gpu_mem", "gpu_util"):
-        sdb.add(M.AlertRule(name=f"r-{metric}", kind="threshold", metric=metric,
-                            op=">", threshold=85, severity="warning", cooldown=0))
-    sdb.commit()
-    monkeypatch.setattr(asvc, "_gpu_rows", lambda db: [
-        {"gpu": 0, "util": 99, "temp": 90, "mem_pct": 97},   # 三指标均越限
-        {"gpu": 1, "util": 10, "temp": 45, "mem_pct": 20},   # 均正常
-    ])
-    asvc.evaluate(sdb)
-    got = set(fired)
-    assert ("gpu_temp", "gpu:0") in got
-    assert ("gpu_mem", "gpu:0") in got
-    assert ("gpu_util", "gpu:0") in got
-    assert ("gpu_temp", "gpu:1") not in got
-    assert ("gpu_mem", "gpu:1") not in got
-    assert ("gpu_util", "gpu:1") not in got

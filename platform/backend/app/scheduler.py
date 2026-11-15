@@ -18,8 +18,8 @@ from sqlalchemy import func
 
 from .config import settings
 from .database import SessionLocal
-from .models import (TrainingJob, EvalTask, Deployment, ModelAsset, GpuNode, GpuMetric,
-                     QuantTask, SystemMetric, InferenceMetric, AlertEvent)
+from .models import (TrainingJob, EvalTask, Deployment, ModelAsset, GpuNode,
+                     QuantTask, AlertEvent)
 from .services import gpu_service
 from .services import taskcontainer as tc
 from .services import training_service, eval_service, inference_service, quantize_service
@@ -295,12 +295,9 @@ def _model_downloads(db):
 
 
 def _gc_metrics(db):
-    """指标保留策略：GPU/系统指标 24h（监控大屏 24h 时间范围）、推理指标 24h、告警事件 7d"""
+    """保留策略：告警事件 7d（指标数据在 Prometheus，保留期由 prometheus.yml 控制）"""
     now = int(time.time())
     try:
-        db.query(GpuMetric).filter(GpuMetric.ts < now - 24 * 3600).delete()
-        db.query(SystemMetric).filter(SystemMetric.ts < now - 24 * 3600).delete()
-        db.query(InferenceMetric).filter(InferenceMetric.ts < now - 24 * 3600).delete()
         db.query(AlertEvent).filter(AlertEvent.ts < now - 7 * 24 * 3600).delete()
         db.commit()
     except Exception:
@@ -317,15 +314,14 @@ class SchedulerThread(threading.Thread):
         while not self._stop.is_set():
             db = SessionLocal()
             try:
-                gpu_service.tick()          # 节点心跳 + GPU/宿主系统指标入库（内部含 node_offline/online 事件）
+                gpu_service.tick()          # 节点心跳（内部含 node_offline/online 事件；指标由 Prometheus 采集）
                 _reconcile_training(db)
                 _reconcile_quant(db)
                 _reconcile_eval(db)
                 _reconcile_deployments(db)  # 容器丢失判 failed（含 infer_down 事件）
                 _admit_jobs(db)
                 _model_downloads(db)
-                inference_service.scrape_metrics(db)  # 推理引擎指标（约 30s 一次，内部自节流）
-                alert_service.evaluate(db)            # 阈值规则告警（系统/GPU/推理 KV）
+                inference_service.scrape_metrics(db)  # 引擎探活兜底（约 30s 一次，内部自节流）
                 upgrade_service.converge(db)          # backend/web 自升级任务收敛（蓝绿切换兜底）
                 if int(time.time()) % 3600 < 10:
                     _gc_metrics(db)

@@ -1,0 +1,142 @@
+{
+  "uid": "vervedeck-node",
+  "title": "VerveDeck · 宿主系统（node-exporter）",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["vervedeck", "node"],
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "CPU 使用率",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])) * 100)", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 90 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "内存使用率",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "根分区使用率",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - (node_filesystem_avail_bytes{mountpoint=\"/\", fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{mountpoint=\"/\", fstype!~\"tmpfs|overlay|squashfs\"}))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 85 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "负载 (1m)",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "node_load1", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 5, "type": "stat", "title": "CPU 核数",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "count(node_cpu_seconds_total{mode=\"idle\"})", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 6, "type": "stat", "title": "已运行时长",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "time() - node_boot_time_seconds", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "unitPerSecond": false }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "CPU 使用率（按模式，%）",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "100 - (avg by (mode) (rate(node_cpu_seconds_total[2m])) * 100)", "legendFormat": "{{mode}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "custom": { "fillOpacity": 15, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "系统负载",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "node_load1", "legendFormat": "1m", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "node_load5", "legendFormat": "5m", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "C", "expr": "node_load15", "legendFormat": "15m", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "内存 (GiB)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "node_memory_MemTotal_bytes / 1024^3", "legendFormat": "总量", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / 1024^3", "legendFormat": "已用", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "C", "expr": "node_memory_MemAvailable_bytes / 1024^3", "legendFormat": "可用", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "gbytes", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "磁盘使用率 (%)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|iso9660\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs|iso9660\"}))", "legendFormat": "{{mountpoint}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "磁盘读写 (MB/s)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "rate(node_disk_read_bytes_total[2m]) / 1024^2", "legendFormat": "{{device}} 读", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "rate(node_disk_written_bytes_total[2m]) / 1024^2", "legendFormat": "{{device}} 写", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "MBs", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "网络流量 (Mb/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[2m]) * 8", "legendFormat": "{{device}} 收", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[2m]) * 8", "legendFormat": "{{device}} 发", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Mbits", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "TCP 连接与上下文切换",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "node_netstat_Tcp_CurrEstab", "legendFormat": "TCP 当前连接", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } },
+        { "refId": "B", "expr": "rate(node_context_switches_total[2m])", "legendFormat": "上下文切换/s", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } }, "overrides": [] }
+    }
+  ]
+}
