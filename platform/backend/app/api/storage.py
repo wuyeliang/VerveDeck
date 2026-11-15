@@ -86,6 +86,25 @@ def objects(prefix: str = "", limit: int = 200, backend: int = 0, user=Depends(_
     return {"prefix": prefix, "items": items, "disabled": False}
 
 
+class BatchObjectsReq(BaseModel):
+    names: list[str]
+    backend: int = 0
+
+
+@router.post("/objects/batch-delete")
+def batch_delete_objects(req: BatchObjectsReq, user=Depends(_admin)):
+    """批量删除对象：逐个执行前缀删除（含空 prefix 防误删校验），返回部分结果"""
+    deleted: list[str] = []
+    failed: list[dict] = []
+    for p in req.names:
+        try:
+            delete_objects(p, req.backend, user=user)
+            deleted.append(p)
+        except HTTPException as e:
+            failed.append({"name": p, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}
+
+
 @router.delete("/objects")
 def delete_objects(prefix: str, backend: int = 0, user=Depends(_admin)):
     """按前缀删除对象（空 prefix 一律拒绝，防误删全桶）"""

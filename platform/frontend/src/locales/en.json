@@ -172,7 +172,7 @@
     "tabInvoke": "Invoke", "invokeHint": "Callable while the deployment is running. Auth: x-api-key (project API key) or Bearer JWT",
     "colModel": "Model", "colEngine": "Engine", "colQuant": "Quant", "colTpRep": "TP/Replicas", "colLora": "LoRA",
     "start": "Start", "startInfo": "Starting (model load takes a few minutes)", "stop": "Stop", "stopped": "Stopped",
-    "deleteConfirm": "Delete deployment?",
+    "deleteConfirm": "Delete deployment?", "stopConfirm": "Stop this deployment? The service will be unavailable.", "unloadConfirm": "Unload adapter {{name}}? Requests to it will fail immediately.",
     "modalTitle": "New Inference Deployment", "created": "Deployment creating; model load takes minutes — track status in the list",
     "deployName": "Deployment name (model name in OpenAI API)", "nameRule": "Letters, digits, underscore only", "namePh": "e.g. qwen-customer-v1",
     "modelAsset": "Model Asset", "engine": "Engine", "quant": "Quantization", "tp": "TP", "maxLen": "max_len",

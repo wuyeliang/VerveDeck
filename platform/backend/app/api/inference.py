@@ -273,6 +273,25 @@ def delete_deploy(did: int, db=Depends(get_db), user=Depends(get_current_user)):
     return {"ok": True}
 
 
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/api/inference/deployments/batch-delete")
+def batch_delete_deploys(req: BatchDeleteReq, db=Depends(get_db), user=Depends(get_current_user)):
+    """批量删除部署：运行中/创建中的先停止容器再删除，返回部分结果"""
+    deleted: list[int] = []
+    failed: list[dict] = []
+    for did in req.ids:
+        try:
+            delete_deploy(did, db=db, user=user)
+            deleted.append(did)
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"id": did, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}
+
+
 @router.post("/api/inference/deployments/{did}/scale")
 def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_current_user)):
     """弹性扩缩容：调整副本数（需空闲 GPU）"""

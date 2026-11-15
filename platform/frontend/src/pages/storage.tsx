@@ -5,6 +5,7 @@ import { DeleteOutlined, HomeOutlined, ReloadOutlined, ArrowLeftOutlined, PlusOu
   ApiOutlined, HddOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 
 function fmtBytes(n: number): string {
   if (n === undefined || n === null) return '-'
@@ -25,6 +26,7 @@ export default function StoragePage() {
   const [prefix, setPrefix] = useState('')
   const [backendId, setBackendId] = useState(0)  // 0 = 主对象存储（rustfs）
   const [items, setItems] = useState<any[]>([])
+  const [sel, setSel] = useState<string[]>([])
   const [addOpen, setAddOpen] = useState(false)
   const [form] = Form.useForm()
   const [bType, setBType] = useState('object')
@@ -57,6 +59,10 @@ export default function StoragePage() {
       message.error(e.response?.data?.detail || t('storage.delFail'))
     }
   }
+  const batchDel = useBatchDelete('/api/storage/objects/batch-delete', () => { setSel([]); load() },
+    (ids) => ({ names: ids, backend: backendId }))
+  // 切换目录/后端时清空勾选（避免跨目录误删）
+  useEffect(() => { setSel([]) }, [prefix, backendId])
   const addBackend = async () => {
     try {
       const v = await form.validateFields()
@@ -209,8 +215,10 @@ export default function StoragePage() {
                 <Button key={i} size="small" type={i === parts.length - 1 ? 'primary' : 'default'}
                   onClick={() => setPrefix(parts.slice(0, i + 1).join('/') + '/')}>{p}</Button>
               ))}
+              {sel.length > 0 && <Button size="small" danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
             </Space>
             <Table size="small" rowKey="name" dataSource={items} pagination={false}
+              rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k), getCheckboxProps: (r: any) => ({ disabled: r.is_dir }) }}
               locale={{ emptyText: t('storage.empty') }}
               columns={[
                 {

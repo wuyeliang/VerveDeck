@@ -172,7 +172,7 @@
     "tabInvoke": "Invocar servicio", "invokeHint": "Llamable mientras el despliegue esté en ejecución. Auth: x-api-key (clave API del proyecto) o Bearer JWT",
     "colModel": "Modelo", "colEngine": "Motor", "colQuant": "Cuant.", "colTpRep": "TP/Réplicas", "colLora": "LoRA",
     "start": "Iniciar", "startInfo": "Iniciando (la carga del modelo toma unos minutos)", "stop": "Detener", "stopped": "Detenido",
-    "deleteConfirm": "¿Eliminar despliegue?",
+    "deleteConfirm": "¿Eliminar despliegue?", "stopConfirm": "¿Detener este despliegue? El servicio quedará no disponible.", "unloadConfirm": "¿Retirar el adaptador {{name}}? Las solicitudes a él fallarán de inmediato.",
     "modalTitle": "Nuevo despliegue de inferencia", "created": "Creando despliegue; la carga del modelo toma minutos — siga el estado en la lista",
     "deployName": "Nombre del despliegue (nombre de modelo en la API OpenAI)", "nameRule": "Solo letras, números y guion bajo", "namePh": "ej.: qwen-customer-v1",
     "modelAsset": "Activo de modelo", "engine": "Motor de inferencia", "quant": "Cuantización", "tp": "TP", "maxLen": "max_len",

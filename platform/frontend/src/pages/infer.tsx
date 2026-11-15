@@ -11,6 +11,7 @@ import {
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 
 const ST: Record<string, string> = { creating: 'processing', running: 'success', stopped: 'default', failed: 'error' }
 // 引擎镜像由平台级 pin 决定（与 compose IMAGES_VLLM/IMAGES_SGLANG 一致），按引擎展示
@@ -23,6 +24,7 @@ export default function Inference() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
   const [models, setModels] = useState<any[]>([])
@@ -43,6 +45,7 @@ export default function Inference() {
     api.get('/api/inference/deployments', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId])
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [load])
+  const batchDel = useBatchDelete('/api/inference/deployments/batch-delete', () => { setSel([]); load() })
   // 节点名（当前单节点集群，用于列表「节点」列与部署表单 placement 展示）
   useEffect(() => {
     api.get('/api/cluster/nodes').then((r) => setNodeName(r.data?.[0]?.name || '')).catch(() => {})
@@ -144,9 +147,13 @@ console.log(resp.choices[0].message.content)`
     <div>
       <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
         <h3 style={{ margin: 0 }}>{t('infer.title')}</h3>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('infer.newDeploy')}</Button>
+        <Space>
+          {sel.length > 0 && <Button danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
+          <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('infer.newDeploy')}</Button>
+        </Space>
       </Space>
       <Table rowKey="id" size="small" dataSource={list} pagination={{ pageSize: 12 }} scroll={{ x: 1280 }}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
         columns={[
           { title: t('common.name'), dataIndex: 'name', width: 165, ellipsis: true, fixed: 'left' },
           { title: t('infer.colModel'), dataIndex: 'model', width: 150, ellipsis: true },
@@ -172,7 +179,9 @@ console.log(resp.choices[0].message.content)`
                 {r.status !== 'running' && r.status !== 'creating' &&
                   <Button size="small" icon={<PlayCircleOutlined />} onClick={() => api.post(`/api/inference/deployments/${r.id}/start`).then(() => message.info(t('infer.startInfo')))}>{t('infer.start')}</Button>}
                 {r.status === 'running' &&
-                  <Button size="small" danger icon={<PoweroffOutlined />} onClick={() => api.post(`/api/inference/deployments/${r.id}/stop`).then(() => message.success(t('infer.stopped')))}>{t('infer.stop')}</Button>}
+                  <Popconfirm title={t('infer.stopConfirm')} onConfirm={() => api.post(`/api/inference/deployments/${r.id}/stop`).then(() => message.success(t('infer.stopped')))} okButtonProps={{ danger: true }}>
+                    <Button size="small" danger icon={<PoweroffOutlined />}>{t('infer.stop')}</Button>
+                  </Popconfirm>}
                 <Popconfirm title={t('infer.deleteConfirm')} onConfirm={() => api.delete(`/api/inference/deployments/${r.id}`).then(() => load())}>
                   <Button size="small" danger>{t('common.delete')}</Button>
                 </Popconfirm>
@@ -404,7 +413,10 @@ console.log(resp.choices[0].message.content)`
                       { title: t('common.name'), dataIndex: 'name' },
                       { title: t('models.path'), dataIndex: 'path', ellipsis: true },
                       { title: t('common.actions'), width: 90, render: (_: any, r: any) => (
-                        <Button size="small" danger onClick={async () => { await api.delete(`/api/inference/deployments/${detail.id}/adapters/${r.name}`); openDetail(detail.id) }}>{t('infer.unload')}</Button>
+                        <Popconfirm title={t('infer.unloadConfirm', { name: r.name })} okButtonProps={{ danger: true }}
+                          onConfirm={async () => { await api.delete(`/api/inference/deployments/${detail.id}/adapters/${r.name}`); openDetail(detail.id) }}>
+                          <Button size="small" danger>{t('infer.unload')}</Button>
+                        </Popconfirm>
                       )},
                     ]} />
                 </div>

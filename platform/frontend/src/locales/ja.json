@@ -172,7 +172,7 @@
     "tabInvoke": "サービス呼び出し", "invokeHint": "デプロイ実行中のとき呼び出し可能。認証: x-api-key（プロジェクト API キー）または Bearer JWT",
     "colModel": "モデル", "colEngine": "エンジン", "colQuant": "量子化", "colTpRep": "TP/レプリカ", "colLora": "LoRA",
     "start": "起動", "startInfo": "起動中（モデル読み込みに数分かかります）", "stop": "停止", "stopped": "停止しました",
-    "deleteConfirm": "デプロイを削除しますか？",
+    "deleteConfirm": "デプロイを削除しますか？", "stopConfirm": "このデプロイを停止しますか？停止後サービスは利用できません。", "unloadConfirm": "LoRA アダプタ {{name}} をアンロードしますか？それに向けたリクエストは即座に失敗します。",
     "modalTitle": "新規推論デプロイ", "created": "デプロイ作成中。モデル読み込みに数分かかります。リストで状態を追跡してください",
     "deployName": "デプロイ名（OpenAI API の model 名）", "nameRule": "英数字とアンダースコアのみ", "namePh": "例：qwen-customer-v1",
     "modelAsset": "モデル資産", "engine": "推論エンジン", "quant": "量子化", "tp": "TP", "maxLen": "max_len",

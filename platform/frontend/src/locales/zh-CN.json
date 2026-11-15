@@ -172,7 +172,7 @@
     "tabInvoke": "服务调用", "invokeHint": "部署运行中即可调用；鉴权：x-api-key（项目 API Key，系统管理页创建）或 Bearer JWT",
     "colModel": "模型", "colEngine": "引擎", "colQuant": "量化", "colTpRep": "TP/副本", "colLora": "LoRA",
     "start": "启动", "startInfo": "启动中（加载模型需要几分钟）", "stop": "停止", "stopped": "已停止",
-    "deleteConfirm": "删除部署？",
+    "deleteConfirm": "删除部署？", "stopConfirm": "确定停止该部署？停止后服务不可用。", "unloadConfirm": "卸载 {{name}} 后，指向它的请求将立即失败。确定卸载？",
     "modalTitle": "新建推理部署", "created": "部署创建中，模型加载需数分钟，请在列表中跟踪状态",
     "deployName": "部署名（OpenAI API 中的 model 名）", "nameRule": "仅字母数字下划线", "namePh": "如：qwen-customer-v1",
     "modelAsset": "模型资产", "engine": "推理引擎", "quant": "量化", "tp": "TP", "maxLen": "max_len",

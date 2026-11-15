@@ -172,7 +172,7 @@
     "tabInvoke": "Appel du service", "invokeHint": "Appeler tant que le déploiement est en cours. Auth : x-api-key (clé API du projet) ou Bearer JWT",
     "colModel": "Modèle", "colEngine": "Moteur", "colQuant": "Quantif.", "colTpRep": "TP/Replicas", "colLora": "LoRA",
     "start": "Démarrer", "startInfo": "Démarrage (chargement du modèle : quelques minutes)", "stop": "Arrêter", "stopped": "Arrêté",
-    "deleteConfirm": "Supprimer le déploiement ?",
+    "deleteConfirm": "Supprimer le déploiement ?", "stopConfirm": "Arrêter ce déploiement ? Le service sera indisponible.", "unloadConfirm": "Retirer l'adaptateur {{name}} ? Les requêtes vers ce modèle échoueront immédiatement.",
     "modalTitle": "Nouveau déploiement d'inférence", "created": "Déploiement en création ; le chargement prend quelques minutes — suivez le statut dans la liste",
     "deployName": "Nom du déploiement (nom de modèle dans l'API OpenAI)", "nameRule": "Lettres, chiffres, tiret bas uniquement", "namePh": "ex. : qwen-customer-v1",
     "modelAsset": "Actif de modèle", "engine": "Moteur d'inférence", "quant": "Quantification", "tp": "TP", "maxLen": "max_len",
