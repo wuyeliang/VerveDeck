@@ -13,7 +13,8 @@
   "common": {
     "loading": "読み込み中...", "id": "ID", "name": "名前", "status": "状態", "type": "種類",
     "desc": "説明", "createTime": "作成日時", "actions": "操作", "detail": "詳細", "delete": "削除",
-    "enabled": "有効", "disabled": "無効", "yes": "はい", "no": "いいえ", "none": "なし", "optional": "任意", "create": "作成", "required": "必須入力項目です", "cancel": "キャンセル", "deleted": "削除しました", "deleteConfirm": "削除しますか？この操作は取り消せません", "search": "検索"
+    "enabled": "有効", "disabled": "無効", "yes": "はい", "no": "いいえ", "none": "なし", "optional": "任意", "create": "作成", "required": "必須入力項目です", "cancel": "キャンセル", "deleted": "削除しました", "deleteConfirm": "削除しますか？この操作は取り消せません", "search": "検索",
+    "created": "作成しました", "refresh": "再読み込み"
   },
   "dashboard": {
     "gpuUtil": "GPU 使用率", "gpuMem": "GPU メモリ (GB)", "runningJobs": "実行中ジョブ",
@@ -205,7 +206,12 @@
     "systemTitle": "ホストシステム指標（過去1時間）", "noSysData": "システム指標なし（gpu-agent 収集中…）", "sysCpu": "CPU",
     "sysMem": "メモリ", "sysDisk": "ディスク", "sysLoad": "負荷(1分)",
     "sysNetRx": "受信", "sysNetTx": "送信", "sysMemDetail": "メモリ使用 {{u}}/{{tgb}}GB",
-    "sysDiskDetail": "ディスク使用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} コア"
+    "sysDiskDetail": "ディスク使用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} コア",
+    "r1h": "1時間", "r6h": "6時間", "r24h": "24時間",
+    "gpuShort": "GPU", "inferTitle": "推論サービス", "kvLabel": "KV キャッシュ",
+    "runningReq": "実行中リクエスト", "waitingReq": "待機リクエスト", "latency": "平均レイテンシ",
+    "noInferData": "指標データなし", "recentAlerts": "最近の警報", "viewAll": "すべて表示",
+    "noAlerts": "警報なし"
   },
   "logs": { "title": "ログ", "service": "サービス", "tail": "行数", "auto": "自動更新", "searchPh": "キーワードで絞り込み", "level": "レベル", "all": "すべて", "warn": "警告", "error": "エラー", "empty": "ログなし", "copy": "コピー", "copied": "コピーしました", "download": "ダウンロード", "running": "実行中", "stopped": "停止中", "tabAudit": "監査ログ", "tabContainer": "コンテナログ" },
   "storage": { "title": "オブジェクトストレージ", "statusTitle": "ストレージ状態", "enabled": "有効", "disabled": "無効（ローカルのみ）", "endpoint": "エンドポイント", "bucket": "バケット", "objCount": "オブジェクト数", "totalBytes": "合計サイズ", "disk": "データディスク使用量", "diskUsed": "使用中", "browser": "オブジェクトブラウザ", "queue": "同期キュー", "queueEmpty": "キューは空です", "colOp": "操作", "colKey": "Key/プレフィックス", "colStatus": "状態", "colError": "エラー", "colCreated": "作成", "retry": "再試行", "retriedOk": "再試行完了", "retriedFail": "再試行失敗", "clearDone": "完了を削除", "clearFail": "失敗を削除", "delete": "削除", "delConfirm": "このプレフィックス配下の全オブジェクトを削除しますか？", "delOk": "削除しました", "delFail": "削除失敗", "empty": "（空）", "updated": "更新日時", "back": "上へ", "goRoot": "ルート", "disabledTip": "S3 無効：データはローカルディスクのみに保存", "opPut": "アップロード", "opGet": "ダウンロード", "opDelete": "削除", "stDone": "完了", "stFailed": "失敗", "colSize": "サイズ", "colTime": "修正日時" , "addBackend": "バックエンドを追加", "backends": "ストレージバックエンド", "backendEmpty": "ストレージバックエンドはまだありません", "addOk": "追加しました", "colType": "種類", "colConfig": "設定", "colCapacity": "容量", "test": "テスト", "delBackendConfirm": "このストレージバックエンドを削除しますか？", "pathHost": "ホストパス（コンテナ内で表示可能）", "device": "ブロックデバイス", "primaryObject": "メインオブジェクトストレージ", "typeObject": "オブジェクト", "typeLocal": "ローカル", "typeNfs": "NFS", "typeBlock": "ブロック" , "endpointPh": "http://rustfs:9000 または S3 エンドポイント" },
@@ -241,7 +247,20 @@
     "colLevel": "レベル", "colTarget": "対象", "colTitle": "タイトル",
     "colNotified": "通知済み", "testNotify": "テスト", "testSent": "テストメッセージを送信しました",
     "testFail": "送信失敗", "chWecom": "WeComボット", "chEmail": "メール",
-    "chAuto": "自動（設定済みすべて）"
+    "chAuto": "自動（設定済みすべて）",
+    "tabUpgrade": "クラスターアップグレード", "chTitle": "通知チャネル", "chHint": "環境変数のデフォルト値を上書きします。パスワードは空欄または ****** のままで変更なし",
+    "saveCfg": "設定を保存", "saved": "保存しました", "chTest": "テスト送信",
+    "srcDb": "データベース", "srcEnv": "環境変数", "srcNone": "未設定",
+    "smtpHostPh": "SMTP サーバー（例: smtp.exmail.qq.com）", "smtpSsl": "SSL/TLS 暗号化", "smtpUserPh": "送信アカウント",
+    "smtpPwPh": "認証コード（空欄＝変更なし）", "smtpFromPh": "送信元アドレス", "smtpToPh": "受信者（カンマ区切り）",
+    "evSearchPh": "対象を検索", "sevInfo": "情報", "upImage": "イメージ",
+    "upLocal": "ローカル", "upPresent": "準備完了", "upMissing": "未取得",
+    "upRunning": "アップグレード中", "upIdle": "待機中", "upImpact": "アップグレード影響",
+    "upUpgrade": "アップグレード", "upRebuild": "再ビルド", "upRebuildHint": "最新のソースからイメージを再ビルドし、ブルーグリーン方式でコンテナを切り替えます。一時的にサービスが利用できません（約 1 分）",
+    "upCurrentImage": "現在のイメージ", "upPickVer": "対象バージョンを選択", "upToVer": "対象バージョン",
+    "upNeedVer": "対象バージョンを選択してください", "upTasks": "アップグレードタスク", "upTarget": "コンポーネント",
+    "upVersion": "バージョン変更", "upSuccess": "成功", "upFailed": "失敗",
+    "upStarted": "アップグレードタスクを作成しました"
   },
   "quant": {
     "title": "モデル量子化",

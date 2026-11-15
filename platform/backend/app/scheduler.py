@@ -25,6 +25,7 @@ from .services import taskcontainer as tc
 from .services import training_service, eval_service, inference_service, quantize_service
 from .services import image_ops
 from .services import alert_service
+from .services import upgrade_service
 
 log = logging.getLogger("scheduler")
 
@@ -156,7 +157,8 @@ def _reconcile_eval(db):
 def _reconcile_deployments(db):
     for dep in db.query(Deployment).filter(Deployment.status.in_(["running", "creating"])).all():
         # 镜像懒加载守卫：引擎镜像未就绪时保持 creating，勿按"容器丢失"判失败
-        img = settings.images_vllm if dep.engine == "vllm" else settings.images_sglang
+        img = upgrade_service.current_image("vllm") if dep.engine == "vllm" \
+            else upgrade_service.current_image("sglang")
         ist = image_ops.ensure_image(img)
         if ist != "ready":
             dep.status = "creating"
@@ -293,11 +295,11 @@ def _model_downloads(db):
 
 
 def _gc_metrics(db):
-    """指标保留策略：GPU/系统指标 6h、推理指标 24h、告警事件 7d"""
+    """指标保留策略：GPU/系统指标 24h（监控大屏 24h 时间范围）、推理指标 24h、告警事件 7d"""
     now = int(time.time())
     try:
-        db.query(GpuMetric).filter(GpuMetric.ts < now - 6 * 3600).delete()
-        db.query(SystemMetric).filter(SystemMetric.ts < now - 6 * 3600).delete()
+        db.query(GpuMetric).filter(GpuMetric.ts < now - 24 * 3600).delete()
+        db.query(SystemMetric).filter(SystemMetric.ts < now - 24 * 3600).delete()
         db.query(InferenceMetric).filter(InferenceMetric.ts < now - 24 * 3600).delete()
         db.query(AlertEvent).filter(AlertEvent.ts < now - 7 * 24 * 3600).delete()
         db.commit()
@@ -324,6 +326,7 @@ class SchedulerThread(threading.Thread):
                 _model_downloads(db)
                 inference_service.scrape_metrics(db)  # 推理引擎指标（约 30s 一次，内部自节流）
                 alert_service.evaluate(db)            # 阈值规则告警（系统/GPU/推理 KV）
+                upgrade_service.converge(db)          # backend/web 自升级任务收敛（蓝绿切换兜底）
                 if int(time.time()) % 3600 < 10:
                     _gc_metrics(db)
             except Exception:

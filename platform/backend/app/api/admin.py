@@ -7,8 +7,9 @@ import time
 from ..database import get_db
 from ..security import get_current_user, require_role, hash_password, new_api_key, can_access_project
 from ..models import (Tenant, User, Project, ProjectMember, ApiKey, GuardRule,
-                      AuditLog, Dataset, AlertRule, AlertEvent)
+                      AuditLog, Dataset, AlertRule, AlertEvent, UpgradeTask)
 from ..services import alert_service
+from ..services import upgrade_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -325,6 +326,44 @@ def test_alert_rule(rid: int, db=Depends(get_db),
     return alert_service.test_notify(db, rid)
 
 
+# ---------- 通知通道（企业微信群机器人 + SMTP 邮件） ----------
+
+class NotifyConfigReq(BaseModel):
+    wecom_enabled: bool = False
+    wecom_webhook: str = ""
+    smtp_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_ssl: bool = True
+    smtp_user: str = ""
+    smtp_password: str = ""  # 留空或 ****** = 保持原密码
+    smtp_from: str = ""
+    smtp_to: str = ""
+
+
+@router.get("/notify-config")
+def get_notify_config(db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    """读取生效通道配置（密码掩码 + 每通道生效来源 db/env/none）"""
+    return alert_service.get_config(db)
+
+
+@router.put("/notify-config")
+def save_notify_config(req: NotifyConfigReq, db=Depends(get_db),
+                       user=Depends(require_role("super_admin"))):
+    if req.smtp_port not in (465, 587, 25, 8025):
+        raise HTTPException(400, "SMTP 端口需为 465/587/25/8025 之一")
+    if req.wecom_webhook and not req.wecom_webhook.startswith("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?"):
+        raise HTTPException(400, "企业微信 webhook 需为 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=... 形式")
+    return alert_service.save_config(db, req.model_dump())
+
+
+@router.post("/notify-config/test")
+def test_notify_channel(req: dict, db=Depends(get_db),
+                        user=Depends(require_role("super_admin"))):
+    """按通道发送测试通知（wecom / email）"""
+    return alert_service.test_channel(db, str(req.get("channel") or ""))
+
+
 @router.get("/alerts/events")
 def list_alert_events(limit: int = 100, offset: int = 0, level: str = "", target: str = "",
                       db=Depends(get_db), user=Depends(get_current_user)):
@@ -383,3 +422,53 @@ def audit_actions(db=Depends(get_db), user=Depends(require_role("super_admin", "
             .filter(AuditLog.action != "")
             .group_by(AuditLog.action).order_by(func.count(AuditLog.id).desc()).all())
     return [{"action": a, "count": n} for a, n in rows if a]
+
+
+# ---------- 集群升级 ----------
+
+class UpgradeReq(BaseModel):
+    target: str  # vllm/sglang/llamafactory/gpu_agent/backend/web
+    to_version: str = ""  # pull 类组件必填（目标 tag）；build 类组件忽略
+
+
+@router.get("/upgrade/status")
+def upgrade_status(user=Depends(require_role("super_admin"))):
+    """各组件升级状态：当前镜像 / 本地是否存在 / 运行时版本 / 进行中任务"""
+    return upgrade_service.status()
+
+
+@router.post("/upgrade/check")
+def upgrade_check(req: dict, user=Depends(require_role("super_admin"))):
+    """Docker Hub 最新版本检查（semver 降序前 10；build 类组件返回空列表）"""
+    key = str(req.get("target") or "").strip()
+    force = bool(req.get("force"))
+    if key not in upgrade_service.COMPONENTS:
+        raise HTTPException(400, f"未知组件: {key}")
+    try:
+        return {"target": key, "latest": upgrade_service.check_latest(key, force=force)}
+    except Exception as e:
+        raise HTTPException(502, f"版本检查失败: {str(e)[:200]}")
+
+
+@router.post("/upgrade/execute")
+def upgrade_execute(req: UpgradeReq, db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    """创建升级任务（后台执行）；同组件已有进行中任务时拒绝（幂等保护）"""
+    try:
+        t = upgrade_service.execute(db, req.target, req.to_version, user.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"id": t.id, "target": t.target, "status": t.status, "log": t.log}
+
+
+@router.get("/upgrade/tasks")
+def upgrade_tasks(limit: int = 50, db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    """升级任务历史（含日志，前端 5s 轮询 running 任务）"""
+    rows = (db.query(UpgradeTask).order_by(UpgradeTask.id.desc())
+            .limit(min(max(limit, 1), 200)).all())
+    return [
+        {"id": t.id, "target": t.target, "from_version": t.from_version,
+         "to_version": t.to_version, "status": t.status, "log": t.log,
+         "created_at": str(t.created_at),
+         "finished_at": str(t.finished_at) if t.finished_at else None}
+        for t in rows
+    ]

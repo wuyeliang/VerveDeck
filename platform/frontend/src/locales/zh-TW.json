@@ -13,7 +13,8 @@
   "common": {
     "loading": "加載中...", "id": "ID", "name": "名稱", "status": "狀態", "type": "類型",
     "desc": "描述", "createTime": "創建時間", "actions": "操作", "detail": "詳情", "delete": "刪除",
-    "enabled": "啟用", "disabled": "禁用", "yes": "是", "no": "否", "none": "無", "optional": "可選", "create": "創建", "required": "此項為必填", "cancel": "取消", "deleted": "已刪除", "deleteConfirm": "確認刪除？此操作不可恢復"
+    "enabled": "啟用", "disabled": "禁用", "yes": "是", "no": "否", "none": "無", "optional": "可選", "create": "創建", "required": "此項為必填", "cancel": "取消", "deleted": "已刪除", "deleteConfirm": "確認刪除？此操作不可恢復",
+    "search": "搜尋", "created": "已建立", "refresh": "重新整理"
   },
   "dashboard": {
     "gpuUtil": "GPU 利用率", "gpuMem": "GPU 顯存 (GB)", "runningJobs": "運行中任務",
@@ -205,7 +206,12 @@
     "systemTitle": "主機系統指標（近 1 小時）", "noSysData": "尚無系統指標資料（gpu-agent 採集中…）", "sysCpu": "CPU",
     "sysMem": "記憶體", "sysDisk": "磁碟", "sysLoad": "負載(1分)",
     "sysNetRx": "網路收", "sysNetTx": "網路發", "sysMemDetail": "記憶體已用 {{u}}/{{tgb}}GB",
-    "sysDiskDetail": "磁碟已用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} 核心"
+    "sysDiskDetail": "磁碟已用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} 核心",
+    "r1h": "1 小時", "r6h": "6 小時", "r24h": "24 小時",
+    "gpuShort": "GPU", "inferTitle": "推理服務", "kvLabel": "KV 快取",
+    "runningReq": "執行中請求", "waitingReq": "排隊請求", "latency": "平均延遲",
+    "noInferData": "暫無指標資料", "recentAlerts": "最近告警", "viewAll": "查看全部",
+    "noAlerts": "暫無告警"
   },
   "logs": { "title": "日誌", "service": "服務", "tail": "行數", "auto": "自動重新整理", "searchPh": "過濾關鍵字", "level": "級別", "all": "全部", "warn": "警告", "error": "錯誤", "empty": "無日誌", "copy": "複製", "copied": "已複製", "download": "下載", "running": "運行中", "stopped": "已停止", "tabAudit": "審計日誌", "tabContainer": "運行日誌" },
   "storage": { "title": "物件儲存", "statusTitle": "儲存狀態", "enabled": "已啟用", "disabled": "未啟用（純本地）", "endpoint": "端點", "bucket": "桶", "objCount": "物件數", "totalBytes": "物件總量", "disk": "資料盤佔用", "diskUsed": "已用", "browser": "物件瀏覽", "queue": "同步佇列", "queueEmpty": "佇列為空", "colOp": "操作", "colKey": "Key/前綴", "colStatus": "狀態", "colError": "錯誤", "colCreated": "時間", "retry": "重試", "retriedOk": "重試完成", "retriedFail": "重試失敗", "clearDone": "清理已完成", "clearFail": "清理失敗記錄", "delete": "刪除", "delConfirm": "刪除該前綴下全部物件？", "delOk": "已刪除", "delFail": "刪除失敗", "empty": "（空）", "updated": "更新時間", "back": "上級", "goRoot": "根目錄", "disabledTip": "S3 未啟用：資料僅存本地磁碟", "opPut": "上傳", "opGet": "下載", "opDelete": "刪除", "stDone": "成功", "stFailed": "失敗", "colSize": "大小", "colTime": "修改時間" , "addBackend": "添加儲存後端", "backends": "儲存後端", "backendEmpty": "暫無儲存後端", "addOk": "已添加", "colType": "類型", "colConfig": "配置", "colCapacity": "容量", "test": "測試", "delBackendConfirm": "確定要移除該儲存後端嗎？", "pathHost": "宿主路徑（容器內可見）", "device": "區塊裝置", "primaryObject": "主物件儲存", "typeObject": "物件儲存", "typeLocal": "本地", "typeNfs": "NFS", "typeBlock": "區塊儲存" , "endpointPh": "http://rustfs:9000 或 s3 端點" },
@@ -241,7 +247,20 @@
     "colLevel": "級別", "colTarget": "目標", "colTitle": "標題",
     "colNotified": "已通知", "testNotify": "測試", "testSent": "測試訊息已發送，請查看通道",
     "testFail": "發送失敗", "chWecom": "企業微信機器人", "chEmail": "郵件",
-    "chAuto": "自動（全部已設定通道）"
+    "chAuto": "自動（全部已設定通道）",
+    "tabUpgrade": "叢集升級", "chTitle": "通知管道", "chHint": "設定後覆蓋環境變數預設值；密碼留空或填 ****** 表示保持不變",
+    "saveCfg": "儲存設定", "saved": "已儲存", "chTest": "發送測試",
+    "srcDb": "資料庫", "srcEnv": "環境變數", "srcNone": "未設定",
+    "smtpHostPh": "SMTP 伺服器（如 smtp.exmail.qq.com）", "smtpSsl": "SSL/TLS 加密", "smtpUserPh": "寄件帳號",
+    "smtpPwPh": "授權碼（留空=不變）", "smtpFromPh": "寄件人地址", "smtpToPh": "收件人，逗號分隔",
+    "evSearchPh": "搜尋目標", "sevInfo": "資訊", "upImage": "映像",
+    "upLocal": "本地", "upPresent": "已就緒", "upMissing": "未拉取",
+    "upRunning": "升級中", "upIdle": "閒置", "upImpact": "升級影響",
+    "upUpgrade": "升級", "upRebuild": "重建", "upRebuildHint": "將以最新原始碼重建映像並藍綠切換容器，期間服務短暫不可用（約 1 分鐘）",
+    "upCurrentImage": "目前映像", "upPickVer": "選擇目標版本", "upToVer": "目標版本",
+    "upNeedVer": "請選擇目標版本", "upTasks": "升級任務", "upTarget": "元件",
+    "upVersion": "版本變遷", "upSuccess": "成功", "upFailed": "失敗",
+    "upStarted": "升級任務已建立"
   },
   "quant": {
     "title": "模型壓縮",

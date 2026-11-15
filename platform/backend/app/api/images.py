@@ -12,10 +12,10 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..config import settings
 from ..security import require_role
 from ..models import CustomImage, User
 from ..services import image_ops
+from ..services import upgrade_service
 
 router = APIRouter(prefix="/api/images", tags=["images"])
 
@@ -24,13 +24,14 @@ PROBE_TTL = 300
 # key -> (镜像引用来源, 组件, 说明, 版本探测命令)
 # 注意：官方开源镜像（vllm/sglang）内只有 python3，无 python 别名，探测命令一律用 python3
 PLATFORM = [
-    ("vllm", lambda: settings.images_vllm, "vLLM 推理引擎", "OpenAI 兼容 API / LoRA 热加载",
+    # 镜像引用统一走运行时 pin（集群升级后此处自动反映新 tag）
+    ("vllm", lambda: upgrade_service.current_image("vllm"), "vLLM 推理引擎", "OpenAI 兼容 API / LoRA 热加载",
      'python3 -c "import vllm,torch;print(vllm.__version__+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'),
-    ("sglang", lambda: settings.images_sglang, "SGLang 推理引擎", "高吞吐 RadixAttention",
+    ("sglang", lambda: upgrade_service.current_image("sglang"), "SGLang 推理引擎", "高吞吐 RadixAttention",
      'python3 -c "import sglang,torch;print(sglang.__version__+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'),
-    ("llamafactory", lambda: settings.images_train, "LLaMA-Factory 训练引擎", "SFT/DPO/RLHF/导出",
+    ("llamafactory", lambda: upgrade_service.current_image("llamafactory"), "LLaMA-Factory 训练引擎", "SFT/DPO/RLHF/导出",
      'python3 -c "import importlib.metadata as m,torch;print(m.version(\'llamafactory\')+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'),
-    ("gpu-agent", lambda: "nvidia/dcgm:4.7.1-ubuntu24.04", "GPU 监控 Agent", "DCGM 采集（开源 nvidia/dcgm 镜像 + collect.sh 挂载）",
+    ("gpu-agent", lambda: upgrade_service.current_image("gpu_agent"), "GPU 监控 Agent", "DCGM 采集（开源 nvidia/dcgm 镜像 + collect.sh 挂载）",
      # dcgmi 非 TTY 下不输出版本，改查 dpkg 包版本（内层单引号防 shell 展开 ${Version}）；
      # DCGM 4.x 包拆分为 nv-hostengine/dcgmi（3.x 为 datacenter-gpu-manager），双查兜底
      "dpkg-query -W -f 'DCGM ${Version}' nv-hostengine 2>/dev/null || dpkg-query -W -f 'DCGM ${Version}' datacenter-gpu-manager 2>/dev/null"),

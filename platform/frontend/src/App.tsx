@@ -7,7 +7,7 @@ import {
   DashboardOutlined, DatabaseOutlined, ContainerOutlined, ExperimentOutlined,
   BarChartOutlined, CloudServerOutlined, ClusterOutlined, SettingOutlined,
   LogoutOutlined, RocketOutlined, ShrinkOutlined,
-  GithubOutlined, KeyOutlined, FileTextOutlined,
+  GithubOutlined, KeyOutlined,
   ApartmentOutlined, HddOutlined, AppstoreOutlined,
 } from '@ant-design/icons'
 import { useTheme } from './theme'
@@ -21,7 +21,7 @@ import QuantCenter from './pages/quantize'
 import Inference from './pages/infer'
 import ClusterOps from './pages/cluster'
 import LogsPage from './pages/logs'
-import AdminPanel from './pages/admin'
+import AdminPanel, { AlertsPage } from './pages/admin'
 import OrgPage from './pages/org'
 import StoragePage from './pages/storage'
 import ImagesPage from './pages/images'
@@ -110,13 +110,17 @@ function Shell({ children }: { children: React.ReactNode }) {
         { key: '/cluster/nodes', label: t('cluster.tabNodes') },
         { key: '/cluster/gpus', label: t('cluster.tabGpus') },
         { key: '/cluster/monitor', label: t('cluster.tabMonitor') },
+        // 告警中心 + 日志中心统一归入集群运维（仅超管可见，API 侧仍有角色校验）
+        ...(isSuper ? [
+          { key: '/cluster/alerts', label: t('admin.tabAlerts') },
+          { key: '/cluster/logs', label: t('nav.logs') },
+        ] : []),
       ],
     },
     ...(isSuper ? [
       { key: '/org', icon: <ApartmentOutlined />, label: t('nav.org') },
       { key: '/storage', icon: <HddOutlined />, label: t('nav.storage') },
       { key: '/images', icon: <AppstoreOutlined />, label: t('nav.images') },
-      { key: '/logs', icon: <FileTextOutlined />, label: t('nav.logs') },
       { key: '/admin', icon: <SettingOutlined />, label: t('nav.admin') },
     ] : []),
   ]
@@ -213,10 +217,12 @@ function AppRoutes() {
       <Route path="/cluster/nodes" element={hasToken ? <Shell><ClusterOps tab="nodes" /></Shell> : <Navigate to="/login" />} />
       <Route path="/cluster/gpus" element={hasToken ? <Shell><ClusterOps tab="gpus" /></Shell> : <Navigate to="/login" />} />
       <Route path="/cluster/monitor" element={hasToken ? <Shell><ClusterOps tab="monitor" /></Shell> : <Navigate to="/login" />} />
+      <Route path="/cluster/alerts" element={hasToken ? <Shell><AlertsPage /></Shell> : <Navigate to="/login" />} />
+      <Route path="/cluster/logs" element={hasToken ? <Shell><LogsPage /></Shell> : <Navigate to="/login" />} />
       <Route path="/org" element={hasToken ? <Shell><OrgPage /></Shell> : <Navigate to="/login" />} />
       <Route path="/storage" element={hasToken ? <Shell><StoragePage /></Shell> : <Navigate to="/login" />} />
       <Route path="/images" element={hasToken ? <Shell><ImagesPage /></Shell> : <Navigate to="/login" />} />
-      <Route path="/logs" element={hasToken ? <Shell><LogsPage /></Shell> : <Navigate to="/login" />} />
+      <Route path="/logs" element={<Navigate to="/cluster/logs" replace />} />
       <Route path="/admin" element={hasToken ? <Shell><AdminPanel /></Shell> : <Navigate to="/login" />} />
     </Routes>
   )

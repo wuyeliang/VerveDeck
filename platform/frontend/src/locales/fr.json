@@ -13,7 +13,8 @@
   "common": {
     "loading": "Chargement...", "id": "ID", "name": "Nom", "status": "Statut", "type": "Type",
     "desc": "Description", "createTime": "Créé le", "actions": "Actions", "detail": "Détails", "delete": "Supprimer",
-    "enabled": "Activé", "disabled": "Désactivé", "yes": "Oui", "no": "Non", "none": "Aucun", "optional": "Optionnel", "create": "Créer", "required": "Champ obligatoire", "cancel": "Annuler", "deleted": "Supprimé", "deleteConfirm": "Supprimer ? Cette action est irréversible", "search": "Rechercher"
+    "enabled": "Activé", "disabled": "Désactivé", "yes": "Oui", "no": "Non", "none": "Aucun", "optional": "Optionnel", "create": "Créer", "required": "Champ obligatoire", "cancel": "Annuler", "deleted": "Supprimé", "deleteConfirm": "Supprimer ? Cette action est irréversible", "search": "Rechercher",
+    "created": "Créé", "refresh": "Actualiser"
   },
   "dashboard": {
     "gpuUtil": "Utilisation GPU", "gpuMem": "Mémoire GPU (GB)", "runningJobs": "Tâches en cours",
@@ -205,7 +206,12 @@
     "systemTitle": "Métriques du système hôte (1h)", "noSysData": "Pas encore de métriques (collecte gpu-agent…)", "sysCpu": "CPU",
     "sysMem": "Mémoire", "sysDisk": "Disque", "sysLoad": "Charge (1min)",
     "sysNetRx": "Réseau rx", "sysNetTx": "Réseau tx", "sysMemDetail": "Mémoire utilisée {{u}}/{{tgb}}Go",
-    "sysDiskDetail": "Disque utilisé {{u}}/{{tg}}Go", "sysCpuCores": "{{n}} cœurs"
+    "sysDiskDetail": "Disque utilisé {{u}}/{{tg}}Go", "sysCpuCores": "{{n}} cœurs",
+    "r1h": "1 h", "r6h": "6 h", "r24h": "24 h",
+    "gpuShort": "GPU", "inferTitle": "Services d'inférence", "kvLabel": "Cache KV",
+    "runningReq": "Requêtes en cours", "waitingReq": "Requêtes en file", "latency": "Latence moy.",
+    "noInferData": "Aucune donnée de métrique", "recentAlerts": "Alertes récentes", "viewAll": "Tout afficher",
+    "noAlerts": "Aucune alerte"
   },
   "logs": { "title": "Journaux", "service": "Service", "tail": "Lignes", "auto": "Autoactualisation", "searchPh": "Filtrer les mots-clés", "level": "Niveau", "all": "Tout", "warn": "Avertissement", "error": "Erreur", "empty": "Aucun journal", "copy": "Copier", "copied": "Copié", "download": "Télécharger", "running": "En cours", "stopped": "Arrêté", "tabAudit": "Journal d'audit", "tabContainer": "Journaux de conteneurs" },
   "storage": { "title": "Stockage d'objets", "statusTitle": "État du stockage", "enabled": "Activé", "disabled": "Désactivé (local uniquement)", "endpoint": "Endpoint", "bucket": "Seau", "objCount": "Objets", "totalBytes": "Taille totale", "disk": "Utilisation du disque", "diskUsed": "Utilisé", "browser": "Explorateur d'objets", "queue": "File de synchronisation", "queueEmpty": "File vide", "colOp": "Op.", "colKey": "Clé/préfixe", "colStatus": "État", "colError": "Erreur", "colCreated": "Créé", "retry": "Réessayer", "retriedOk": "Réessai ok", "retriedFail": "Réessai échoué", "clearDone": "Nettoyer terminés", "clearFail": "Nettoyer échecs", "delete": "Supprimer", "delConfirm": "Supprimer tous les objets sous ce préfixe ?", "delOk": "Supprimé", "delFail": "Échec de la suppression", "empty": "(vide)", "updated": "Modifié", "back": "Remonter", "goRoot": "Racine", "disabledTip": "S3 désactivé : les données restent uniquement sur le disque local", "opPut": "Téléverser", "opGet": "Télécharger", "opDelete": "Supprimer", "stDone": "Terminé", "stFailed": "Échec", "colSize": "Taille", "colTime": "Modifié" , "addBackend": "Ajouter un backend", "backends": "Backends de stockage", "backendEmpty": "Aucun backend de stockage", "addOk": "Ajouté", "colType": "Type", "colConfig": "Config", "colCapacity": "Capacité", "test": "Tester", "delBackendConfirm": "Supprimer ce backend de stockage ?", "pathHost": "Chemin hôte (visible dans le conteneur)", "device": "Périphérique bloc", "primaryObject": "Objets principal", "typeObject": "Objets", "typeLocal": "Local", "typeNfs": "NFS", "typeBlock": "Blocs" , "endpointPh": "http://rustfs:9000 ou un endpoint S3" },
@@ -241,7 +247,20 @@
     "colLevel": "Niveau", "colTarget": "Cible", "colTitle": "Titre",
     "colNotified": "Notifié", "testNotify": "Test", "testSent": "Message de test envoyé, vérifiez le canal",
     "testFail": "Échec de l'envoi", "chWecom": "Bot WeCom", "chEmail": "E-mail",
-    "chAuto": "Auto (tous les canaux configurés)"
+    "chAuto": "Auto (tous les canaux configurés)",
+    "tabUpgrade": "Mise à niveau du cluster", "chTitle": "Canaux de notification", "chHint": "Remplace les valeurs par défaut des variables d'environnement ; laissez le mot de passe vide ou à ****** pour le conserver",
+    "saveCfg": "Enregistrer", "saved": "Enregistré", "chTest": "Envoyer un test",
+    "srcDb": "Base de données", "srcEnv": "Variables d'env.", "srcNone": "Non configuré",
+    "smtpHostPh": "Serveur SMTP (ex. smtp.exmail.qq.com)", "smtpSsl": "Chiffrement SSL/TLS", "smtpUserPh": "Compte expéditeur",
+    "smtpPwPh": "Code d'autorisation (vide = inchangé)", "smtpFromPh": "Adresse expéditeur", "smtpToPh": "Destinataires, séparés par des virgules",
+    "evSearchPh": "Rechercher la cible", "sevInfo": "Info", "upImage": "Image",
+    "upLocal": "Local", "upPresent": "Prête", "upMissing": "Non tirée",
+    "upRunning": "Mise à niveau en cours", "upIdle": "Inactive", "upImpact": "Impact de la mise à niveau",
+    "upUpgrade": "Mettre à niveau", "upRebuild": "Reconstruire", "upRebuildHint": "Reconstruit l'image depuis la dernière source et bascule les conteneurs en blue-green ; service brièvement indisponible (~1 min)",
+    "upCurrentImage": "Image actuelle", "upPickVer": "Choisir la version cible", "upToVer": "Version cible",
+    "upNeedVer": "Veuillez choisir une version cible", "upTasks": "Tâches de mise à niveau", "upTarget": "Composant",
+    "upVersion": "Évolution de version", "upSuccess": "Succès", "upFailed": "Échec",
+    "upStarted": "Tâche de mise à niveau créée"
   },
   "quant": {
     "title": "Compression de modèles",

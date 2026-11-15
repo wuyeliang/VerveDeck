@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs } from 'antd'
+import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs, Segmented } from 'antd'
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+
+const GPU_COLORS = ['#1677ff', '#52c41a', '#fa8c16', '#722ed1', '#13c2c2', '#eb2f96', '#a0d911', '#f5222d', '#2f54eb', '#faad14']
 
 const THR_KEYS = ['thermal_slowdown', 'hw_slowdown', 'hw_thermal_slowdown', 'hw_power_brake_slowdown', 'sw_thermal_slowdown']
 const thrCount = (ex: any) => THR_KEYS.filter((k) => Number(ex[k]) > 0).length
@@ -19,26 +21,40 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
   const { t, i18n: ti18n } = useTranslation()
   const [nodes, setNodes] = useState<any[]>([])
   const [metrics, setMetrics] = useState<any[]>([])
+  const [gpuIdxs, setGpuIdxs] = useState<number[]>([])
   const [queue, setQueue] = useState<any>(null)
   const [util, setUtil] = useState<any>(null)
   const [system, setSystem] = useState<any>(null)
+  const [infer, setInfer] = useState<any[]>([])
+  const [alerts, setAlerts] = useState<any[]>([])
+  const [mins, setMins] = useState(60)
 
   const load = () => {
     api.get('/api/cluster/nodes').then((r) => {
       setNodes(r.data)
       if (r.data[0]) {
-        api.get(`/api/cluster/nodes/${r.data[0].id}/metrics?minutes=60`)
+        api.get(`/api/cluster/nodes/${r.data[0].id}/metrics?minutes=${mins}`)
           .then((m) => {
-            const ser = m.data.series?.[0] || []
-            setMetrics(ser.map((x: any) => ({ t: new Date(x.ts * 1000).toLocaleTimeString(ti18n.language, { hour: '2-digit', minute: '2-digit' }), util: x.util, mem: Math.round(x.mem_used / 1024 * 10) / 10, power: Math.round(x.power), temp: x.temp })))
+            // series = {gpu_index: [{ts, util, ...}]} → 按 ts 合并为多卡多线数据
+            const ser = m.data.series || {}
+            const idxs = Object.keys(ser).map(Number).sort((a, b) => a - b)
+            const byTs: Record<number, any> = {}
+            idxs.forEach((idx) => (ser[idx] || []).forEach((x: any) => {
+              const row = byTs[x.ts] || (byTs[x.ts] = { ts: x.ts, t: new Date(x.ts * 1000).toLocaleTimeString(ti18n.language, { hour: '2-digit', minute: '2-digit' }) })
+              row['g' + idx] = x.util
+            }))
+            setMetrics(Object.values(byTs).sort((a, b) => a.ts - b.ts))
+            setGpuIdxs(idxs)
           }).catch(() => {})
       }
     }).catch(() => {})
     api.get('/api/cluster/queue').then((r) => setQueue(r.data)).catch(() => {})
     api.get('/api/cluster/utilization').then((r) => setUtil(r.data)).catch(() => {})
     api.get('/api/cluster/system?minutes=60').then((r) => setSystem(r.data)).catch(() => {})
+    api.get('/api/cluster/inference').then((r) => setInfer(r.data.items || [])).catch(() => {})
+    api.get('/api/admin/alerts/events', { params: { limit: 10 } }).then((r) => setAlerts(r.data.items || [])).catch(() => {})
   }
-  useEffect(() => { load(); const x = setInterval(load, 5000); return () => clearInterval(x) }, [])
+  useEffect(() => { load(); const x = setInterval(load, 5000); return () => clearInterval(x) }, [mins])
 
   const gpus = nodes.flatMap((n) => (n.gpus || []).map((g: any) => ({ ...g, node: n.name })))
 
@@ -48,7 +64,7 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
       <Tabs activeKey={tab} onChange={(k) => nav(`/cluster/${k}`)} items={[
         { key: 'nodes', label: t('cluster.tabNodes'), children: <NodesView nodes={nodes} queue={queue} load={load} /> },
         { key: 'gpus', label: t('cluster.tabGpus'), children: <GpusView gpus={gpus} /> },
-        { key: 'monitor', label: t('cluster.tabMonitor'), children: <MonitorView metrics={metrics} system={system} queue={queue} util={util} /> },
+        { key: 'monitor', label: t('cluster.tabMonitor'), children: <MonitorView metrics={metrics} gpuIdxs={gpuIdxs} system={system} queue={queue} util={util} infer={infer} alerts={alerts} mins={mins} setMins={setMins} t={t} /> },
       ]} />
     </div>
   )
@@ -220,28 +236,98 @@ function GpusView({ gpus }: { gpus: any[] }) {
   )
 }
 
-/** 监控大屏：宿主系统指标 + GPU 趋势图 + 运行中 + 利用率统计 */
-function MonitorView({ metrics, system, queue, util }: { metrics: any[]; system: any; queue: any; util: any }) {
-  const { t } = useTranslation()
+/** 监控大屏：宿主系统指标 + GPU 逐卡趋势（时间范围可选）+ 推理服务指标 + 最近告警 + 运行中 */
+function MonitorView({ metrics, gpuIdxs, system, queue, util, infer, alerts, mins, setMins, t }: {
+  metrics: any[]; gpuIdxs: number[]; system: any; queue: any; util: any; infer: any[]; alerts: any[];
+  mins: number; setMins: (v: number) => void; t: (k: string) => string,
+}) {
+  const nav = useNavigate()
   return (
     <div>
       <SystemCard system={system} />
-      <Card size="small" title={t('cluster.trend')}>
+      <Card size="small" title={t('cluster.trend')}
+        extra={<Segmented size="small" value={mins} onChange={(v) => setMins(v as number)}
+          options={[
+            { label: t('cluster.r1h'), value: 60 },
+            { label: t('cluster.r6h'), value: 360 },
+            { label: t('cluster.r24h'), value: 1440 },
+          ]} />}>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={metrics}>
             <XAxis dataKey="t" fontSize={11} />
-            <YAxis yAxisId="l" domain={[0, 100]} fontSize={11} />
-            <YAxis yAxisId="r" orientation="right" fontSize={11} />
+            <YAxis domain={[0, 100]} fontSize={11} />
             <RTooltip /><Legend />
-            <Line yAxisId="l" dataKey="util" name={t('cluster.chartUtil')} stroke="#1677ff" dot={false} />
-            <Line yAxisId="r" dataKey="mem" name={t('cluster.chartMem')} stroke="#52c41a" dot={false} />
-            <Line yAxisId="r" dataKey="power" name={t('cluster.chartPower')} stroke="#fa8c16" dot={false} />
+            {gpuIdxs.map((idx, i) => (
+              <Line key={idx} dataKey={'g' + idx} name={`${t('cluster.gpuShort')} ${idx}`}
+                stroke={GPU_COLORS[i % GPU_COLORS.length]} dot={false} />
+            ))}
           </LineChart>
         </ResponsiveContainer>
       </Card>
-      <div style={{ marginTop: 16 }}>
-        <RunningTable queue={queue} t={t} util={util} />
-      </div>
+      {infer.length > 0 && <InferCard items={infer} t={t} />}
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={12}>
+          <RunningTable queue={queue} t={t} util={util} />
+        </Col>
+        <Col span={12}>
+          <Card size="small" title={t('cluster.recentAlerts')}
+            extra={<Button type="link" size="small" onClick={() => nav('/cluster/alerts')}>{t('cluster.viewAll')}</Button>}>
+            {alerts.length === 0 ? (
+              <span style={{ color: '#999' }}>{t('cluster.noAlerts')}</span>
+            ) : (
+              <Table size="small" rowKey="id" dataSource={alerts} pagination={false}
+                columns={[
+                  { title: t('admin.colTime'), width: 140, render: (_: any, r: any) => new Date(r.ts * 1000).toLocaleString() },
+                  { title: t('admin.colLevel'), width: 80, render: (_: any, r: any) => levelTag(r.level, t) },
+                  { title: t('admin.colTarget'), width: 90, dataIndex: 'target', ellipsis: true },
+                  { title: t('admin.colTitle'), dataIndex: 'title', ellipsis: true },
+                ]} />
+            )}
+          </Card>
+        </Col>
+      </Row>
     </div>
   )
 }
+
+/** 推理服务指标：KV 缓存 / 运行中·排队请求 / 延迟 + 近 1h KV 趋势 */
+function InferCard({ items, t }: { items: any[]; t: (k: string) => string }) {
+  const { i18n: ti18n } = useTranslation()
+  return (
+    <Card size="small" title={t('cluster.inferTitle')} style={{ marginTop: 16 }}>
+      {items.map((d) => (
+        <div key={d.id} style={{ marginBottom: 14 }}>
+          <Space wrap style={{ marginBottom: 4 }}>
+            <b>{d.name}</b><Tag>{d.engine}</Tag>
+            {d.latest ? (
+              <>
+                <span>{t('cluster.kvLabel')}: <b style={{ color: (d.latest.kv || 0) > 90 ? '#cf1322' : undefined }}>{(d.latest.kv || 0).toFixed(0)}%</b></span>
+                <span>{t('cluster.runningReq')}: {d.latest.running}</span>
+                <span>{t('cluster.waitingReq')}: {d.latest.waiting}</span>
+                <span>{t('cluster.latency')}: {Math.round(d.latest.latency_ms)} ms</span>
+              </>
+            ) : <span style={{ color: '#999' }}>{t('cluster.noInferData')}</span>}
+          </Space>
+          {(d.series || []).length > 1 && (
+            <ResponsiveContainer width="100%" height={80}>
+              <LineChart data={d.series.map((x: any) => ({
+                t: new Date(x.ts * 1000).toLocaleTimeString(ti18n.language, { hour: '2-digit', minute: '2-digit' }),
+                kv: x.kv,
+              }))}>
+                <XAxis dataKey="t" fontSize={10} />
+                <YAxis domain={[0, 100]} fontSize={10} width={30} />
+                <RTooltip />
+                <Line dataKey="kv" name={t('cluster.kvLabel')} stroke="#722ed1" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      ))}
+    </Card>
+  )
+}
+
+const levelTag = (v: string, t: (k: string) => string) =>
+  v === 'critical' ? <Tag color="error">{t('admin.sevCritical')}</Tag>
+    : v === 'warning' ? <Tag color="warning">{t('admin.sevWarning')}</Tag>
+      : <Tag>{t('admin.sevInfo')}</Tag>

@@ -17,6 +17,7 @@ from ..models import (Deployment, ModelAsset, Project, User, GuardRule, ApiKey)
 from ..services import inference_service as inf
 from ..services import taskcontainer as tc
 from ..services import image_ops
+from ..services import upgrade_service
 
 log = logging.getLogger("inference")
 router = APIRouter(tags=["inference"])
@@ -59,7 +60,8 @@ def _wait_engine_image(dep: Deployment, db2) -> str:
 
     返回 "ready" 继续建容器；拉取失败/超时回写 failed 并返回 "stop"。
     """
-    img = settings.images_vllm if dep.engine == "vllm" else settings.images_sglang
+    img = upgrade_service.current_image("vllm") if dep.engine == "vllm" \
+        else upgrade_service.current_image("sglang")
     deadline = time.time() + 3600
     while True:
         ist = image_ops.ensure_image(img)

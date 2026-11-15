@@ -18,6 +18,7 @@ from ..models import TrainingJob, ModelAsset, Dataset, DatasetVersion
 from ..database import SessionLocal
 from . import taskcontainer as tc
 from . import dataset_service as ds
+from . import upgrade_service
 
 log = logging.getLogger(__name__)
 
@@ -446,7 +447,9 @@ def write_config(job: TrainingJob, db) -> str:
     d = build_config(job, db)
     # 官方镜像未装 tensorboard：依赖它的上报自动降级为 none（装过 tensorboard 的
     # 自构镜像保持原上报；用户显式选 wandb/mlflow 等其他集成不受影响）
-    if d.get("report_to") in ("tensorboard", "all") and not image_has_tensorboard(settings.images_train):
+    # 探测入参走运行时 pin：引擎升级后新镜像的 tensorboard 可用性按新镜像判定
+    if d.get("report_to") in ("tensorboard", "all") \
+            and not image_has_tensorboard(upgrade_service.current_image("llamafactory")):
         d["report_to"] = "none"
     cfg = os.path.join(job_dir(job.id), "config.yaml")
     os.makedirs(job_dir(job.id), exist_ok=True)
@@ -465,7 +468,7 @@ def launch(job: TrainingJob) -> None:
     name = f"ft-train-{job.id}"
     tc.remove_container(name, force=True)
     cid = tc.create_container(
-        name=name, image=settings.images_train,
+        name=name, image=upgrade_service.current_image("llamafactory"),
         gpus=job.gpu_count,
         cpus=(job.gpu_count * 4) or 4,
         mem_gb=24.0,

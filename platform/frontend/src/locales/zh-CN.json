@@ -13,7 +13,8 @@
   "common": {
     "loading": "加载中...", "id": "ID", "name": "名称", "status": "状态", "type": "类型",
     "desc": "描述", "createTime": "创建时间", "actions": "操作", "detail": "详情", "delete": "删除",
-    "enabled": "启用", "disabled": "禁用", "yes": "是", "no": "否", "none": "无", "optional": "可选", "create": "创建", "required": "此项为必填", "cancel": "取消", "deleted": "已删除", "deleteConfirm": "确认删除？此操作不可恢复"
+    "enabled": "启用", "disabled": "禁用", "yes": "是", "no": "否", "none": "无", "optional": "可选", "create": "创建", "required": "此项为必填", "cancel": "取消", "deleted": "已删除", "deleteConfirm": "确认删除？此操作不可恢复",
+    "search": "搜索", "created": "已创建", "refresh": "刷新"
   },
   "dashboard": {
     "gpuUtil": "GPU 利用率", "gpuMem": "GPU 显存 (GB)", "runningJobs": "运行中任务",
@@ -205,7 +206,12 @@
     "systemTitle": "宿主系统指标（近 1 小时）", "noSysData": "暂无系统指标数据（gpu-agent 采集中…）", "sysCpu": "CPU",
     "sysMem": "内存", "sysDisk": "磁盘", "sysLoad": "负载(1分)",
     "sysNetRx": "网络收", "sysNetTx": "网络发", "sysMemDetail": "内存已用 {{u}}/{{tgb}}GB",
-    "sysDiskDetail": "磁盘已用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} 核"
+    "sysDiskDetail": "磁盘已用 {{u}}/{{tg}}GB", "sysCpuCores": "{{n}} 核",
+    "r1h": "1 小时", "r6h": "6 小时", "r24h": "24 小时",
+    "gpuShort": "GPU", "inferTitle": "推理服务", "kvLabel": "KV 缓存",
+    "runningReq": "运行中请求", "waitingReq": "排队请求", "latency": "平均延迟",
+    "noInferData": "暂无指标数据", "recentAlerts": "最近告警", "viewAll": "查看全部",
+    "noAlerts": "暂无告警"
   },
   "logs": { "title": "日志", "service": "服务", "tail": "行数", "auto": "自动刷新", "searchPh": "过滤关键词", "level": "级别", "all": "全部", "warn": "警告", "error": "错误", "empty": "无日志", "copy": "复制", "copied": "已复制", "download": "下载", "running": "运行中", "stopped": "已停止", "tabAudit": "审计日志", "tabContainer": "运行日志" },
   "storage": { "title": "对象存储", "statusTitle": "存储状态", "enabled": "已启用", "disabled": "未启用（纯本地）", "endpoint": "端点", "bucket": "桶", "objCount": "对象数", "totalBytes": "对象总量", "disk": "数据盘占用", "diskUsed": "已用", "browser": "对象浏览", "queue": "同步队列", "queueEmpty": "队列为空", "colOp": "操作", "colKey": "Key/前缀", "colStatus": "状态", "colError": "错误", "colCreated": "时间", "retry": "重试", "retriedOk": "重试完成", "retriedFail": "重试失败", "clearDone": "清理已完成", "clearFail": "清理失败记录", "delete": "删除", "delConfirm": "删除该前缀下全部对象？", "delOk": "已删除", "delFail": "删除失败", "empty": "（空）", "updated": "更新时间", "back": "上级", "goRoot": "根目录", "disabledTip": "S3 未启用：数据仅存本地磁盘", "opPut": "上传", "opGet": "下载", "opDelete": "删除", "stDone": "成功", "stFailed": "失败", "colSize": "大小", "colTime": "修改时间" , "addBackend": "添加存储后端", "backends": "存储后端", "backendEmpty": "暂无存储后端", "addOk": "已添加", "colType": "类型", "colConfig": "配置", "colCapacity": "容量", "test": "测试", "delBackendConfirm": "确定移除该存储后端？", "pathHost": "宿主路径（容器内可见）", "device": "块设备", "primaryObject": "主对象存储", "typeObject": "对象存储", "typeLocal": "本地", "typeNfs": "NFS", "typeBlock": "块存储" , "endpointPh": "http://rustfs:9000 或 s3 端点" },
@@ -241,7 +247,20 @@
     "colLevel": "级别", "colTarget": "目标", "colTitle": "标题",
     "colNotified": "已通知", "testNotify": "测试", "testSent": "测试消息已发送，请查看通道",
     "testFail": "发送失败", "chWecom": "企业微信机器人", "chEmail": "邮件",
-    "chAuto": "自动（全部已配置通道）"
+    "chAuto": "自动（全部已配置通道）",
+    "tabUpgrade": "集群升级", "chTitle": "通知通道", "chHint": "配置后覆盖环境变量默认值；密码留空或填 ****** 表示保持不变",
+    "saveCfg": "保存配置", "saved": "已保存", "chTest": "发送测试",
+    "srcDb": "数据库", "srcEnv": "环境变量", "srcNone": "未配置",
+    "smtpHostPh": "SMTP 服务器（如 smtp.exmail.qq.com）", "smtpSsl": "SSL/TLS 加密", "smtpUserPh": "发件账号",
+    "smtpPwPh": "授权码（留空=不变）", "smtpFromPh": "发件人地址", "smtpToPh": "收件人，逗号分隔",
+    "evSearchPh": "搜索目标", "sevInfo": "信息", "upImage": "镜像",
+    "upLocal": "本地", "upPresent": "已就绪", "upMissing": "未拉取",
+    "upRunning": "升级中", "upIdle": "空闲", "upImpact": "升级影响",
+    "upUpgrade": "升级", "upRebuild": "重建", "upRebuildHint": "将以最新源码重建镜像并蓝绿切换容器，期间服务短暂不可用（约 1 分钟）",
+    "upCurrentImage": "当前镜像", "upPickVer": "选择目标版本", "upToVer": "目标版本",
+    "upNeedVer": "请选择目标版本", "upTasks": "升级任务", "upTarget": "组件",
+    "upVersion": "版本变迁", "upSuccess": "成功", "upFailed": "失败",
+    "upStarted": "升级任务已创建"
   },
   "quant": {
     "title": "模型压缩",

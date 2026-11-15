@@ -13,6 +13,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models import QuantTask, ModelAsset
 from . import taskcontainer as tc
+from . import upgrade_service
 
 METHODS: dict[str, dict] = {
     "bnb4":  {"bit": 4, "method": "bitsandbytes", "pip": "bitsandbytes",     "device": "cpu",  "label": "BitsAndBytes NF4（4-bit）"},
@@ -56,7 +57,7 @@ def launch(task: QuantTask) -> None:
     name = f"ft-quant-{task.id}"
     tc.remove_container(name, force=True)
     cid = tc.create_container(
-        name=name, image=settings.images_train,
+        name=name, image=upgrade_service.current_image("llamafactory"),
         gpus=task.gpu_count or 1, cpus=4, mem_gb=24.0,
         labels={"fintune.task": str(task.id), "fintune.type": "quantize"},
     )

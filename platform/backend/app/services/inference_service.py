@@ -19,6 +19,7 @@ from ..config import settings
 from ..models import Deployment, ModelAsset, InferenceMetric
 from ..database import SessionLocal
 from . import taskcontainer as tc
+from . import upgrade_service
 
 log = logging.getLogger("inference")
 
@@ -82,7 +83,8 @@ def start_replica(dep: Deployment, replica: int, model_path: str) -> str:
     tc.remove_container(name, force=True)
     cid = tc.create_container(
         name=name,
-        image=settings.images_vllm if dep.engine == "vllm" else settings.images_sglang,
+        image=upgrade_service.current_image("vllm") if dep.engine == "vllm"
+        else upgrade_service.current_image("sglang"),
         gpus=max(dep.tensor_parallel, 1),
         cpus=8, mem_gb=20,
         # VLLM_ALLOW_RUNTIME_LORA_UPDATING：vLLM>=0.15 的运行期 LoRA 热加载 API

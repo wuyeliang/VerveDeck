@@ -144,3 +144,27 @@ def utilization(db=Depends(get_db), user=Depends(get_current_user)):
     return {"node": n.name if n else "", "total_gpus": total, "used_gpus": used,
             "free_gpus": max(0, total - used), "running_deployments": running_dep,
             "running_jobs": running_job, "node_status": n.status if n else "unknown"}
+
+
+@router.get("/inference")
+def inference_overview(db=Depends(get_db), user=Depends(get_current_user)):
+    """推理服务总览（监控大屏用）：运行中部署 + 最新引擎指标 + 近 1h KV/请求趋势"""
+    from ..models import InferenceMetric
+    deps = db.query(Deployment).filter(Deployment.status == "running").all()
+    since = int(time.time()) - 3600
+    out = []
+    for d in deps:
+        last = (db.query(InferenceMetric).filter(InferenceMetric.deployment_id == d.id)
+                .order_by(InferenceMetric.ts.desc()).first())
+        rows = (db.query(InferenceMetric).filter(InferenceMetric.deployment_id == d.id,
+                                                 InferenceMetric.ts >= since)
+                .order_by(InferenceMetric.ts.asc()).all())
+        out.append({
+            "id": d.id, "name": d.name, "engine": d.engine,
+            "latest": (None if not last else {
+                "kv": last.kv_cache_pct, "running": last.num_running,
+                "waiting": last.num_waiting, "latency_ms": last.avg_latency_ms}),
+            "series": [{"ts": r.ts, "kv": r.kv_cache_pct, "running": r.num_running}
+                       for r in rows],
+        })
+    return {"items": out}

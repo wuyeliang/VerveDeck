@@ -306,6 +306,24 @@ class AlertEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class AlertChannelConfig(Base):
+    """告警通知通道配置（单行表 id=1）：企业微信群机器人 + SMTP 邮件。
+    UI 可配置（系统管理→通知通道），优先于环境变量；未配置的通道回退 env。"""
+    __tablename__ = "alert_channel_config"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    wecom_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    wecom_webhook: Mapped[str] = mapped_column(String(512), default="")
+    smtp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    smtp_host: Mapped[str] = mapped_column(String(128), default="")
+    smtp_port: Mapped[int] = mapped_column(Integer, default=465)
+    smtp_ssl: Mapped[bool] = mapped_column(Boolean, default=True)  # True=SSL(465)，False=STARTTLS(587)
+    smtp_user: Mapped[str] = mapped_column(String(128), default="")
+    smtp_password: Mapped[str] = mapped_column(String(256), default="")
+    smtp_from: Mapped[str] = mapped_column(String(128), default="")
+    smtp_to: Mapped[str] = mapped_column(String(512), default="")  # 收件人，逗号分隔
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
 class InferenceMetric(Base):
     """推理部署引擎指标（vLLM /metrics、SGLang /get_server_info，约 30s 抓取一次）"""
     __tablename__ = "inference_metrics"
@@ -383,3 +401,17 @@ class StorageBackend(Base):
     size_used: Mapped[int] = mapped_column(BigInteger, default=0)
     size_total: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class UpgradeTask(Base):
+    """集群升级任务：目标组件 / 版本变迁 / 状态 / 日志（后台线程执行，幂等可重试）"""
+    __tablename__ = "upgrade_tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target: Mapped[str] = mapped_column(String(32))  # vllm/sglang/llamafactory/gpu_agent/backend/web
+    from_version: Mapped[str] = mapped_column(String(160), default="")
+    to_version: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running/success/failed
+    log: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
