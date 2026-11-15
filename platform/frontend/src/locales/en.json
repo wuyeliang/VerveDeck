@@ -187,7 +187,9 @@
     "scaledUp": "Scaled up (needs free GPU)", "scaledDown": "Scaled down",
     "tabMonitor": "Monitor", "kvCache": "KV cache", "runReqs": "Running reqs",
     "waitReqs": "Waiting reqs", "avgLatency": "Avg latency", "monEmpty": "No monitoring data yet (scraped every 30s after start)",
-    "monHint": "Source: engine metrics endpoint, ~30s scrape interval, kept 24h"
+    "monHint": "Source: engine metrics endpoint, ~30s scrape interval, kept 24h",
+    "colImage": "Image", "colNode": "Node", "colReplicas": "Replicas",
+    "dImage": "Engine image", "formNode": "Node placement", "formNodeHint": "Single-node cluster: auto-scheduled to this node"
   },
   "cluster": {
     "title": "Compute Scheduling & Ops", "heartbeat": "Heartbeat {{ts}}", "gpuTotal": "GPUs", "gpuUsed": "In use", "gpuFree": "Free",

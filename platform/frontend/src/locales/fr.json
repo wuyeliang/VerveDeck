@@ -187,7 +187,9 @@
     "scaledUp": "Extension effectuée (GPU libre requis)", "scaledDown": "Réduction effectuée",
     "tabMonitor": "Surveillance", "kvCache": "Cache KV", "runReqs": "Req. en cours",
     "waitReqs": "Req. en attente", "avgLatency": "Latence moy.", "monEmpty": "Pas encore de données (recueillies toutes les 30 s)",
-    "monHint": "Source : point de terminaison metrics du moteur, ~30 s, conservé 24 h"
+    "monHint": "Source : point de terminaison metrics du moteur, ~30 s, conservé 24 h",
+    "colImage": "Image", "colNode": "Nœud", "colReplicas": "Répliques",
+    "dImage": "Image d'engine", "formNode": "Placement du nœud", "formNodeHint": "Cluster mono-nœud : planification automatique sur ce nœud"
   },
   "cluster": {
     "title": "Ordonnancement et exploitation", "heartbeat": "Cœur {{ts}}", "gpuTotal": "GPU au total", "gpuUsed": "Occupés", "gpuFree": "Libres",

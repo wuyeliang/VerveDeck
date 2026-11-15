@@ -187,7 +187,9 @@
     "scaledUp": "スケールアウトしました（空き GPU が必要）", "scaledDown": "スケールインしました",
     "tabMonitor": "監視", "kvCache": "KVキャッシュ", "runReqs": "実行中リクエスト",
     "waitReqs": "待ちリクエスト", "avgLatency": "平均遅延", "monEmpty": "監視データなし（サービス起動後 30 秒ごとに収集）",
-    "monHint": "出典：エンジン metrics エンドポイント、約 30 秒間隔、24 時間保持"
+    "monHint": "出典：エンジン metrics エンドポイント、約 30 秒間隔、24 時間保持",
+    "colImage": "イメージ", "colNode": "ノード", "colReplicas": "レプリカ",
+    "dImage": "エンジンイメージ", "formNode": "ノード配置", "formNodeHint": "単一ノードクラスター：このノードに自動スケジューリング"
   },
   "cluster": {
     "title": "計算スケジューリングと運用", "heartbeat": "ハートビート {{ts}}", "gpuTotal": "GPU 総数", "gpuUsed": "使用中", "gpuFree": "空き",

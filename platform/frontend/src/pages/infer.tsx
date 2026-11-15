@@ -12,6 +12,11 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
 const ST: Record<string, string> = { creating: 'processing', running: 'success', stopped: 'default', failed: 'error' }
+// 引擎镜像由平台级 pin 决定（与 compose IMAGES_VLLM/IMAGES_SGLANG 一致），按引擎展示
+const ENGINE_IMAGES: Record<string, string> = {
+  vllm: 'vllm/vllm-openai:v0.33.0',
+  sglang: 'lmsysorg/sglang:v0.5.23',
+}
 
 export default function Inference() {
   const { t } = useTranslation()
@@ -28,13 +33,19 @@ export default function Inference() {
   const [chatLoading, setChatLoading] = useState(false)
   const [addAda, setAddAda] = useState<any>(null)
   const [mon, setMon] = useState<any>(null)
+  const [nodeName, setNodeName] = useState('')
   const tp = Form.useWatch('tensor_parallel', form) || 1
   const rep = Form.useWatch('replicas', form) || 1
+  const eng = Form.useWatch('engine', form) || 'vllm'
 
   const load = useCallback(() => {
     api.get('/api/inference/deployments', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId])
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [load])
+  // 节点名（当前单节点集群，用于列表「节点」列与部署表单 placement 展示）
+  useEffect(() => {
+    api.get('/api/cluster/nodes').then((r) => setNodeName(r.data?.[0]?.name || '')).catch(() => {})
+  }, [])
 
   const copy = (text: string) => {
     navigator.clipboard?.writeText(text).then(
@@ -132,20 +143,25 @@ console.log(resp.choices[0].message.content)`
         <h3 style={{ margin: 0 }}>{t('infer.title')}</h3>
         <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('infer.newDeploy')}</Button>
       </Space>
-      <Table rowKey="id" size="small" dataSource={list} pagination={{ pageSize: 12 }}
+      <Table rowKey="id" size="small" dataSource={list} pagination={{ pageSize: 12 }} scroll={{ x: 1280 }}
         columns={[
-          { title: t('common.id'), dataIndex: 'id', width: 55 },
-          { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true },
-          { title: t('infer.colModel'), dataIndex: 'model', width: 160, ellipsis: true },
-          { title: t('infer.colEngine'), dataIndex: 'engine', width: 80, render: (v: string) => <Tag color={v === 'vllm' ? 'blue' : 'cyan'}>{v}</Tag> },
-          { title: t('infer.colTpRep'), width: 80, render: (_: any, r: any) => `${r.tensor_parallel} / ${r.replicas}` },
+          { title: t('common.name'), dataIndex: 'name', width: 165, ellipsis: true, fixed: 'left' },
+          { title: t('infer.colModel'), dataIndex: 'model', width: 150, ellipsis: true },
+          { title: t('infer.colEngine'), dataIndex: 'engine', width: 78, render: (v: string) => <Tag color={v === 'vllm' ? 'blue' : 'cyan'}>{v}</Tag> },
+          { title: t('infer.colImage'), dataIndex: 'engine', key: 'image', width: 180, ellipsis: true,
+            render: (v: string) => <code style={{ fontSize: 11 }}>{ENGINE_IMAGES[v] || v}</code> },
+          { title: t('infer.colNode'), width: 105, render: () => (nodeName ? <Tag>{nodeName}</Tag> : <span style={{ color: '#bbb' }}>-</span>) },
+          { title: t('infer.colQuant'), dataIndex: 'quantization', width: 78,
+            render: (v: string) => v === 'none' ? <span style={{ color: '#bbb' }}>-</span> : <Tag color="purple">{v}</Tag> },
+          { title: t('infer.tp'), dataIndex: 'tensor_parallel', width: 52 },
+          { title: t('infer.colReplicas'), dataIndex: 'replicas', width: 62 },
           {
             title: t('infer.endpoint'), width: 190, render: (_: any, r: any) => r.status === 'running'
               ? <Space size={4}><code style={{ fontSize: 12 }}>/v1/{r.name}</code>
                 <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => copy(`${location.origin}/v1/${r.name}`)} /></Space>
               : <span style={{ color: '#bbb' }}>-</span>,
           },
-          { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={ST[v]}>{v}</Tag> },
+          { title: t('common.status'), dataIndex: 'status', width: 96, render: (v: string) => <Tag color={ST[v]}>{v}</Tag> },
           {
             title: t('common.actions'), width: 220, render: (_: any, r: any) => (
               <Space size={4}>
@@ -196,12 +212,22 @@ console.log(resp.choices[0].message.content)`
             </Form.Item>
           </InferSection>
           <InferSection title={t('infer.secResource')}>
-            <Space wrap>
+            <Space wrap align="start">
               <Form.Item name="engine" label={t('infer.engine')}>
                 <Select style={{ width: 130 }} options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
               </Form.Item>
+              <Form.Item label={t('infer.dImage')}>
+                <code style={{ fontSize: 12, background: '#f5f5f5', padding: '4px 8px', borderRadius: 4 }}>
+                  {ENGINE_IMAGES[eng] || '—'}
+                </code>
+              </Form.Item>
+            </Space>
+            <Space wrap align="start">
               <Form.Item name="tensor_parallel" label={t('infer.tp')}><InputNumber min={1} max={8} /></Form.Item>
               <Form.Item name="replicas" label={t('infer.replicas')}><InputNumber min={1} max={8} /></Form.Item>
+              <Form.Item label={t('infer.formNode')} tooltip={t('infer.formNodeHint')}>
+                <Input disabled value={nodeName || '—'} style={{ width: 170 }} />
+              </Form.Item>
             </Space>
             <div style={{ color: '#888', fontSize: 12, marginTop: -4 }}>
               <ThunderboltOutlined /> {t('infer.gpuNeed', { n: tp * rep, tp, r: rep })}
@@ -233,6 +259,8 @@ console.log(resp.choices[0].message.content)`
                       { key: 1, label: t('common.status'), children: <Tag color={ST[detail.status]}>{detail.status}</Tag> },
                       { key: 2, label: t('common.desc'), children: detail.description || '-' },
                       { key: 3, label: t('infer.dEngine'), children: `${detail.engine} / ${detail.quantization} / TP ${detail.tensor_parallel} × ${detail.replicas}` },
+                      { key: 'img', label: t('infer.dImage'), children: <code style={{ fontSize: 12 }}>{ENGINE_IMAGES[detail.engine] || detail.engine}</code> },
+                      { key: 'node', label: t('infer.colNode'), children: nodeName || '-' },
                       { key: 4, label: t('infer.colModel'), children: detail.model },
                       { key: 5, label: t('infer.dMaxLen'), children: `${detail.max_model_len} / ${detail.gpu_mem_util}` },
                       {

@@ -187,7 +187,9 @@
     "scaledUp": "已扩容（需空闲 GPU）", "scaledDown": "已缩容",
     "tabMonitor": "监控", "kvCache": "KV 缓存", "runReqs": "运行中请求",
     "waitReqs": "排队请求", "avgLatency": "平均延迟", "monEmpty": "暂无监控数据（服务启动后每 30 秒采集一次）",
-    "monHint": "数据来源：引擎指标端点，约 30 秒采集一次，保留 24 小时"
+    "monHint": "数据来源：引擎指标端点，约 30 秒采集一次，保留 24 小时",
+    "colImage": "镜像", "colNode": "节点", "colReplicas": "副本",
+    "dImage": "引擎镜像", "formNode": "节点放置", "formNodeHint": "单节点集群：自动调度至本机"
   },
   "cluster": {
     "title": "算力调度与运维", "heartbeat": "心跳 {{ts}}", "gpuTotal": "GPU 总数", "gpuUsed": "占用", "gpuFree": "空闲",

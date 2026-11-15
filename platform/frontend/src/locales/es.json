@@ -187,7 +187,9 @@
     "scaledUp": "Escalado hacia arriba (requiere GPU libre)", "scaledDown": "Escalado hacia abajo",
     "tabMonitor": "Monitor", "kvCache": "Caché KV", "runReqs": "Peticiones activas",
     "waitReqs": "Peticiones en cola", "avgLatency": "Latencia media", "monEmpty": "Sin datos aún (se recopila cada 30 s)",
-    "monHint": "Fuente: endpoint metrics del motor, ~30 s, retenido 24 h"
+    "monHint": "Fuente: endpoint metrics del motor, ~30 s, retenido 24 h",
+    "colImage": "Imagen", "colNode": "Nodo", "colReplicas": "Réplicas",
+    "dImage": "Imagen del engine", "formNode": "Colocación del nodo", "formNodeHint": "Clúster de un solo nodo: programación automática en este nodo"
   },
   "cluster": {
     "title": "Orquestación y operación de cómputo", "heartbeat": "Latido {{ts}}", "gpuTotal": "GPU en total", "gpuUsed": "Ocupadas", "gpuFree": "Libres",
