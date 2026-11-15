@@ -182,6 +182,24 @@ def delete_custom(cid: int, user=Depends(_admin)):
         db.close()
 
 
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/custom/batch-delete")
+def batch_delete_custom(req: BatchDeleteReq, user=Depends(_admin)):
+    """批量移除自定义镜像登记：逐个执行单删逻辑，返回部分结果"""
+    deleted: list[int] = []
+    failed: list[dict] = []
+    for cid in req.ids:
+        try:
+            delete_custom(cid, user=user)
+            deleted.append(cid)
+        except HTTPException as e:
+            failed.append({"id": cid, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}
+
+
 @router.post("/{key}/probe")
 def probe(key: str, user=Depends(_admin)):
     """强制刷新版本探测（缓存失效）"""

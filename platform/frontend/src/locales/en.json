@@ -14,7 +14,7 @@
     "loading": "Loading...", "id": "ID", "name": "Name", "status": "Status", "type": "Type",
     "desc": "Description", "createTime": "Created", "actions": "Actions", "detail": "Details", "delete": "Delete",
     "enabled": "Enabled", "disabled": "Disabled", "yes": "Yes", "no": "No", "none": "None", "optional": "Optional", "create": "Create", "required": "This field is required", "cancel": "Cancel", "deleted": "Deleted", "deleteConfirm": "Delete? This action cannot be undone", "search": "Search",
-    "created": "Created", "refresh": "Refresh"
+    "created": "Created", "refresh": "Refresh", "confirm": "Confirm", "batchDelete": "Batch Delete", "batchDelConfirm": "Delete the selected items? This action cannot be undone.", "batchDone": "Batch delete finished"
   },
   "dashboard": {
     "gpuUtil": "GPU Utilization", "gpuMem": "GPU Memory (GB)", "runningJobs": "Running Jobs",
@@ -247,7 +247,7 @@
     "mGpuMemTemp": "Mem temp", "mGpuPower": "Power", "mGpuXid": "XID error",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "Inference queue", "mInferLatency": "Inference latency p95",
     "mInferDown": "Inference down", "mSystemUp": "Node up", "promHint": "Threshold rules are evaluated in real time by Prometheus (sustained 60s) and pushed by Alertmanager via the configured channels",
-    "lcTitle": "Login Security", "lcDefault": "Defaults", "lcWhitelist": "IP Whitelist", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "When enabled, only listed IPs can log in (comma/newline separated, CIDR supported)", "lcUserAttempts": "Account lockout attempts", "lcIpAttempts": "IP lockout attempts", "lcLockMinutes": "Lock duration (min)",
+    "lcTitle": "Login Security", "lcDefault": "Defaults", "lcWhitelist": "IP Whitelist", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "When enabled, only listed IPs can log in (comma/newline separated, CIDR supported)", "lcUserAttempts": "Account lockout attempts", "lcIpAttempts": "IP lockout attempts", "lcLockMinutes": "Lock duration (min)", "rmMemberTitle": "Remove Project Member", "rmMemberConfirm": "After removal, {{names}} will lose access to this project. Remove?", "roleChangeConfirm": "Change the role of {{user}} to {{role}}?",
     "evNodeOnline": "Compute node back online", "evTrainFailed": "Training job failed", "evEvalFailed": "Eval task failed",
     "evQuantFailed": "Quant task failed", "evInferDown": "Inference service unavailable", "eventsTitle": "Alert events (last 100)",
     "colLevel": "Level", "colTarget": "Target", "colTitle": "Title",

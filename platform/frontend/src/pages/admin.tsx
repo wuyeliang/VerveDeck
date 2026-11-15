@@ -6,6 +6,7 @@ import {
 import { PlusOutlined, CopyOutlined, SendOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 import { useTheme } from '../theme'
 import { LANGS, setLang } from '../i18n'
 
@@ -137,6 +138,7 @@ function KeysTab() {
   const [keys, setKeys] = useState<any[]>([])
   const [models, setModels] = useState<any[]>([])
   const [pid, setPid] = useState<number>(0)
+  const [sel, setSel] = useState<number[]>([])
   const [newKey, setNewKey] = useState('')
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
@@ -153,11 +155,13 @@ function KeysTab() {
   }
   useEffect(() => { load() }, [])
   useEffect(() => { loadKeys() }, [pid])
+  const batchDel = useBatchDelete(`/api/admin/projects/${pid}/api-keys/batch-delete`, () => { setSel([]); loadKeys() })
   return (
     <div>
       <Space style={{ marginBottom: 12 }}>
         <Select value={pid || undefined} style={{ width: 240 }} placeholder={t('admin.selectProject')}
           options={projects.map((p) => ({ value: p.id, label: p.name }))} onChange={setPid} />
+        {sel.length > 0 && <Button size="small" danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
         <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>{t('admin.createKey')}</Button>
       </Space>
       {newKey && (
@@ -170,6 +174,7 @@ function KeysTab() {
         </Card>
       )}
       <Table size="small" rowKey="id" dataSource={keys} pagination={false}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
         columns={[
           { title: t('common.name'), dataIndex: 'name' },
           { title: t('admin.colPrefix'), dataIndex: 'key_prefix', render: (v: string) => <code>{v}…</code> },
@@ -209,9 +214,11 @@ function KeysTab() {
 function GuardTab() {
   const { t } = useTranslation()
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [form] = Form.useForm()
   const load = () => api.get('/api/admin/guard-rules').then((r) => setList(r.data)).catch(() => {})
   useEffect(() => { load() }, [])
+  const batchDel = useBatchDelete('/api/admin/guard-rules/batch-delete', () => { setSel([]); load() })
   return (
     <div>
       <Card size="small" title={t('admin.guardTitle')} style={{ marginBottom: 12 }}>
@@ -222,7 +229,11 @@ function GuardTab() {
           <Button type="primary" htmlType="submit">{t('admin.add')}</Button>
         </Form>
       </Card>
+      {sel.length > 0 && (
+        <Button size="small" danger style={{ marginBottom: 8 }} onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>
+      )}
       <Table size="small" rowKey="id" dataSource={list} pagination={false}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
         columns={[
           { title: t('admin.colPattern'), dataIndex: 'pattern' },
           { title: t('admin.colScope'), dataIndex: 'scope', width: 100 },
@@ -243,6 +254,7 @@ const EVENTS = ['node_offline', 'node_online', 'train_failed', 'eval_failed', 'q
 function AlertsTab() {
   const { t, i18n: ti18n } = useTranslation()
   const [rules, setRules] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [events, setEvents] = useState<any[]>([])
   const [evLevel, setEvLevel] = useState('')
   const [evTarget, setEvTarget] = useState('')
@@ -270,6 +282,7 @@ function AlertsTab() {
     api.get('/api/admin/alerts/events?limit=100').then((r) => setEvents(r.data.items || [])).catch(() => {})
   }
   useEffect(() => { load(); const x = setInterval(load, 10000); return () => clearInterval(x) }, [])
+  const batchDel = useBatchDelete('/api/admin/alerts/rules/batch-delete', () => { setSel([]); load() })
 
   const openModal = (r?: any) => {
     form.resetFields()
@@ -290,8 +303,12 @@ function AlertsTab() {
   return (
     <div>
       <Card size="small" title={t('admin.alertRules')} style={{ marginBottom: 16 }}
-        extra={<Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => openModal()}>{t('admin.newRule')}</Button>}>
+        extra={<Space size={8}>
+          {sel.length > 0 && <Button size="small" danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => openModal()}>{t('admin.newRule')}</Button>
+        </Space>}>
         <Table size="small" rowKey="id" dataSource={rules} pagination={false}
+          rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
           columns={[
             { title: t('admin.ruleName'), dataIndex: 'name', width: 180, ellipsis: true },
             { title: t('admin.colKind'), dataIndex: 'kind', width: 80, render: (v: string) => v === 'event' ? <Tag>{t('admin.kindEvent')}</Tag> : <Tag color="blue">{t('admin.kindThreshold')}</Tag> },

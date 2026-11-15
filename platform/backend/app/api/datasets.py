@@ -145,6 +145,26 @@ def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("sup
     return {"ok": True}
 
 
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/batch-delete")
+def batch_delete_datasets(req: BatchDeleteReq, db=Depends(get_db),
+                          user=Depends(require_role("super_admin", "tenant_admin", "developer"))):
+    """批量删除：逐个执行单删逻辑，返回部分结果（被引用的 id 不阻塞其余删除）"""
+    deleted: list[int] = []
+    failed: list[dict] = []
+    for dsid in req.ids:
+        try:
+            delete_dataset(dsid, db=db, user=user)
+            deleted.append(dsid)
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"id": dsid, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}
+
+
 # 注意：/tasks、/template 等静态路由必须在 /{dsid} 之前注册，否则被动态路由遮蔽（Starlette 按注册顺序匹配）
 @router.get("/tasks")
 def list_tasks(dataset_id: int | None = None, db=Depends(get_db), user=Depends(get_current_user)):

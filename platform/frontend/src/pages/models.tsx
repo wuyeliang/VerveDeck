@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 
 const TYPE_COLOR: Record<string, string> = { base: 'geekblue', lora: 'purple', merged: 'green' }
 const ST_COLOR: Record<string, string> = { ready: 'success', pending_download: 'processing', failed: 'error' }
@@ -18,6 +19,7 @@ export default function ModelRepo() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState('')
   const [catFilter, setCatFilter] = useState('all')
@@ -44,6 +46,7 @@ export default function ModelRepo() {
     api.get('/api/models', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId, q])
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [load])
+  const batchDel = useBatchDelete('/api/models/batch-delete', () => { setSel([]); load() })
 
   // 分类筛选（选项随当前列表动态生成）+ 平铺/列表可见数据
   const cats = Array.from(new Set(list.map((m) => m.category).filter(Boolean))).sort()
@@ -132,11 +135,13 @@ export default function ModelRepo() {
               { value: 'list', icon: <UnorderedListOutlined />, label: t('models.viewList') },
               { value: 'tiled', icon: <AppstoreOutlined />, label: t('models.viewTiled') },
             ]} />
+          {sel.length > 0 && <Button danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setTab('search'); setOpen(true) }}>{t('models.registerBase')}</Button>
         </Space>
       </Space>
       {view === 'list' ? (
       <Table rowKey="id" size="small" dataSource={visible} pagination={{ pageSize: 12 }}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
         columns={[
           { title: t('common.id'), dataIndex: 'id', width: 55 },
           {

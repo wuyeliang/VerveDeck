@@ -14,7 +14,7 @@
     "loading": "読み込み中...", "id": "ID", "name": "名前", "status": "状態", "type": "種類",
     "desc": "説明", "createTime": "作成日時", "actions": "操作", "detail": "詳細", "delete": "削除",
     "enabled": "有効", "disabled": "無効", "yes": "はい", "no": "いいえ", "none": "なし", "optional": "任意", "create": "作成", "required": "必須入力項目です", "cancel": "キャンセル", "deleted": "削除しました", "deleteConfirm": "削除しますか？この操作は取り消せません", "search": "検索",
-    "created": "作成しました", "refresh": "再読み込み"
+    "created": "作成しました", "refresh": "再読み込み", "confirm": "確定", "batchDelete": "一括削除", "batchDelConfirm": "選択した項目を削除しますか？この操作は取り消せません。", "batchDone": "一括削除完了"
   },
   "dashboard": {
     "gpuUtil": "GPU 使用率", "gpuMem": "GPU メモリ (GB)", "runningJobs": "実行中ジョブ",
@@ -247,7 +247,7 @@
     "mGpuMemTemp": "メモリ温度", "mGpuPower": "消費電力", "mGpuXid": "XIDエラー",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "推論キュー", "mInferLatency": "推論レイテンシ p95",
     "mInferDown": "推論サービス停止", "mSystemUp": "ノードオンライン", "promHint": "しきい値ルールは Prometheus がリアルタイムで評価（60 秒持続）、Alertmanager が設定済みチャネルへ通知",
-    "lcTitle": "ログインセキュリティ", "lcDefault": "デフォルト", "lcWhitelist": "IP ホワイトリスト", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "有効にするとリスト内の IP のみログイン可能（カンマ/改行区切り、CIDR 対応）", "lcUserAttempts": "アカウントロック失敗回数", "lcIpAttempts": "IP ロック失敗回数", "lcLockMinutes": "ロック時間（分）",
+    "lcTitle": "ログインセキュリティ", "lcDefault": "デフォルト", "lcWhitelist": "IP ホワイトリスト", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "有効にするとリスト内の IP のみログイン可能（カンマ/改行区切り、CIDR 対応）", "lcUserAttempts": "アカウントロック失敗回数", "lcIpAttempts": "IP ロック失敗回数", "lcLockMinutes": "ロック時間（分）", "rmMemberTitle": "プロジェクトメンバーを削除", "rmMemberConfirm": "削除後、{{names}} はこのプロジェクトへのアクセス権を失います。削除しますか？", "roleChangeConfirm": "{{user}} のロールを {{role}} に変更しますか？",
     "evNodeOnline": "ノード復旧", "evTrainFailed": "学習タスク失敗", "evEvalFailed": "評価タスク失敗",
     "evQuantFailed": "量子化タスク失敗", "evInferDown": "推論サービス利用不可", "eventsTitle": "アラートイベント（直近100件）",
     "colLevel": "レベル", "colTarget": "対象", "colTitle": "タイトル",

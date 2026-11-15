@@ -71,14 +71,31 @@ function OrgSpace() {
                   },
                   { title: t('common.desc'), dataIndex: 'description', ellipsis: true },
                   {
-                    title: t('admin.colMembers'), width: 240, render: (_: any, r: any) => (
-                      <Select size="small" mode="multiple" style={{ width: 210 }} placeholder={t('admin.addMember')}
+                    title: t('admin.colMembers'), width: 260, render: (_: any, r: any) => (
+                      <Select size="small" mode="multiple" style={{ width: 230 }} placeholder={t('admin.addMember')}
+                        value={(r.members || []).slice()}
                         options={users.map((u: any) => ({ value: u.id, label: u.username }))}
-                        onChange={async (vals) => {
-                          const all = users.map((u) => u.id)
-                          const removed = all.filter((id) => !vals.includes(id))
-                          for (const id of removed) await api.delete(`/api/admin/projects/${r.id}/members/${id}`).catch(() => {})
-                          for (const id of vals) await api.put(`/api/admin/projects/${r.id}/members`, { user_id: id, role: 'developer' }).catch(() => {})
+                        onChange={(vals: number[]) => {
+                          // 只对真实 diff 动手：新增走 put（幂等），移除先弹确认再 delete
+                          const prev: number[] = r.members || []
+                          const removed = prev.filter((id) => !vals.includes(id))
+                          const added = vals.filter((id) => !prev.includes(id))
+                          const apply = async () => {
+                            for (const id of removed) await api.delete(`/api/admin/projects/${r.id}/members/${id}`).catch(() => {})
+                            for (const id of added) await api.put(`/api/admin/projects/${r.id}/members`, { user_id: id, role: 'developer' }).catch(() => {})
+                            load()
+                          }
+                          if (removed.length) {
+                            const names = removed.map((id) => users.find((u: any) => u.id === id)?.username || `#${id}`).join('、')
+                            Modal.confirm({
+                              title: t('admin.rmMemberTitle'),
+                              content: t('admin.rmMemberConfirm', { names }),
+                              okText: t('common.confirm'),
+                              cancelText: t('common.cancel'),
+                              okButtonProps: { danger: true },
+                              onOk: apply,
+                            })
+                          } else apply()
                         }} />
                     ),
                   },
@@ -132,7 +149,16 @@ function UsersTab() {
               <Space size={4}>
                 <Select size="small" value={r.role} style={{ width: 130 }}
                   options={Object.keys(ROLE_COLOR).map((x) => ({ value: x, label: x }))}
-                  onChange={async (v) => { await api.put(`/api/admin/users/${r.id}`, { role: v }); load() }} />
+                  onChange={(v) => {
+                    if (v === r.role) return
+                    // 角色变更=权限变更，确认后再提交
+                    Modal.confirm({
+                      title: t('admin.roleChangeConfirm', { user: r.username, role: v }),
+                      okText: t('common.confirm'),
+                      cancelText: t('common.cancel'),
+                      onOk: async () => { await api.put(`/api/admin/users/${r.id}`, { role: v }); load() },
+                    })
+                  }} />
                 <Button size="small" onClick={() => { resetForm.resetFields(); setResetUser(r) }}>{t('admin.resetPw')}</Button>
               </Space>
             ),

@@ -6,6 +6,7 @@ import {
 import { PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 
 const ST: Record<string, string> = { pending: 'default', running: 'processing', succeeded: 'success', failed: 'error' }
 
@@ -13,6 +14,7 @@ export default function QuantCenter() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
   const [models, setModels] = useState<any[]>([])
@@ -24,6 +26,7 @@ export default function QuantCenter() {
     api.get('/api/quantize', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId])
   useEffect(() => { load(); const x = setInterval(load, 6000); return () => clearInterval(x) }, [load])
+  const batchDel = useBatchDelete('/api/quantize/batch-delete', () => { setSel([]); load() })
 
   // 详情日志轮询（打开 Drawer 期间）
   useEffect(() => {
@@ -57,10 +60,14 @@ export default function QuantCenter() {
           <h3 style={{ margin: 0 }}>{t('quant.title')}</h3>
           <div style={{ color: '#888', fontSize: 12 }}>{t('quant.intro')}</div>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('quant.newTask')}</Button>
+        <Space>
+          {sel.length > 0 && <Button danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
+          <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('quant.newTask')}</Button>
+        </Space>
       </Space>
 
       <Table rowKey="id" size="small" dataSource={list} pagination={{ pageSize: 12 }}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
         columns={[
           { title: t('common.id'), dataIndex: 'id', width: 55 },
           { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true },

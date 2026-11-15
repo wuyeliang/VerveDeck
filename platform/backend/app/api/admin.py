@@ -70,12 +70,17 @@ def list_projects(db=Depends(get_db), user=Depends(get_current_user)):
         projs = db.query(Project).all()
     else:
         projs = db.query(Project).filter(Project.tenant_id == user.tenant_id).all()
-    return [{
-        "id": p.id, "tenant_id": p.tenant_id, "name": p.name,
-        "description": p.description, "owner_id": p.owner_id,
-        "created_at": str(p.created_at),
-        "can_access": can_access_project(user, db, p),
-    } for p in projs]
+    out = []
+    for p in projs:
+        member_ids = [m.user_id for m in db.query(ProjectMember).filter_by(project_id=p.id).all()]
+        out.append({
+            "id": p.id, "tenant_id": p.tenant_id, "name": p.name,
+            "description": p.description, "owner_id": p.owner_id,
+            "created_at": str(p.created_at),
+            "can_access": can_access_project(user, db, p),
+            "members": member_ids,  # 成员 user_id 列表（前端据此做增删 diff + 受控渲染）
+        })
+    return out
 
 
 @router.post("/projects")
@@ -215,6 +220,20 @@ def delete_key(pid: int, kid: int, db=Depends(get_db), user=Depends(require_role
     return {"ok": True}
 
 
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/projects/{pid}/api-keys/batch-delete")
+def batch_revoke_keys(pid: int, req: BatchDeleteReq, db=Depends(get_db),
+                      user=Depends(require_role("super_admin", "tenant_admin", "developer"))):
+    """批量吊销 API Key（限定项目范围内）"""
+    n = db.query(ApiKey).filter(ApiKey.id.in_(req.ids), ApiKey.project_id == pid) \
+        .update({"is_active": False}, synchronize_session=False)
+    db.commit()
+    return {"deleted": n, "failed": []}
+
+
 # ---------- 护栏规则 ----------
 
 @router.get("/guard-rules")
@@ -244,6 +263,14 @@ def delete_rule(rid: int, db=Depends(get_db), user=Depends(require_role("super_a
     db.query(GuardRule).filter_by(id=rid).delete()
     db.commit()
     return {"ok": True}
+
+
+@router.post("/guard-rules/batch-delete")
+def batch_delete_rules(req: BatchDeleteReq, db=Depends(get_db), user=Depends(require_role("super_admin", "tenant_admin"))):
+    """批量删除护栏规则"""
+    n = db.query(GuardRule).filter(GuardRule.id.in_(req.ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": n, "failed": []}
 
 
 # ---------- 告警规则与事件 ----------
@@ -336,6 +363,17 @@ def delete_alert_rule(rid: int, db=Depends(get_db),
     db.commit()
     _resync_rules()
     return {"ok": True}
+
+
+@router.post("/alerts/rules/batch-delete")
+def batch_delete_alert_rules(req: BatchDeleteReq, db=Depends(get_db),
+                             user=Depends(require_role("super_admin", "tenant_admin"))):
+    """批量删除告警规则（结束后统一重渲染 Prometheus 规则）"""
+    n = db.query(AlertRule).filter(AlertRule.id.in_(req.ids)).delete(synchronize_session=False)
+    db.commit()
+    if n:
+        _resync_rules()
+    return {"deleted": n, "failed": []}
 
 
 @router.post("/alerts/rules/{rid}/test")

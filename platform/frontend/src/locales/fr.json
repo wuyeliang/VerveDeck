@@ -14,7 +14,7 @@
     "loading": "Chargement...", "id": "ID", "name": "Nom", "status": "Statut", "type": "Type",
     "desc": "Description", "createTime": "Créé le", "actions": "Actions", "detail": "Détails", "delete": "Supprimer",
     "enabled": "Activé", "disabled": "Désactivé", "yes": "Oui", "no": "Non", "none": "Aucun", "optional": "Optionnel", "create": "Créer", "required": "Champ obligatoire", "cancel": "Annuler", "deleted": "Supprimé", "deleteConfirm": "Supprimer ? Cette action est irréversible", "search": "Rechercher",
-    "created": "Créé", "refresh": "Actualiser"
+    "created": "Créé", "refresh": "Actualiser", "confirm": "Confirmer", "batchDelete": "Suppression par lot", "batchDelConfirm": "Supprimer les éléments sélectionnés ? Cette action est irréversible.", "batchDone": "Suppression par lot terminée"
   },
   "dashboard": {
     "gpuUtil": "Utilisation GPU", "gpuMem": "Mémoire GPU (GB)", "runningJobs": "Tâches en cours",
@@ -247,7 +247,7 @@
     "mGpuMemTemp": "Temp. mémo", "mGpuPower": "Puissance", "mGpuXid": "Erreur XID",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "File d'inférence", "mInferLatency": "Latence inférence p95",
     "mInferDown": "Inférence en panne", "mSystemUp": "Nœud en ligne", "promHint": "Les règles de seuil sont évaluées en temps réel par Prometheus (soutenu 60 s) et poussées par Alertmanager via les canaux configurés",
-    "lcTitle": "Sécurité de connexion", "lcDefault": "Valeurs par défaut", "lcWhitelist": "Liste blanche IP", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "Si activée, seuls les IP de la liste peuvent se connecter (séparés par virgule/saut de ligne, CIDR pris en charge)", "lcUserAttempts": "Tentatives avant blocage (compte)", "lcIpAttempts": "Tentatives avant blocage (IP)", "lcLockMinutes": "Durée du blocage (min)",
+    "lcTitle": "Sécurité de connexion", "lcDefault": "Valeurs par défaut", "lcWhitelist": "Liste blanche IP", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "Si activée, seuls les IP de la liste peuvent se connecter (séparés par virgule/saut de ligne, CIDR pris en charge)", "lcUserAttempts": "Tentatives avant blocage (compte)", "lcIpAttempts": "Tentatives avant blocage (IP)", "lcLockMinutes": "Durée du blocage (min)", "rmMemberTitle": "Retirer le membre du projet", "rmMemberConfirm": "Après le retrait, {{names}} perdra l'accès à ce projet. Confirmer ?", "roleChangeConfirm": "Changer le rôle de {{user}} en {{role}} ?",
     "evNodeOnline": "Nœud rétabli", "evTrainFailed": "Échec de l'entraînement", "evEvalFailed": "Échec de l'évaluation",
     "evQuantFailed": "Échec de la quantification", "evInferDown": "Service d'inférence indisponible", "eventsTitle": "Événements d'alerte (100 derniers)",
     "colLevel": "Niveau", "colTarget": "Cible", "colTitle": "Titre",

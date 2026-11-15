@@ -205,3 +205,22 @@ def delete_eval(tid: int, db=Depends(get_db), user=Depends(get_current_user)):
     # 清理评测产物目录（result.json/日志/临时文件）
     shutil.rmtree(ev.eval_dir(tid), ignore_errors=True)
     return {"ok": True}
+
+
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/batch-delete")
+def batch_delete_evals(req: BatchDeleteReq, db=Depends(get_db), user=Depends(get_current_user)):
+    """批量删除：逐个执行单删逻辑（运行中的评测跳过并报错），返回部分结果"""
+    deleted: list[int] = []
+    failed: list[dict] = []
+    for tid in req.ids:
+        try:
+            delete_eval(tid, db=db, user=user)
+            deleted.append(tid)
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"id": tid, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Table, Tag, Button, Space, Modal, Form, Input, Popconfirm, Tooltip, message } from 'antd'
+import { useBatchDelete } from '../batch'
 import { ReloadOutlined, PlusOutlined, DeleteOutlined, DownloadOutlined, BuildOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
@@ -19,11 +20,13 @@ const SOURCE_COLOR: Record<string, string> = { official: 'green', selfbuilt: 'bl
 export default function ImagesPage() {
   const { t } = useTranslation()
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<string[]>([])
   const [busy, setBusy] = useState('')
   const [addOpen, setAddOpen] = useState(false)
   const [form] = Form.useForm()
 
   const load = () => api.get('/api/images').then((r) => setList(r.data || [])).catch(() => {})
+  const batchDel = useBatchDelete('/api/images/custom/batch-delete', () => { setSel([]); load() })
   const pulling = list.some((r) => r.pull_status?.status === 'running')
   // 有后台拉取/构建时 5s 轮询，否则 30s
   useEffect(() => { load(); const x = setInterval(load, pulling ? 5000 : 30000); return () => clearInterval(x) }, [pulling])
@@ -67,8 +70,12 @@ export default function ImagesPage() {
     <div>
       <h3 style={{ marginTop: 0 }}>{t('nav.images')}</h3>
       <Card size="small" title={t('images.title')}
-        extra={<Button size="small" icon={<ReloadOutlined />} onClick={load}>{t('common.refresh')}</Button>}>
+        extra={<Space size={8}>
+          {sel.length > 0 && <Button size="small" danger onClick={() => batchDel(sel.map((k) => Number(k.split('-').pop())))}>{t('common.batchDelete')}（{sel.length}）</Button>}
+          <Button size="small" icon={<ReloadOutlined />} onClick={load}>{t('common.refresh')}</Button>
+        </Space>}>
         <Table size="small" rowKey="key" dataSource={list} pagination={false}
+          rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k), getCheckboxProps: (r: any) => ({ disabled: r.source !== 'custom' }) }}
           columns={[
             { title: t('images.colComponent'), dataIndex: 'component', width: 190,
               render: (v: string, r: any) => {

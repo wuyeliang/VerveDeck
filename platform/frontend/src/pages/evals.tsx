@@ -7,6 +7,7 @@ import { PlusOutlined, DownloadOutlined } from '@ant-design/icons'
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 
 const ST: Record<string, string> = { pending: 'default', running: 'processing', succeeded: 'success', failed: 'error' }
 const BENCHES = ['gsm8k', 'ceval', 'arc', 'cmmlu', 'human_eval', 'mbpp']
@@ -16,6 +17,7 @@ export default function EvalCenter() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
   const [deps, setDeps] = useState<any[]>([])
@@ -31,6 +33,7 @@ export default function EvalCenter() {
     api.get('/api/evals', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId])
   useEffect(() => { load(); const t = setInterval(load, 6000); return () => clearInterval(t) }, [load])
+  const batchDel = useBatchDelete('/api/evals/batch-delete', () => { setSel([]); load() })
 
   const openWizard = async () => {
     form.resetFields()
@@ -58,10 +61,12 @@ export default function EvalCenter() {
           <Select mode="multiple" placeholder={t('evals.comparePh')} style={{ width: 320 }}
             options={list.filter((e) => e.status === 'succeeded').map((e) => ({ value: e.id, label: `#${e.id} ${e.name}` }))}
             onChange={(ids) => setCompare(list.filter((e) => ids.includes(e.id)))} />
+          {sel.length > 0 && <Button danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
           <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('evals.newEval')}</Button>
         </Space>
       </Space>
       <Table rowKey="id" size="small" dataSource={list} pagination={{ pageSize: 12 }}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
         columns={[
           { title: t('common.id'), dataIndex: 'id', width: 55 },
           { title: t('common.name'), dataIndex: 'name' },

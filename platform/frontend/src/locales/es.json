@@ -14,7 +14,7 @@
     "loading": "Cargando...", "id": "ID", "name": "Nombre", "status": "Estado", "type": "Tipo",
     "desc": "Descripción", "createTime": "Creado", "actions": "Acciones", "detail": "Detalles", "delete": "Eliminar",
     "enabled": "Activado", "disabled": "Deshabilitado", "yes": "Sí", "no": "No", "none": "Ninguno", "optional": "Opcional", "create": "Crear", "required": "Campo obligatorio", "cancel": "Cancelar", "deleted": "Eliminado", "deleteConfirm": "¿Eliminar? Esta acción no se puede deshacer", "search": "Buscar",
-    "created": "Creado", "refresh": "Actualizar"
+    "created": "Creado", "refresh": "Actualizar", "confirm": "Confirmar", "batchDelete": "Eliminación por lotes", "batchDelConfirm": "¿Eliminar los elementos seleccionados? Esta acción es irreversible.", "batchDone": "Eliminación por lotes completada"
   },
   "dashboard": {
     "gpuUtil": "Uso de GPU", "gpuMem": "Memoria GPU (GB)", "runningJobs": "Tareas en curso",
@@ -247,7 +247,7 @@
     "mGpuMemTemp": "Temp. mem.", "mGpuPower": "Potencia", "mGpuXid": "Error XID",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "Cola de inferencia", "mInferLatency": "Latencia inferencia p95",
     "mInferDown": "Inferencia caída", "mSystemUp": "Nodo en línea", "promHint": "Las reglas de umbral se evalúan en tiempo real en Prometheus (sostenido 60 s) y se envían por Alertmanager según los canales configurados",
-    "lcTitle": "Seguridad de inicio de sesión", "lcDefault": "Valores predeterminados", "lcWhitelist": "Lista blanca de IP", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "Si está activada, solo las IP de la lista pueden iniciar sesión (separadas por comas/saltos de línea, admite CIDR)", "lcUserAttempts": "Intentos antes de bloquear (cuenta)", "lcIpAttempts": "Intentos antes de bloquear (IP)", "lcLockMinutes": "Duración del bloqueo (min)",
+    "lcTitle": "Seguridad de inicio de sesión", "lcDefault": "Valores predeterminados", "lcWhitelist": "Lista blanca de IP", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "Si está activada, solo las IP de la lista pueden iniciar sesión (separadas por comas/saltos de línea, admite CIDR)", "lcUserAttempts": "Intentos antes de bloquear (cuenta)", "lcIpAttempts": "Intentos antes de bloquear (IP)", "lcLockMinutes": "Duración del bloqueo (min)", "rmMemberTitle": "Quitar miembro del proyecto", "rmMemberConfirm": "Tras la eliminación, {{names}} perderá el acceso a este proyecto. ¿Continuar?", "roleChangeConfirm": "¿Cambiar el rol de {{user}} a {{role}}?",
     "evNodeOnline": "Nodo restablecido", "evTrainFailed": "Fallo del entrenamiento", "evEvalFailed": "Fallo de evaluación",
     "evQuantFailed": "Fallo de cuantización", "evInferDown": "Servicio de inferencia no disponible", "eventsTitle": "Eventos de alerta (últimos 100)",
     "colLevel": "Nivel", "colTarget": "Objetivo", "colTitle": "Título",

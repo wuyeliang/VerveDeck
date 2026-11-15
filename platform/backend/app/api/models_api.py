@@ -347,3 +347,23 @@ def delete_model(aid: int, db=Depends(get_db), user=Depends(require_role("super_
     except Exception:
         pass
     return {"ok": True}
+
+
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/batch-delete")
+def batch_delete_models(req: BatchDeleteReq, db=Depends(get_db),
+                        user=Depends(require_role("super_admin", "tenant_admin", "developer"))):
+    """批量删除：逐个执行单删逻辑（含引用检查），返回部分结果"""
+    deleted: list[int] = []
+    failed: list[dict] = []
+    for aid in req.ids:
+        try:
+            delete_model(aid, db=db, user=user)
+            deleted.append(aid)
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"id": aid, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}

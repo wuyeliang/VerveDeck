@@ -14,7 +14,7 @@
     "loading": "加載中...", "id": "ID", "name": "名稱", "status": "狀態", "type": "類型",
     "desc": "描述", "createTime": "創建時間", "actions": "操作", "detail": "詳情", "delete": "刪除",
     "enabled": "啟用", "disabled": "禁用", "yes": "是", "no": "否", "none": "無", "optional": "可選", "create": "創建", "required": "此項為必填", "cancel": "取消", "deleted": "已刪除", "deleteConfirm": "確認刪除？此操作不可恢復",
-    "search": "搜尋", "created": "已建立", "refresh": "重新整理"
+    "search": "搜尋", "created": "已建立", "refresh": "重新整理", "confirm": "確認", "batchDelete": "批次刪除", "batchDelConfirm": "確定刪除選中項？此操作不可恢復。", "batchDone": "批次刪除完成"
   },
   "dashboard": {
     "gpuUtil": "GPU 利用率", "gpuMem": "GPU 顯存 (GB)", "runningJobs": "運行中任務",
@@ -247,7 +247,7 @@
     "mGpuMemTemp": "顯存溫度", "mGpuPower": "功耗", "mGpuXid": "XID 錯誤",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "推理排隊", "mInferLatency": "推理延遲 p95",
     "mInferDown": "推理服務宕機", "mSystemUp": "節點在線", "promHint": "閾值規則由 Prometheus 即時評估（持續 60s），經 Alertmanager 依已配置通道推送",
-    "lcTitle": "登入安全", "lcDefault": "預設值", "lcWhitelist": "IP 白名單", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "開啟後僅名單內 IP 可登入（逗號或換行分隔，支援 CIDR 網段）", "lcUserAttempts": "帳號失敗鎖定次數", "lcIpAttempts": "IP 失敗鎖定次數", "lcLockMinutes": "鎖定時長（分鐘）",
+    "lcTitle": "登入安全", "lcDefault": "預設值", "lcWhitelist": "IP 白名單", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "開啟後僅名單內 IP 可登入（逗號或換行分隔，支援 CIDR 網段）", "lcUserAttempts": "帳號失敗鎖定次數", "lcIpAttempts": "IP 失敗鎖定次數", "lcLockMinutes": "鎖定時長（分鐘）", "rmMemberTitle": "移除專案成員", "rmMemberConfirm": "移除後 {{names}} 將失去該專案存取權限，確定移除？", "roleChangeConfirm": "確定將 {{user}} 的角色改為 {{role}}？",
     "evNodeOnline": "運算節點恢復線上", "evTrainFailed": "訓練任務失敗", "evEvalFailed": "評測任務失敗",
     "evQuantFailed": "量化任務失敗", "evInferDown": "推理服務不可用", "eventsTitle": "告警事件（近 100 筆）",
     "colLevel": "級別", "colTarget": "目標", "colTitle": "標題",

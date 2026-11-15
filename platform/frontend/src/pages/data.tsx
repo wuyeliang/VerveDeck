@@ -6,6 +6,7 @@ import {
 import { PlusOutlined, EyeOutlined, CloudUploadOutlined, ThunderboltOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 
 const T_STATUS: Record<string, string> = { draft: 'default', committed: 'success', running: 'processing', done: 'success', failed: 'error', pending: 'default' }
 const FMTS = ['alpaca', 'sharegpt', 'dpo']
@@ -14,6 +15,7 @@ export default function DataCenter() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [q, setQ] = useState('')
   const [cur, setCur] = useState<any>(null)
   const [drawer, setDrawer] = useState(false)
@@ -32,6 +34,7 @@ export default function DataCenter() {
     api.get('/api/datasets', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId, q])
   useEffect(() => { load() }, [load])
+  const batchDel = useBatchDelete('/api/datasets/batch-delete', () => { setSel([]); load() })
 
   const openDs = (id: number) => {
     setDrawer(true)
@@ -95,10 +98,12 @@ export default function DataCenter() {
         <h3 style={{ margin: 0 }}>{t('data.title')}</h3>
         <Space wrap>
           <Input allowClear placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 220 }} />
+          {sel.length > 0 && <Button danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('data.newDataset')}</Button>
         </Space>
       </Space>
       <Table rowKey="id" dataSource={list} pagination={{ pageSize: 10 }}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
         columns={[
           { title: t('common.id'), dataIndex: 'id', width: 55 },
           { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true },
