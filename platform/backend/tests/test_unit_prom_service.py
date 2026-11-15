@@ -177,6 +177,65 @@ def test_am_webhook_wecom_thread(sdb, monkeypatch):
     assert len(calls) == 1 and calls[0].startswith("GpuTempHigh85")
 
 
+# ---------------- GPU 快照：心跳 reconcile（#75 回归：GPU 设备页偶现 2 卡） ----------------
+
+class _StubNode:
+    """gpu_snapshot 只读 node.name / node.meta 的最小替身"""
+    def __init__(self, names=None, name=None):
+        self.name = name or settings.node_name
+        self.meta = {"names": names} if names else {}
+
+
+def _prom_by_index(indexes, ts=1_000_000.0, val="42"):
+    """prom_instant 替身：每个索引一条序列（模拟 DCGM 多索引/多代际可见）"""
+    def _instant(expr):
+        return [{"metric": {"gpu": str(i)}, "value": [ts + i, val]} for i in indexes]
+    return _instant
+
+
+def test_gpu_snapshot_heartbeat_list_drops_stale_index(monkeypatch):
+    """心跳仅 1 卡时，DCGM 里越界的陈旧索引（旧 exporter 代际/重枚举残留）不渲染成卡"""
+    monkeypatch.setattr(ps, "prom_instant", _prom_by_index([0, 1]))
+    snap = ps.gpu_snapshot(_StubNode(names=["NVIDIA GeForce RTX 3080"]))
+    assert [g["index"] for g in snap] == [0]
+    assert snap[0]["name"] == "NVIDIA GeForce RTX 3080"
+    assert snap[0]["util"] == 42
+
+
+def test_gpu_snapshot_freshest_wins_for_dup_index(monkeypatch):
+    """同索引多序列同时可见（容器代际切换窗口）：取时间戳最新样本，口径确定"""
+    def _instant(expr):
+        return [
+            {"metric": {"gpu": "0"}, "value": [1000.0, "11"]},
+            {"metric": {"gpu": "0"}, "value": [2000.0, "33"]},
+        ]
+    monkeypatch.setattr(ps, "prom_instant", _instant)
+    snap = ps.gpu_snapshot(_StubNode(names=["GPU A"]))
+    assert len(snap) == 1 and snap[0]["util"] == 33
+
+
+def test_gpu_snapshot_remote_node_renders_no_local_dcgm(monkeypatch):
+    """注册/残留的其他节点行不渲染本集群 DCGM（防同一物理卡以多节点行重复出卡）"""
+    monkeypatch.setattr(ps, "prom_instant", _prom_by_index([0]))
+    snap = ps.gpu_snapshot(_StubNode(names=None, name="remote-node"))
+    assert snap == []
+
+
+def test_gpu_snapshot_local_node_fallback_without_names(monkeypatch):
+    """本节点心跳列表缺失（agent 未就绪窗口）：回退按 DCGM 序列推导"""
+    monkeypatch.setattr(ps, "prom_instant", _prom_by_index([0, 1]))
+    snap = ps.gpu_snapshot(_StubNode(names=None))
+    assert [g["index"] for g in snap] == [0, 1]
+
+
+def test_gpu_snapshot_names_without_dcgm_zero_rows(monkeypatch):
+    """exporter 未就绪：按心跳登记列表给空行，卡数仍等于宿主真实卡数"""
+    monkeypatch.setattr(ps, "prom_instant", lambda expr: [])
+    snap = ps.gpu_snapshot(_StubNode(names=["GPU A", "GPU B"]))
+    assert [g["index"] for g in snap] == [0, 1]
+    assert all(g["util"] == 0 for g in snap)
+
+
 # ---------------- 节点心跳 tick ----------------
 
 def test_gpu_tick_online_and_offline(sdb, monkeypatch, tmp_path):
@@ -217,3 +276,36 @@ def test_gpu_tick_no_heartbeat_file(sdb, monkeypatch, tmp_path):
     sdb.commit()
     gs.tick()
     assert sdb.query(M.GpuNode).filter_by(name=settings.node_name).first().status == "offline"
+
+
+def test_gpu_tick_gpu_list_follows_heartbeat_idempotent(sdb, monkeypatch, tmp_path):
+    """心跳 reconcile：gpu_count/meta.names 每次心跳按当前 GPU 列表对账，幂等不重复发事件"""
+    monkeypatch.setattr(gs, "SessionLocal", lambda: sdb)
+    monkeypatch.setattr(gs, "HEARTBEAT_FILE", str(tmp_path / "agent.ts"))
+    monkeypatch.setattr(gs, "NAMES_FILE", str(tmp_path / "agent.names"))
+    monkeypatch.setattr(gs, "_fail_count", 0)
+    events = []
+    monkeypatch.setattr(asvc, "trigger_event",
+                        lambda db, code, target, title, detail="": events.append(code))
+    (tmp_path / "agent.names").write_text("0,NVIDIA GeForce RTX 3080\n")
+    (tmp_path / "agent.ts").write_text(str(int(time.time())))
+
+    gs.tick()  # 节点不存在 → 自动登记
+    node = sdb.query(M.GpuNode).filter_by(name=settings.node_name).first()
+    assert node.status == "online" and node.gpu_count == 1
+    assert node.meta["names"] == ["NVIDIA GeForce RTX 3080"]
+    assert events == []  # 新登记节点本即 online，不触发恢复事件
+
+    # GPU 数量变化（加卡）：以心跳当前列表为准
+    (tmp_path / "agent.names").write_text(
+        "0,NVIDIA GeForce RTX 3080\n1,NVIDIA GeForce RTX 3080\n")
+    gs.tick()
+    node = sdb.query(M.GpuNode).filter_by(name=settings.node_name).first()
+    assert node.gpu_count == 2 and len(node.meta["names"]) == 2
+
+    # 幂等：列表不变时重复 tick 状态不变、不重复发事件
+    gs.tick()
+    node = sdb.query(M.GpuNode).filter_by(name=settings.node_name).first()
+    assert node.gpu_count == 2 and node.status == "online"
+    assert events == []
+    assert sdb.query(M.GpuNode).filter_by(name=settings.node_name).count() == 1

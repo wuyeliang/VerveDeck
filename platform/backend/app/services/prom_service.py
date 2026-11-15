@@ -120,6 +120,13 @@ def _f(v, default=0.0):
 def gpu_snapshot(node=None):
     """各 GPU 最新快照（设备表用）：DCGM 即时查询组装，口径与旧 GpuMetric 行一致。
 
+    卡片集以节点心跳登记的 GPU 列表（agent.names → node.meta.names，宿主 nvidia-smi
+    实测）为准：每次渲染按当前列表 reconcile，列表外的陈旧序列（旧 exporter 容器代际
+    残留、DCGM 重枚举的越界索引）一律不渲染成卡 —— GPU 设备页卡数恒等于宿主真实卡数。
+    仅本节点（心跳采集对象）在心跳列表缺失时（agent 未就绪/尚未心跳）回退按 DCGM
+    序列推导；其他节点（API 注册的远端节点、历史残留行）不渲染本集群 DCGM 数据，
+    防止同一张物理卡以多个节点行重复出卡。
+
     返回 [{index, name, mem_used, mem_total, util, power, temp,
             sm_clock, mem_clock, mem_temp, xid, ecc_sbe, ecc_dbe, remap,
             health, throttle}]
@@ -127,15 +134,21 @@ def gpu_snapshot(node=None):
     names = (node.meta or {}).get("names", []) if node else []
 
     def _series(expr):
-        out = {}
+        """{gpu_index: value}；同索引多条序列同时可见（exporter 容器代际切换窗口）时
+        取时间戳最新的样本，口径确定不随响应顺序漂移"""
+        best: dict[int, tuple[float, float]] = {}
         try:
             for r in prom_instant(expr):
                 g = r["metric"].get("gpu")
-                if g is not None:
-                    out[int(g)] = _f(r["value"][1])
+                if g is None:
+                    continue
+                ts = float(r["value"][0])
+                cur = best.get(int(g))
+                if cur is None or ts > cur[0]:
+                    best[int(g)] = (ts, _f(r["value"][1]))
         except Exception:
             pass
-        return out
+        return {i: v for i, (_, v) in best.items()}
 
     util = _series("DCGM_FI_DEV_GPU_UTIL")
     fb_used = _series("DCGM_FI_DEV_FB_USED")
@@ -158,9 +171,15 @@ def gpu_snapshot(node=None):
     slow_thm = _series("increase(DCGM_FI_DEV_THERMAL_VIOLATION[10m])")
     slow_brd = _series("increase(DCGM_FI_DEV_BOARD_LIMIT_VIOLATION[10m])")
     remap = _series("DCGM_FI_DEV_ROW_REMAP_PENDING")
-    indexes = sorted(set(util) | set(fb_used) | set(fb_free) | set(temp) | set(power))
-    if not indexes and names:  # exporter 未就绪时按登记型号给空行
+    if names:
+        # 心跳 reconcile：卡片集 = 心跳实测的当前 GPU 列表（幂等去重，每次渲染执行）；
+        # DCGM 序列里越界的陈旧索引被清理，列表内暂无指标的卡给空行（exporter 未就绪）
         indexes = list(range(len(names)))
+    elif node is None or node.name == settings.node_name:
+        # 仅本节点允许回退 DCGM 序列（心跳前的短暂窗口）；远端/残留节点不渲染本集群数据
+        indexes = sorted(set(util) | set(fb_used) | set(fb_free) | set(temp) | set(power))
+    else:
+        indexes = []
     out = []
     for i in indexes:
         total = fb_used.get(i, 0) + fb_free.get(i, 0)

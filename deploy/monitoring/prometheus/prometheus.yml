@@ -25,6 +25,15 @@ scrape_configs:
   - job_name: dcgm-exporter
     static_configs:
       - targets: ["dcgm-exporter:9400"]
+    # 丢弃 hostname 标签（= exporter 容器 ID，每次容器重建都会变）：否则每次部署重建都
+    # 生成整套新序列、旧序列成陈旧残留堆积（15d 保留），且新旧代际切换窗口内可能同时
+    # 可见多代序列，与 DCGM 重枚举叠加会让 GPU 设备页偶现重复卡。丢弃后跨容器代际
+    # 标签集稳定，序列不再分裂（Grafana 面板与平台代码均不依赖该标签，已核对）。
+    # 注意：hostname 是指标 payload 里的样本级标签，必须用 metric_relabel_configs 删除；
+    # 写在 relabel_configs 里只作用于 target 标签集，是 no-op（v2.55.1 对照容器实测）
+    metric_relabel_configs:
+      - action: labeldrop
+        regex: hostname
 
   # Linux 宿主系统指标（node-exporter：CPU/内存/磁盘/网络/负载）
   - job_name: node-exporter
