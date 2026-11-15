@@ -7,6 +7,7 @@
 - 版本探测：一次性容器内 import 关键包读版本号，结果缓存 5 分钟
 - 拉取/重建均为后台异步（image_ops），页面轮询 pull_status 展示进度状态
 """
+import threading
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,8 +46,9 @@ def _admin(user: User = Depends(require_role("super_admin"))):
 
 
 def _docker():
-    import docker
-    return docker.from_env()
+    # 复用全局单例 client（每次 from_env 会新建 API 会话，列表页一次请求多次调用会叠加开销）
+    from ..services.taskcontainer import docker_client
+    return docker_client()
 
 
 def _image_info(image: str) -> dict:
@@ -61,35 +63,70 @@ def _image_info(image: str) -> dict:
     return out
 
 
+# 探测结果双缓存：
+# - _probe_cache：TTL 缓存（PROBE_TTL 内直接命中，零开销）
+# - _probe_stale：无 TTL 兜底值（过期/首探未完成时立即展示旧值，避免页面空转）
+# 探测本体（起容器 import 引擎包，vllm 可达数十秒）只跑在后台线程，
+# 列表/状态接口永不阻塞——否则 backend 重启后首开页面要等 1-3 分钟才出数据。
+_probe_stale: dict[str, str] = {}
+_probe_busy: set[str] = set()
+_probe_lock = threading.Lock()
+
+
+def _probe_sync(key: str, image: str, cmd: str) -> str:
+    """执行一次真实探测并写双缓存（供后台线程/手动刷新调用，可能阻塞数十秒）"""
+    now = time.time()
+    try:
+        d = _docker()
+        if not d.images.list(image):
+            res = "镜像未拉取"
+        else:
+            # detach=True 才返回容器对象（非 detach 时 run 直接返回 bytes 输出流，
+            # 且非零退出会抛 ContainerError）；wait 结束后取日志，finally 保证清理不泄漏
+            ctr = d.containers.run(image, entrypoint=["sh", "-c", cmd],
+                                   detach=True, stdout=True, stderr=True, remove=False)
+            try:
+                try:
+                    ctr.wait(timeout=90)
+                except Exception:
+                    pass
+                out = ctr.logs(stdout=True, stderr=False).decode("utf-8", "ignore").strip()
+            finally:
+                try:
+                    ctr.remove(force=True)
+                except Exception:
+                    pass
+            res = out.split("\n")[-1].strip() if out else "探测无输出"
+    except Exception as e:
+        res = f"探测失败: {str(e)[:160]}"
+    _probe_cache[key] = (now, res)
+    _probe_stale[key] = res
+    return res
+
+
+def _probe_bg(key: str, image: str, cmd: str) -> None:
+    try:
+        _probe_sync(key, image, cmd)
+    finally:
+        with _probe_lock:
+            _probe_busy.discard(key)
+
+
 def _probe(key: str, image: str, cmd: str, force: bool = False) -> str:
     now = time.time()
     hit = _probe_cache.get(key)
     if not force and hit and now - hit[0] < PROBE_TTL:
         return hit[1]
-    try:
-        d = _docker()
-        if not d.images.list(image):
-            return "镜像未拉取"
-        # detach=True 才返回容器对象（非 detach 时 run 直接返回 bytes 输出流，
-        # 且非零退出会抛 ContainerError）；wait 结束后取日志，finally 保证清理不泄漏
-        ctr = d.containers.run(image, entrypoint=["sh", "-c", cmd],
-                               detach=True, stdout=True, stderr=True, remove=False)
-        try:
-            try:
-                ctr.wait(timeout=90)
-            except Exception:
-                pass
-            out = ctr.logs(stdout=True, stderr=False).decode("utf-8", "ignore").strip()
-        finally:
-            try:
-                ctr.remove(force=True)
-            except Exception:
-                pass
-        res = out.split("\n")[-1].strip() if out else "探测无输出"
-    except Exception as e:
-        res = f"探测失败: {str(e)[:160]}"
-    _probe_cache[key] = (now, res)
-    return res
+    if force:
+        # 用户点「探测」按钮：显式刷新，同步等待新结果
+        return _probe_sync(key, image, cmd)
+    # 缓存过期或首探未完成：立即返回（旧值兜底 / 探测中占位），后台刷新
+    with _probe_lock:
+        if key not in _probe_busy:
+            _probe_busy.add(key)
+            threading.Thread(target=_probe_bg, args=(key, image, cmd),
+                             name=f"probe-{key}", daemon=True).start()
+    return _probe_stale.get(key) or "探测中…"
 
 
 @router.get("")
@@ -223,6 +260,8 @@ def refresh(key: str, force: bool = False, user=Depends(_admin)):
         st = image_ops.ensure_image(image, force=force)
         if st == "failed":
             raise HTTPException(502, f"操作失败: {image_ops.image_status(image).get('error', '')}")
+        # 拉取/重建后旧版本值已失效：双缓存同清，下次列表触发后台重探（显示「探测中…」）
         _probe_cache.pop(key, None)
+        _probe_stale.pop(key, None)
         return {"ok": True, "action": st, "image": image}
     raise HTTPException(404, "未知镜像组件")
