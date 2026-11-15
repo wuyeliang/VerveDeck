@@ -21,6 +21,23 @@ _fail_count = 0
 
 HEARTBEAT_FILE = os.path.join(settings.data_dir, "gpu", "agent.ts")
 NAMES_FILE = os.path.join(settings.data_dir, "gpu", "agent.names")
+META_FILE = os.path.join(settings.data_dir, "gpu", "agent.meta")
+
+
+def read_meta() -> dict:
+    """agent.meta：`driver=` / `cuda=` 键值行（gpu-agent 启动时写一次）；读不到按空值兜底"""
+    out = {"driver": "", "cuda": ""}
+    try:
+        with open(META_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    if k.strip() in ("driver", "cuda"):
+                        out[k.strip()] = v.strip()
+    except (FileNotFoundError, OSError):
+        pass
+    return out
 
 
 def read_names() -> list[str]:
@@ -75,8 +92,16 @@ def tick():
             names = read_names()
             if names:
                 node.gpu_count = len(names)
-                if not node.meta or node.meta.get("names") != names:
-                    node.meta = {"names": names}
+            env = read_meta()
+            # 组装完整 meta（瞬时读空时保留既有值，避免覆盖；变化才回写，减少 JSON 变更）
+            cur = node.meta or {}
+            new_meta = {
+                "names": names if names else cur.get("names", []),
+                "driver": env["driver"] or cur.get("driver", ""),
+                "cuda": env["cuda"] or cur.get("cuda", ""),
+            }
+            if new_meta != cur:
+                node.meta = new_meta
             if node.status != "online":
                 log.info("node %s back online", node.name)
                 alert_service.trigger_event(db, "node_online", node.name,

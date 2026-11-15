@@ -190,7 +190,7 @@
     "waitReqs": "Waiting reqs", "avgLatency": "Avg latency", "monEmpty": "No monitoring data yet (scraped every 30s after start)",
     "monHint": "Source: engine metrics endpoint, ~30s scrape interval, kept 24h",
     "colImage": "Image", "colNode": "Node", "colReplicas": "Replicas",
-    "dImage": "Engine image", "formNode": "Node placement", "formNodeHint": "Single-node cluster: auto-scheduled to this node"
+    "dImage": "Engine image", "formNode": "Node placement", "formNodeHint": "Single-node cluster: auto-scheduled to this node", "advTitle": "Advanced", "advHint": "Leave blank to use engine defaults; extra_args is raw CLI passthrough (last-resort override)", "advMaxNumSeqs": "Max Concurrency (max_num_seqs)", "advDtype": "Dtype", "advServedName": "Served Model Name (served_model_name)", "advEnforceEager": "Enforce Eager", "advPrefixCaching": "Prefix Caching", "advChunkedPrefill": "Chunked Prefill", "advApiKey": "Engine API Key", "advMemFraction": "Mem Fraction Static", "advDisableCudaGraph": "Disable CUDA Graph", "advExtraArgs": "Extra Args (extra_args)", "advExtraArgsHint": "Raw CLI args appended to the launch command (highest priority, last-resort)", "advExtraArgsPh": "e.g. --max-num-batched-tokens 8192", "advDefault": "default"
   },
   "cluster": {
     "title": "Compute Scheduling & Ops", "heartbeat": "Heartbeat {{ts}}", "gpuTotal": "GPUs", "gpuUsed": "In use", "gpuFree": "Free",
@@ -204,7 +204,7 @@
     "colPriority": "Priority", "top": "Promote", "emptyQueue": "Queue is empty",
     "runningTitle": "Running Jobs", "emptyRunning": "No running jobs", "colStart": "Started",
     "nodeInfo": "Node {{node}} · Live deployments {{d}} · Training {{j}} · Self-healing: GPU agent heartbeat timeout (60s) marks the node offline, related jobs are failed and resumable",
-    "tabNodes": "Compute Nodes", "tabGpus": "GPU Devices", "tabMonitor": "Monitoring", "colNode": "Node", "colIdx": "Idx", "colMemTemp": "Mem Temp", "colClocks": "SM/Mem Clock", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Throttle", "colHealth": "Health", "colName": "GPU", "colTemp": "Temp (°C)",
+    "tabNodes": "Compute Nodes", "tabGpus": "GPU Devices", "tabMonitor": "Monitoring", "colNode": "Node", "colIdx": "Idx", "colMemTemp": "Mem Temp", "colClocks": "SM/Mem Clock", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Throttle", "colHealth": "Health", "hostMetrics": "Host Metrics", "driver": "Driver", "cuda": "CUDA", "sysNet": "Network", "colPowerLimit": "Power Limit", "colRemap": "Remap", "colName": "GPU", "colTemp": "Temp (°C)",
     "systemTitle": "Host system metrics (last 1h)", "noSysData": "No system metrics yet (gpu-agent collecting…)", "sysCpu": "CPU",
     "sysMem": "Memory", "sysDisk": "Disk", "sysLoad": "Load (1min)",
     "sysNetRx": "Net rx", "sysNetTx": "Net tx", "sysMemDetail": "Memory used {{u}}/{{tgb}}GB",

@@ -86,6 +86,13 @@ def _wait_engine_image(dep: Deployment, db2) -> str:
         time.sleep(10)
 
 
+def _served_name(d: Deployment) -> str:
+    """引擎实际对外模型名（--served-model-name）：高级参数覆盖，否则回退部署名。
+    影响引擎 /v1/models 与平台代理路由，前端代码示例/代理转发据此联动。"""
+    adv = getattr(d, "advanced", None) or {}
+    return (adv.get("served_model_name") or "").strip() or d.name
+
+
 def _brief(d: Deployment, db: Session) -> dict:
     asset = db.get(ModelAsset, d.model_asset_id)
     return {
@@ -96,6 +103,8 @@ def _brief(d: Deployment, db: Session) -> dict:
         "tensor_parallel": d.tensor_parallel, "max_model_len": d.max_model_len,
         "gpu_mem_util": d.gpu_mem_util, "enable_lora": d.enable_lora,
         "lora_adapters": d.lora_adapters or [], "replicas": d.replicas,
+        "advanced": d.advanced or {},
+        "served_model_name": _served_name(d),
         "endpoint": d.endpoint, "status": d.status, "error": d.error,
         "description": d.description or "",
         "created_at": str(d.created_at),
@@ -118,6 +127,7 @@ class DeployReq(BaseModel):
     lora_adapters: list[dict] = []
     replicas: int = 1
     description: str = ""
+    advanced: dict = {}  # 引擎高级参数（留空=引擎默认），见 Deployment.advanced
 
 
 @router.post("/api/inference/deployments")
@@ -136,7 +146,7 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         max_model_len=req.max_model_len, gpu_mem_util=req.gpu_mem_util,
         enable_lora=req.enable_lora, lora_adapters=req.lora_adapters,
         replicas=max(1, req.replicas), description=req.description,
-        status="creating", created_by=user.id,
+        advanced=req.advanced or {}, status="creating", created_by=user.id,
     )
     db.add(d)
     db.commit()
@@ -442,11 +452,22 @@ async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends
         raise HTTPException(401, "认证失败：使用 x-api-key 或 Bearer JWT")
 
     body = await request.body()
+    # 联动：高级参数 served_model_name 决定引擎 /v1/models 与接受的 model 名。
+    # 平台代理按 deploy_name 路由，转发前把请求体 model 归一到引擎实际模型名，
+    # 客户端可继续用 /v1/<部署名> 路径（存量部署 served==部署名，此处为 no-op）。
+    import json as _json
+    payload = {}
+    served = _served_name(dep)
+    try:
+        payload = _json.loads(body) if body else {}
+        if isinstance(payload, dict) and payload.get("model") and payload.get("model") != served:
+            payload["model"] = served
+            body = _json.dumps(payload).encode()
+    except Exception:
+        payload = {}
     # 输入护栏
     try:
-        import json as _json
-        payload = _json.loads(body) if body else {}
-        msgs = payload.get("messages", [])
+        msgs = (payload.get("messages") or []) if isinstance(payload, dict) else []
         in_text = " ".join(m.get("content", "") for m in msgs if isinstance(m, dict))
         hit = _check_guard(db, project_id, in_text, "input")
         if hit:

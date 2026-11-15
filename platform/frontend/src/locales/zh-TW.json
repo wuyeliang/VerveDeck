@@ -190,7 +190,7 @@
     "waitReqs": "排隊請求", "avgLatency": "平均延遲", "monEmpty": "暫無監控資料（服務啟動後每 30 秒採集一次）",
     "monHint": "資料來源：引擎指標端點，約 30 秒採集一次，保留 24 小時",
     "colImage": "鏡像", "colNode": "節點", "colReplicas": "副本",
-    "dImage": "引擎鏡像", "formNode": "節點放置", "formNodeHint": "單節點叢集：自動調度至本機"
+    "dImage": "引擎鏡像", "formNode": "節點放置", "formNodeHint": "單節點叢集：自動調度至本機", "advTitle": "進階參數", "advHint": "留空即用引擎預設值；extra_args 為原始命令列參數透傳（兜底一切）", "advMaxNumSeqs": "最大並發 (max_num_seqs)", "advDtype": "資料型別 dtype", "advServedName": "對外模型名 (served_model_name)", "advEnforceEager": "強制 eager", "advPrefixCaching": "前綴快取", "advChunkedPrefill": "分塊預填充", "advApiKey": "引擎 API Key", "advMemFraction": "顯存靜態佔比", "advDisableCudaGraph": "停用 CUDA Graph", "advExtraArgs": "額外參數 extra_args", "advExtraArgsHint": "原始命令列參數，附加至啟動命令末尾（最高優先順序，兜底一切）", "advExtraArgsPh": "如 --max-num-batched-tokens 8192", "advDefault": "預設"
   },
   "cluster": {
     "title": "算力調度與運維", "heartbeat": "心跳 {{ts}}", "gpuTotal": "GPU 總數", "gpuUsed": "佔用", "gpuFree": "空閒",
@@ -204,7 +204,7 @@
     "colPriority": "優先級", "top": "置頂", "emptyQueue": "隊列為空",
     "runningTitle": "運行中任務", "emptyRunning": "無運行任務", "colStart": "開始",
     "nodeInfo": "節點 {{node}} · 在線部署 {{d}} · 訓練中 {{j}} · 故障自愈：GPU agent 心跳 60s 超時自動判離線，關聯任務標記失敗並可斷點續訓",
-    "tabNodes": "計算節點", "tabGpus": "GPU 設備", "tabMonitor": "監控大屏", "colNode": "節點", "colIdx": "編號", "colMemTemp": "顯存溫度", "colClocks": "SM/顯存時鐘", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降頻", "colHealth": "健康度", "colName": "型號", "colTemp": "溫度",
+    "tabNodes": "計算節點", "tabGpus": "GPU 設備", "tabMonitor": "監控大屏", "colNode": "節點", "colIdx": "編號", "colMemTemp": "顯存溫度", "colClocks": "SM/顯存時鐘", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降頻", "colHealth": "健康度", "hostMetrics": "宿主指標", "driver": "驅動", "cuda": "CUDA", "sysNet": "網路", "colPowerLimit": "功耗限額", "colRemap": "Remap", "colName": "型號", "colTemp": "溫度",
     "systemTitle": "主機系統指標（近 1 小時）", "noSysData": "尚無系統指標資料（gpu-agent 採集中…）", "sysCpu": "CPU",
     "sysMem": "記憶體", "sysDisk": "磁碟", "sysLoad": "負載(1分)",
     "sysNetRx": "網路收", "sysNetTx": "網路發", "sysMemDetail": "記憶體已用 {{u}}/{{tgb}}GB",

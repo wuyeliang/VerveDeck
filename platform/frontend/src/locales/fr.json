@@ -190,7 +190,7 @@
     "waitReqs": "Req. en attente", "avgLatency": "Latence moy.", "monEmpty": "Pas encore de données (recueillies toutes les 30 s)",
     "monHint": "Source : point de terminaison metrics du moteur, ~30 s, conservé 24 h",
     "colImage": "Image", "colNode": "Nœud", "colReplicas": "Répliques",
-    "dImage": "Image d'engine", "formNode": "Placement du nœud", "formNodeHint": "Cluster mono-nœud : planification automatique sur ce nœud"
+    "dImage": "Image d'engine", "formNode": "Placement du nœud", "formNodeHint": "Cluster mono-nœud : planification automatique sur ce nœud", "advTitle": "Paramètres avancés", "advHint": "Laisser vide pour les valeurs par défaut du moteur ; extra_args = arguments CLI bruts transmis en fin de ligne (dernier recours)", "advMaxNumSeqs": "Concurrence max (max_num_seqs)", "advDtype": "Type de données dtype", "advServedName": "Nom du modèle servi (served_model_name)", "advEnforceEager": "Forcer eager", "advPrefixCaching": "Mise en cache préfixe", "advChunkedPrefill": "Préremplissage par morceaux", "advApiKey": "Clé API moteur", "advMemFraction": "Fraction mémoire statique", "advDisableCudaGraph": "Désactiver CUDA Graph", "advExtraArgs": "Arguments supplémentaires extra_args", "advExtraArgsHint": "Arguments CLI bruts ajoutés à la fin de la commande de lancement (priorité max, dernier recours)", "advExtraArgsPh": "ex. --max-num-batched-tokens 8192", "advDefault": "défaut"
   },
   "cluster": {
     "title": "Ordonnancement et exploitation", "heartbeat": "Cœur {{ts}}", "gpuTotal": "GPU au total", "gpuUsed": "Occupés", "gpuFree": "Libres",
@@ -204,7 +204,7 @@
     "colPriority": "Priorité", "top": "Promouvoir", "emptyQueue": "File vide",
     "runningTitle": "Tâches en cours", "emptyRunning": "Aucune tâche en cours", "colStart": "Début",
     "nodeInfo": "Nœud {{node}} · Déploiements actifs {{d}} · En formation {{j}} · Auto-guérison : timeout du cœur GPU (60 s) → nœud hors ligne, tâches associées marquées en échec et reprenables",
-    "tabNodes": "Nœuds de calcul", "tabGpus": "Périphériques GPU", "tabMonitor": "Supervision", "colNode": "Nœud", "colIdx": "Idx", "colMemTemp": "Temp. mémoire", "colClocks": "Horloge SM/mém", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Videm", "colHealth": "Santé", "colName": "GPU", "colTemp": "Temp. (°C)",
+    "tabNodes": "Nœuds de calcul", "tabGpus": "Périphériques GPU", "tabMonitor": "Supervision", "colNode": "Nœud", "colIdx": "Idx", "colMemTemp": "Temp. mémoire", "colClocks": "Horloge SM/mém", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "Videm", "colHealth": "Santé", "hostMetrics": "Métriques hôte", "driver": "Pilote", "cuda": "CUDA", "sysNet": "Réseau", "colPowerLimit": "Limite puissance", "colRemap": "Remap", "colName": "GPU", "colTemp": "Temp. (°C)",
     "systemTitle": "Métriques du système hôte (1h)", "noSysData": "Pas encore de métriques (collecte gpu-agent…)", "sysCpu": "CPU",
     "sysMem": "Mémoire", "sysDisk": "Disque", "sysLoad": "Charge (1min)",
     "sysNetRx": "Réseau rx", "sysNetTx": "Réseau tx", "sysMemDetail": "Mémoire utilisée {{u}}/{{tgb}}Go",

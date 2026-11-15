@@ -55,7 +55,11 @@ def _migrate_columns():
                 ("kind", "VARCHAR(16) NOT NULL DEFAULT 'train'"),
                 ("scenario", "VARCHAR(16) NOT NULL DEFAULT 'text'"),
             ],
-            "deployments": [("description", "TEXT NOT NULL DEFAULT ''")],
+            "deployments": [
+                ("description", "TEXT NOT NULL DEFAULT ''"),
+                # 推理高级参数（#96）：JSON 兜底，留空=引擎默认，存量部署行为不变
+                ("advanced", f"{json_type} NOT NULL DEFAULT '{{}}'"),
+            ],
             "users": [("must_change_password", "BOOLEAN NOT NULL DEFAULT 'false'")],
             "model_assets": [
                 ("category", "VARCHAR(64) NOT NULL DEFAULT ''"),

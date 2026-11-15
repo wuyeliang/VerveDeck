@@ -190,7 +190,7 @@
     "waitReqs": "待ちリクエスト", "avgLatency": "平均遅延", "monEmpty": "監視データなし（サービス起動後 30 秒ごとに収集）",
     "monHint": "出典：エンジン metrics エンドポイント、約 30 秒間隔、24 時間保持",
     "colImage": "イメージ", "colNode": "ノード", "colReplicas": "レプリカ",
-    "dImage": "エンジンイメージ", "formNode": "ノード配置", "formNodeHint": "単一ノードクラスター：このノードに自動スケジューリング"
+    "dImage": "エンジンイメージ", "formNode": "ノード配置", "formNodeHint": "単一ノードクラスター：このノードに自動スケジューリング", "advTitle": "詳細設定", "advHint": "空欄の場合はエンジン既定値を使用。extra_args は生 CLI 引数の透過（最終上書き）", "advMaxNumSeqs": "最大同時実行数 (max_num_seqs)", "advDtype": "データ型 dtype", "advServedName": "提供モデル名 (served_model_name)", "advEnforceEager": "強制 eager", "advPrefixCaching": "プレフィックスキャッシュ", "advChunkedPrefill": "チャンク分割プリフィル", "advApiKey": "エンジン API キー", "advMemFraction": "メモリ静的比率", "advDisableCudaGraph": "CUDA Graph 無効化", "advExtraArgs": "追加引数 extra_args", "advExtraArgsHint": "生 CLI 引数を起動コマンド末尾に追記（最優先、最終上書き）", "advExtraArgsPh": "例: --max-num-batched-tokens 8192", "advDefault": "既定"
   },
   "cluster": {
     "title": "計算スケジューリングと運用", "heartbeat": "ハートビート {{ts}}", "gpuTotal": "GPU 総数", "gpuUsed": "使用中", "gpuFree": "空き",
@@ -204,7 +204,7 @@
     "colPriority": "優先度", "top": "最上位", "emptyQueue": "キューは空です",
     "runningTitle": "実行中ジョブ", "emptyRunning": "実行中ジョブなし", "colStart": "開始",
     "nodeInfo": "ノード {{node}} · オンラインデプロイ {{d}} · トレーニング中 {{j}} · 自動修復：GPU agent ハートビート 60s 超過でオフライン判定、関連ジョブは失敗扱いで再開可能",
-    "tabNodes": "計算ノード", "tabGpus": "GPU デバイス", "tabMonitor": "モニター", "colNode": "ノード", "colIdx": "No.", "colMemTemp": "メモリ温度", "colClocks": "SM/メモリクロック", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "スロットル", "colHealth": "健全性", "colName": "GPU", "colTemp": "温度 (°C)",
+    "tabNodes": "計算ノード", "tabGpus": "GPU デバイス", "tabMonitor": "モニター", "colNode": "ノード", "colIdx": "No.", "colMemTemp": "メモリ温度", "colClocks": "SM/メモリクロック", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "スロットル", "colHealth": "健全性", "hostMetrics": "ホスト指標", "driver": "ドライバー", "cuda": "CUDA", "sysNet": "ネットワーク", "colPowerLimit": "電力制限", "colRemap": "リマップ", "colName": "GPU", "colTemp": "温度 (°C)",
     "systemTitle": "ホストシステム指標（過去1時間）", "noSysData": "システム指標なし（gpu-agent 収集中…）", "sysCpu": "CPU",
     "sysMem": "メモリ", "sysDisk": "ディスク", "sysLoad": "負荷(1分)",
     "sysNetRx": "受信", "sysNetTx": "送信", "sysMemDetail": "メモリ使用 {{u}}/{{tgb}}GB",

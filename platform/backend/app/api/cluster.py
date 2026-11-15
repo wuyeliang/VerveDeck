@@ -63,10 +63,14 @@ def _gpu_series(exprs: list[tuple[str, str]], minutes: int) -> dict[str, list[di
 def nodes(db=Depends(get_db), user=Depends(get_current_user)):
     out = []
     for n in db.query(GpuNode).all():
+        meta = n.meta or {}
         out.append({
             "id": n.id, "name": n.name, "gpu_count": n.gpu_count, "status": n.status,
             "last_heartbeat": str(n.last_heartbeat) if n.last_heartbeat else "",
-            "meta": n.meta,
+            "meta": meta,
+            "driver": meta.get("driver", ""),   # gpu-agent 采集（nvidia-smi）
+            "cuda": meta.get("cuda", ""),
+            "host": prom_service.host_snapshot(n.name),  # 宿主 CPU/内存/磁盘/网络
             "gpus": prom_service.gpu_snapshot(n),
             "gpu_in_use": scheduler._gpu_in_use(db),
         })

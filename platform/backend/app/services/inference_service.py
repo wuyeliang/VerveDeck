@@ -9,6 +9,7 @@
 import json
 import os
 import re
+import shlex
 import time
 import logging
 import threading
@@ -38,15 +39,54 @@ def deployment_container_name(dep: Deployment, replica: int = 0) -> str:
     return f"ft-infer-{dep.id}" if dep.replicas <= 1 else f"ft-infer-{dep.id}-r{replica}"
 
 
+def _adv(dep: Deployment) -> dict:
+    """高级参数（Deployment.advanced）；非 dict 视为空（留空=引擎默认，存量部署行为不变）"""
+    a = getattr(dep, "advanced", None) or {}
+    return a if isinstance(a, dict) else {}
+
+
+def _served_name(dep: Deployment) -> str:
+    """引擎实际 --served-model-name：高级参数覆盖，否则回退部署名（与 api/inference._served_name 同口径）"""
+    return (_adv(dep).get("served_model_name") or "").strip() or dep.name
+
+
+_DTYPE_CLI = {"auto": "auto", "bfloat16": "bfloat16", "bf16": "bfloat16",
+              "float16": "float16", "fp16": "float16"}
+
+
+def _dtype_cli(v) -> str:
+    """前端 dtype(auto/bf16/fp16) → vLLM --dtype 取值；非法/留空返回 ''（不加该参数）"""
+    return _DTYPE_CLI.get(str(v or "").strip().lower(), "")
+
+
+def _truthy(v) -> bool:
+    return bool(v) and str(v).lower() not in ("0", "false", "no", "off", "")
+
+
+def _extra_argv(raw) -> list[str]:
+    """extra_args 原始命令行 → argv token 列表（SGLang 走 argv；引号不配对退化为空格切分）"""
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    try:
+        return shlex.split(raw)
+    except ValueError:
+        return raw.split()
+
+
 def build_cmd(dep: Deployment, model_path: str) -> list[str]:
+    adv = _adv(dep)
+    served = _served_name(dep)
     if dep.engine == "sglang":
         # 官方 sglang 镜像内只有 python3（无 python 别名）
         cmd = ["python3", "-m", "sglang.launch_server",
                "--model-path", model_path,
                "--host", "0.0.0.0", "--port", "8000",
-               "--served-model-name", dep.name,
-               "--context-length", str(dep.max_model_len),
-               "--mem-fraction-static", str(min(dep.gpu_mem_util, 0.9))]
+               "--served-model-name", served,
+               "--context-length", str(dep.max_model_len)]
+        # 显存静态占比：高级参数优先，否则回退 gpu_mem_util（与旧行为一致）
+        mf = adv.get("mem_fraction_static")
+        cmd += ["--mem-fraction-static", str(mf if mf not in (None, "") else min(dep.gpu_mem_util, 0.9))]
         if dep.quantization and dep.quantization != "none":
             cmd += ["--quantization", dep.quantization]
         if dep.tensor_parallel > 1:
@@ -55,21 +95,43 @@ def build_cmd(dep: Deployment, model_path: str) -> list[str]:
             cmd.append("--enable-lora")
         for a in (dep.lora_adapters or []):
             cmd += [f"--lora-paths", f"{a['name']}={a['path']}"]
+        if _truthy(adv.get("disable_cuda_graph")):
+            cmd.append("--disable-cuda-graph")
+        cmd += _extra_argv(adv.get("extra_args"))  # 原始命令行透传（兜底一切）
         return cmd
     # vllm：参数全部拼进 bash -lc 的脚本串（append 成独立 argv 元素不会被 bash -lc 执行）
     parts = [f"vllm serve {model_path}",
              "--host 0.0.0.0 --port 8000",
-             f"--served-model-name {dep.name}",
+             f"--served-model-name {served}",
              f"--max-model-len {dep.max_model_len}",
              f"--gpu-memory-utilization {dep.gpu_mem_util}"]
     if dep.quantization and dep.quantization != "none":
         parts.append(f"--quantization {dep.quantization}")
     if dep.tensor_parallel > 1:
         parts.append(f"--tensor-parallel-size {dep.tensor_parallel}")
+    # ---- 高级参数（留空=引擎默认）----
+    mns = adv.get("max_num_seqs")
+    if mns not in (None, ""):
+        parts.append(f"--max-num-seqs {mns}")
+    dt = _dtype_cli(adv.get("dtype"))
+    if dt:
+        parts.append(f"--dtype {dt}")
+    if _truthy(adv.get("enforce_eager")):
+        parts.append("--enforce-eager")
+    if _truthy(adv.get("enable_prefix_caching")):
+        parts.append("--enable-prefix-caching")
+    if _truthy(adv.get("enable_chunked_prefill")):
+        parts.append("--enable-chunked-prefill")
+    api_key = str(adv.get("api_key") or "").strip()
+    if api_key:
+        parts.append(f'--api-key {api_key}')
     if dep.enable_lora:
         parts.append("--enable-lora")
         for a in (dep.lora_adapters or []):
             parts.append(f"--lora-modules {a['name']}={a['path']}")
+    extra = str(adv.get("extra_args") or "").strip()
+    if extra:
+        parts.append(extra)  # 原始命令行透传（bash -lc 内直接生效，兜底一切）
     return ["bash", "-lc", " ".join(parts) + " 2>&1"]
 
 

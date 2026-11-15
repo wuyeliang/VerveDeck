@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, Drawer,
   Descriptions, message, Popconfirm, Card, Tabs, Row, Col, Statistic,
+  Collapse, Switch,
 } from 'antd'
 import {
   PlusOutlined, PoweroffOutlined, PlayCircleOutlined, CopyOutlined,
@@ -86,7 +87,7 @@ export default function Inference() {
     setChatLoading(true)
     try {
       const r = await api.post(`/v1/${detail.name}/chat/completions`, {
-        model: detail.name, messages: msgs, stream: false,
+        model: detail.served_model_name || detail.name, messages: msgs, stream: false,
       })
       setChat([...msgs, { role: 'assistant', content: r.data.choices?.[0]?.message?.content || '' }])
     } catch (e: any) {
@@ -109,11 +110,13 @@ export default function Inference() {
   }
 
   // 服务调用代码示例
+  // 路径按部署名路由（/v1/<部署名>），但请求体 model 字段用引擎实际模型名（served_model_name，默认=部署名）
   const base = detail ? `${location.origin}/v1/${detail.name}` : ''
+  const servedName = detail?.served_model_name || detail?.name || ''
   const codeCurl = `curl ${base}/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: <PROJECT_API_KEY>" \\
-  -d '{"model": "${detail?.name || ''}", "messages": [{"role": "user", "content": "你好"}]}'`
+  -d '{"model": "${servedName}", "messages": [{"role": "user", "content": "你好"}]}'`
   const codePy = `from openai import OpenAI
 
 client = OpenAI(
@@ -121,7 +124,7 @@ client = OpenAI(
     api_key="<PROJECT_API_KEY>",   # 或传 JWT 并改用 authorization
 )
 resp = client.chat.completions.create(
-    model="${detail?.name || ''}",
+    model="${servedName}",
     messages=[{"role": "user", "content": "你好"}],
 )
 print(resp.choices[0].message.content)`
@@ -132,7 +135,7 @@ const client = new OpenAI({
   apiKey: "<PROJECT_API_KEY>",
 });
 const resp = await client.chat.completions.create({
-  model: "${detail?.name || ''}",
+  model: "${servedName}",
   messages: [{ role: "user", content: "你好" }],
 });
 console.log(resp.choices[0].message.content)`
@@ -187,12 +190,27 @@ console.log(resp.choices[0].message.content)`
             const a = loraModels.find((x: any) => x.id === aid)
             if (a) adapters.push({ name: a.name.replace(/[^a-zA-Z0-9_-]/g, '_'), path: a.path })
           })
+          // 高级参数：留空=引擎默认（存量行为不变）；按引擎取对应字段，extra_args 原始透传
+          const adv: Record<string, any> = {}
+          if (v.engine === 'vllm') {
+            if (v.adv_max_num_seqs != null && v.adv_max_num_seqs !== '') adv.max_num_seqs = v.adv_max_num_seqs
+            if (v.adv_dtype) adv.dtype = v.adv_dtype
+            if (v.adv_enforce_eager) adv.enforce_eager = true
+            if (v.adv_prefix_caching) adv.enable_prefix_caching = true
+            if (v.adv_chunked_prefill) adv.enable_chunked_prefill = true
+            if (v.adv_served_model_name?.trim()) adv.served_model_name = v.adv_served_model_name.trim()
+            if (v.adv_api_key?.trim()) adv.api_key = v.adv_api_key.trim()
+          } else {
+            if (v.adv_mem_fraction_static != null && v.adv_mem_fraction_static !== '') adv.mem_fraction_static = v.adv_mem_fraction_static
+            if (v.adv_disable_cuda_graph) adv.disable_cuda_graph = true
+          }
+          if (v.adv_extra_args?.trim()) adv.extra_args = v.adv_extra_args.trim()
           await api.post('/api/inference/deployments', {
             project_id: projectId, name: v.name, model_asset_id: v.model_asset_id,
             engine: v.engine, quantization: v.quantization, tensor_parallel: v.tensor_parallel,
             max_model_len: v.max_model_len, gpu_mem_util: v.gpu_mem_util,
             enable_lora: adapters.length > 0, lora_adapters: adapters, replicas: v.replicas,
-            description: v.description || '',
+            description: v.description || '', advanced: adv,
           })
           message.success(t('infer.created'))
           setOpen(false); load()
@@ -245,6 +263,58 @@ console.log(resp.choices[0].message.content)`
               <Select mode="multiple" options={loraModels.map((m: any) => ({ value: m.id, label: m.name }))} placeholder={t('common.optional')} />
             </Form.Item>
           </InferSection>
+          <Collapse ghost size="small" style={{ marginTop: 4, background: 'transparent' }} items={[{
+            key: 'adv',
+            label: <span style={{ fontWeight: 600 }}>{t('infer.advTitle')}</span>,
+            children: (
+              <div>
+                <div style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>{t('infer.advHint')}</div>
+                {eng === 'vllm' ? (
+                  <>
+                    <Row gutter={12}>
+                      <Col span={8}>
+                        <Form.Item name="adv_max_num_seqs" label={t('infer.advMaxNumSeqs')}>
+                          <InputNumber min={1} step={1} placeholder={t('infer.advDefault')} style={{ width: '100%' }} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item name="adv_dtype" label={t('infer.advDtype')}>
+                          <Select allowClear placeholder={t('infer.advDefault')} options={[
+                            { value: 'auto', label: 'auto' }, { value: 'bf16', label: 'bf16' }, { value: 'fp16', label: 'fp16' },
+                          ]} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item name="adv_served_model_name" label={t('infer.advServedName')}>
+                          <Input placeholder={t('infer.advDefault')} maxLength={120} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    <Row gutter={12}>
+                      <Col span={8}><Form.Item name="adv_enforce_eager" label={t('infer.advEnforceEager')} valuePropName="checked"><Switch /></Form.Item></Col>
+                      <Col span={8}><Form.Item name="adv_prefix_caching" label={t('infer.advPrefixCaching')} valuePropName="checked"><Switch /></Form.Item></Col>
+                      <Col span={8}><Form.Item name="adv_chunked_prefill" label={t('infer.advChunkedPrefill')} valuePropName="checked"><Switch /></Form.Item></Col>
+                    </Row>
+                    <Form.Item name="adv_api_key" label={t('infer.advApiKey')}>
+                      <Input.Password placeholder={t('infer.advDefault')} autoComplete="off" maxLength={128} />
+                    </Form.Item>
+                  </>
+                ) : (
+                  <Row gutter={12}>
+                    <Col span={12}>
+                      <Form.Item name="adv_mem_fraction_static" label={t('infer.advMemFraction')}>
+                        <InputNumber step={0.05} min={0.3} max={0.95} placeholder={t('infer.advDefault')} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}><Form.Item name="adv_disable_cuda_graph" label={t('infer.advDisableCudaGraph')} valuePropName="checked"><Switch /></Form.Item></Col>
+                  </Row>
+                )}
+                <Form.Item name="adv_extra_args" label={t('infer.advExtraArgs')} tooltip={t('infer.advExtraArgsHint')} style={{ marginTop: 8 }}>
+                  <Input.TextArea placeholder={t('infer.advExtraArgsPh')} autoSize={{ minRows: 1, maxRows: 3 }} />
+                </Form.Item>
+              </div>
+            ),
+          }]} />
         </Form>
       </Modal>
 

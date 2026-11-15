@@ -197,6 +197,11 @@ class Deployment(Base):
     gpu_mem_util: Mapped[float] = mapped_column(Float, default=0.85)
     enable_lora: Mapped[bool] = mapped_column(Boolean, default=False)
     lora_adapters: Mapped[list] = mapped_column(JSON, default=list)  # [{name, path}]
+    # 引擎高级参数（TrainingJob.hyperparams 同款：JSON 兜底，留空=引擎默认，存量部署行为不变）。
+    # vLLM: max_num_seqs / dtype / enforce_eager / enable_prefix_caching / enable_chunked_prefill /
+    #       served_model_name / api_key / extra_args（原始命令行透传）
+    # SGLang: mem_fraction_static / disable_cuda_graph / extra_args
+    advanced: Mapped[dict] = mapped_column(JSON, default=dict)
     port: Mapped[int] = mapped_column(Integer, default=0)  # 容器内端口(固定8000), host 端口池位
     endpoint: Mapped[str] = mapped_column(String(128), default="")  # ip:port
     replicas: Mapped[int] = mapped_column(Integer, default=1)

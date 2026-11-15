@@ -11,6 +11,50 @@ const healthTag = (health: number, t: any) => (
   </Tag>
 )
 
+/** 网络速率（字节/秒）→ 人类可读 */
+const fmtBps = (v: number | null | undefined): string => {
+  if (v == null) return '-'
+  const kb = v / 1024
+  if (kb < 1024) return `${kb.toFixed(1)} KB/s`
+  const mb = kb / 1024
+  if (mb < 1024) return `${mb.toFixed(1)} MB/s`
+  return `${(mb / 1024).toFixed(2)} GB/s`
+}
+
+const barPct = (v: number | null | undefined) => (v == null ? 0 : Math.max(0, Math.min(100, Math.round(v))))
+
+/** 节点卡宿主四指标（CPU / 内存 / 磁盘 / 网络收发），数据源 node-exporter */
+function HostMetrics({ host, t }: { host: any; t: any }) {
+  if (!host) return null
+  const pcts = [
+    { k: 'cpu', label: t('cluster.sysCpu'), v: host.cpu_pct },
+    { k: 'mem', label: t('cluster.sysMem'), v: host.mem_pct },
+    { k: 'disk', label: t('cluster.sysDisk'), v: host.disk_pct },
+  ]
+  const rx = host.net_rx_bps, tx = host.net_tx_bps
+  const netStr = (rx == null && tx == null) ? '-' : `${fmtBps(rx)} / ${fmtBps(tx)}`
+  return (
+    <div style={{ marginTop: 8, background: '#fafafa', borderRadius: 6, padding: '6px 8px 2px' }}>
+      <div style={{ fontSize: 11, color: '#bbb', marginBottom: 2 }}>{t('cluster.hostMetrics')}</div>
+      <Row gutter={8}>
+        {pcts.map((it) => (
+          <Col span={6} key={it.k}>
+            <div style={{ fontSize: 11, color: '#999' }}>{it.label}</div>
+            <Progress percent={barPct(it.v)} size="small"
+              status={it.v != null && it.v > 90 ? 'exception' : undefined}
+              format={() => <span style={{ fontSize: 11 }}>{it.v == null ? '-' : `${Math.round(it.v)}%`}</span>} />
+          </Col>
+        ))}
+        <Col span={6}>
+          <div style={{ fontSize: 11, color: '#999' }}>{t('cluster.sysNet')}</div>
+          <div style={{ fontSize: 12, color: '#333', lineHeight: '14px', marginTop: 4,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={netStr}>{netStr}</div>
+        </Col>
+      </Row>
+    </div>
+  )
+}
+
 export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' | 'monitor' }) {
   const nav = useNavigate()
   const { t } = useTranslation()
@@ -56,6 +100,14 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
                 <Col span={8}><Statistic title={t('cluster.gpuUsed')} value={n.gpu_in_use} valueStyle={{ color: '#cf1322' }} /></Col>
                 <Col span={8}><Statistic title={t('cluster.gpuFree')} value={Math.max(0, n.gpu_count - n.gpu_in_use)} valueStyle={{ color: '#3f8600' }} /></Col>
               </Row>
+              {(n.driver || n.cuda) && (
+                <div style={{ fontSize: 11, color: '#999', margin: '6px 0 0' }}>
+                  {n.driver ? `${t('cluster.driver')}: ${n.driver}` : ''}
+                  {n.driver && n.cuda ? ' · ' : ''}
+                  {n.cuda ? `${t('cluster.cuda')}: ${n.cuda}` : ''}
+                </div>
+              )}
+              <HostMetrics host={n.host} t={t} />
               {(n.gpus || []).map((g: any) => (
                 <div key={g.index} style={{ marginTop: 8 }}>
                   <div style={{ fontSize: 12, color: '#666' }}>{g.name ? `${g.name} · ` : ''}{t('cluster.gpuLine', { idx: g.index, util: Math.round(g.util || 0), u: (g.mem_used / 1024).toFixed(1), t: (g.mem_total / 1024).toFixed(0), p: Math.round(g.power || 0), c: Math.round(g.temp || 0) })}</div>
@@ -144,13 +196,26 @@ function GpusView({ gpus }: { gpus: any[] }) {
         { title: t('cluster.colIdx'), dataIndex: 'index', width: 60 },
         { title: t('cluster.colName'), dataIndex: 'name', width: 170, render: (v: string) => v || '-' },
         { title: t('cluster.chartUtil'), dataIndex: 'util', width: 140, render: (v: number) => <Progress percent={Math.round(v || 0)} size="small" /> },
-        { title: t('cluster.chartMem'), width: 130, render: (_: any, r: any) => `${(r.mem_used / 1024).toFixed(1)} / ${(r.mem_total / 1024).toFixed(0)} GB` },
+        { title: t('cluster.chartMem'), width: 170, render: (_: any, r: any) => {
+            const pct = r.mem_total ? Math.round((r.mem_used / r.mem_total) * 100) : 0
+            return (
+              <div>
+                <div style={{ fontSize: 12, marginBottom: 2 }}>{(r.mem_used / 1024).toFixed(1)} / {(r.mem_total / 1024).toFixed(0)} GB</div>
+                <Progress percent={pct} size="small" showInfo={false} status={pct > 95 ? 'exception' : undefined} />
+              </div>
+            )
+          } },
         { title: t('cluster.chartPower'), dataIndex: 'power', width: 90, render: (v: number) => `${Math.round(v || 0)} W` },
+        { title: t('cluster.colPowerLimit'), width: 90, render: (_: any, r: any) => (r.power_limit ? `${Math.round(r.power_limit)} W` : '-') },
         { title: t('cluster.colTemp'), dataIndex: 'temp', width: 90, render: (v: number) => `${Math.round(v || 0)} °C` },
         { title: t('cluster.colMemTemp'), width: 90, render: (_: any, r: any) => r.mem_temp ? `${Math.round(r.mem_temp)} °C` : '-' },
         { title: t('cluster.colClocks'), width: 130, render: (_: any, r: any) => `${Math.round(r.sm_clock || 0)} / ${Math.round(r.mem_clock || 0)} MHz` },
         { title: t('cluster.colEcc'), width: 90, render: (_: any, r: any) => `${Math.round(r.ecc_dbe || 0)} / ${Math.round(r.ecc_sbe || 0)}` },
         { title: t('cluster.colXid'), width: 70, render: (_: any, r: any) => Math.round(r.xid || 0) },
+        { title: t('cluster.colRemap'), width: 70, render: (_: any, r: any) => {
+            const v = Math.round(r.remap || 0)
+            return v > 0 ? <Tag color="error">{v}</Tag> : '0'
+          } },
         { title: t('cluster.colThr'), width: 70, render: (_: any, r: any) => (r.throttle ? 1 : 0) },
         { title: t('cluster.colHealth'), width: 80, render: (_: any, r: any) => healthTag(Number(r.health) || 0, t) },
       ]} />

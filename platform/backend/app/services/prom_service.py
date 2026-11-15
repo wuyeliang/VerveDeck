@@ -35,6 +35,8 @@ PROMQL = {
     "host_mem": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
     "host_disk": ('100 * (1 - (node_filesystem_avail_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}'
                   ' / node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}))'),
+    "host_net_rx": 'sum(rate(node_network_receive_bytes_total{device!="lo"}[2m]))',
+    "host_net_tx": 'sum(rate(node_network_transmit_bytes_total{device!="lo"}[2m]))',
     "gpu_util": "DCGM_FI_DEV_GPU_UTIL",
     "gpu_temp": "DCGM_FI_DEV_GPU_TEMP",
     "gpu_mem": "100 * DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)",
@@ -141,6 +143,7 @@ def gpu_snapshot(node=None):
     temp = _series("DCGM_FI_DEV_GPU_TEMP")
     mem_temp = _series("DCGM_FI_DEV_MEMORY_TEMP")
     power = _series("DCGM_FI_DEV_POWER_USAGE")
+    power_limit = _series("DCGM_FI_DEV_POWER_MGMT_LIMIT")  # 功耗限额（W），GeForce 卡亦导出
     sm_clock = _series("DCGM_FI_DEV_SM_CLOCK")
     mem_clock = _series("DCGM_FI_DEV_MEM_CLOCK")
     ecc_sbe = _series("DCGM_FI_DEV_ECC_SBE_AGG_TOTAL")
@@ -165,7 +168,7 @@ def gpu_snapshot(node=None):
             "index": i,
             "name": names[i] if i < len(names) else f"GPU {i}",
             "util": util.get(i, 0), "mem_used": fb_used.get(i, 0), "mem_total": total,
-            "power": power.get(i, 0), "temp": temp.get(i, 0),
+            "power": power.get(i, 0), "power_limit": power_limit.get(i, 0), "temp": temp.get(i, 0),
             "sm_clock": sm_clock.get(i, 0), "mem_clock": mem_clock.get(i, 0),
             "mem_temp": mem_temp.get(i, 0),
             "xid": xid.get(i, 0), "ecc_sbe": ecc_sbe.get(i, 0), "ecc_dbe": ecc_dbe.get(i, 0),
@@ -176,6 +179,46 @@ def gpu_snapshot(node=None):
             "throttle": 1 if 0 < (slow_pwr.get(i, 0) + slow_thm.get(i, 0) + slow_brd.get(i, 0)) <= 900 else 0,
         })
     return out
+
+
+def host_snapshot(instance: str | None = None) -> dict:
+    """宿主 CPU/内存/磁盘/网络即时快照（node-exporter），供计算节点卡展示四指标。
+
+    Prometheus 不可达时各字段为 None（前端显示 -）。instance 用于多节点时按主机名筛选
+    （node-exporter 的 instance 标签形如 `host:9100`）；单节点/未命中时回退首条结果。
+    """
+    P = PROMQL
+
+    def pick(expr: str):
+        try:
+            rows = prom_instant(expr)
+        except Exception:
+            return None
+        if not rows:
+            return None
+        if instance:
+            for r in rows:
+                inst = str(r.get("metric", {}).get("instance", ""))
+                if inst.split(":")[0] == instance or instance in inst:
+                    return _f(r["value"][1])
+        return _f(rows[0]["value"][1])
+
+    disk_total = None
+    try:
+        rows = prom_instant(
+            'sum(node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"})')
+        disk_total = _f(rows[0]["value"][1]) / (1024 ** 3) if rows else None
+    except Exception:
+        pass
+
+    return {
+        "cpu_pct": pick(P["host_cpu"]),
+        "mem_pct": pick(P["host_mem"]),
+        "disk_pct": pick(P["host_disk"]),
+        "net_rx_bps": pick(P["host_net_rx"]),
+        "net_tx_bps": pick(P["host_net_tx"]),
+        "disk_total_gb": disk_total,
+    }
 
 
 # ---------- 规则渲染（UI 阈值规则 → Prometheus 规则文件） ----------
