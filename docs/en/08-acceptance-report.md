@@ -74,6 +74,7 @@
 
 - **514 passed / 0 failed** (~6 min, in-container `pytest`, direct 127.0.0.1:3001; 2026-11-14 re-run on the fresh environment, incl. 4 new JSON-extractor cases).
 - Coverage: auth/RBAC/admin, datasets (incl. S3 object storage), models (lineage/search), training (full param-spec assertions), evals, inference (incl. real vLLM deployment lifecycle), cluster/dashboard, storage.
+- **Added 2026-11-16**: `test_api_quantize.py` for the quantize (model compression) module — 33 cases incl. batch delete and the scheduler state machine; validated green on a local SQLite-backed backend, the in-container full-regression numbers will be refreshed on the next run (514 excludes this batch).
 - Residual: deprecation warnings only (parametrize-generator, Pydantic class-config, short JWT key in unit tests) — non-failing.
 
 ### 3.2 End-to-end regression (`tests/test_e2e.py`, 10 cases)
@@ -104,6 +105,7 @@
 | **TC07 training crash on start** | Spec emitted 4 keys unsupported by LF 0.9.3 (`bias`/`early_stopping_patience`/`early_stopping_threshold`/`lazy_tokenize`) | Removed from `PARAM_GROUPS` + defensive strip in `build_config`; cross-checked all 87 pass-through keys to confirm none else invalid |
 | **opensearch crash on fresh deploy** (fresh-env only) | Container runs as UID 1000; `deploy.sh` created `/data/opensearch` as root → `AccessDeniedException: nodes` | `deploy.sh` now runs `chown -R 1000:0 /data/opensearch` (postgres/redis handle ownership in their entrypoints) |
 | **Synth task silent "false success"** (fresh-env only) | 0.5B base model often emits bare JSON objects (no array brackets) interleaved with prose; old extractor measured 0/10 parseable → task `done` with 0 rows, no error, no log | ① few-shot example in prompt (measured 0/10→8/10) ② extractor switched to brace-balanced multi-object scan ③ per-chunk retry ×3 ④ zero-output now fails the task explicitly with a raw-output sample; 4 new unit cases |
+| **Quantize task delete wiped registered artifacts** (found 2026-11-16 in quantize E2E) | `delete_task` rmtrees the task dir on any terminal status, while a successful task's registered ModelAsset.path == output_dir (out/) → quantized weights lost + dangling asset in the model repo | `delete_task` now guards against it: 400 refusal when a same-path ModelAsset exists (same convention as the training module's "artifact produced" rule); 33 `test_api_quantize` cases prevent regression (incl. batch-delete mixed scenarios) |
 
 ### 3.4 Fresh-Deployment Verification (2026-11-14: full uninstall → rebuild from zero → full regression)
 
@@ -141,3 +143,5 @@ To prove the deployment pipeline is reproducible, a full uninstall + from-zero d
 ---
 
 *Report v1.1 updated: 2026-11-14 fresh-deployment re-verification (full uninstall → from-zero deploy in 6 min 17 s → E2E 10/10 + quick 514 passed), 2 new real-defect records, and the test-portability fix.*
+
+*Report v1.1 addendum: 2026-11-16 — 33 E2E cases for the quantize (model compression) module committed (`test_api_quantize.py`); 1 artifact-protection defect found and fixed (see §3.3); fast-suite file count 13 → 14.*

@@ -4,10 +4,10 @@
 
 | Layer | Files | Cases | Notes |
 |---|---|---|---|
-| Fast integration + unit | `tests/test_*.py` (13 files, excluding test_e2e.py) | **510** (500 baseline + 10 new this round, see §4) | Run inside the container, ~15-25 min |
+| Fast integration + unit | `tests/test_*.py` (14 files, excluding test_e2e.py) | **543** (previous 510 + 33 new quantize cases, 2026-11-16) | Run inside the container, ~15-25 min |
 | End-to-end regression | `tests/test_e2e.py` | **10** | Real GPU full pipeline, ~14 min |
 
-The 13 fast-suite files:
+The 14 fast-suite files:
 
 | File | Coverage |
 |---|---|
@@ -24,6 +24,7 @@ The 13 fast-suite files:
 | test_api_deploy_lifecycle.py | Inference deployment state machine (start/stop/scale/token-reissue races) |
 | test_api_cluster_dashboard.py | Nodes/queue/priority/Dashboard (incl. storage health field) |
 | test_api_storage.py | **Object storage S3 integration** (health field/roundtrip fetch/version sync/delete cleanup; whole group skipped when S3 absent) |
+| test_api_quantize.py | **Quantize (model compression) center, 33 cases**: method metadata / full creation-validation matrix / tenant isolation / detail & logs / delete rules / batch delete (mixed + cross-tenant) / scheduler state machine (real scheduler reconciles lost context → failed + alert; success → artifact registered as merged asset with lineage) / build_config all 4 methods / artifact name dedup |
 
 ## 2. How to Run
 
@@ -35,12 +36,12 @@ same environment as production):
 docker exec fintune-backend-1 mkdir -p /app/tests
 docker cp /opt/vervedeck/platform/backend/tests/. fintune-backend-1:/app/tests/
 
-# Fast suite (13 files, excluding e2e)
+# Fast suite (14 files, excluding e2e)
 docker exec fintune-backend-1 sh -c \
   "cd /app/tests && python -m pytest test_unit_core.py test_unit_dataset.py test_api_auth.py \
    test_api_rbac.py test_api_admin.py test_api_datasets.py test_api_models.py \
    test_api_training.py test_api_evals.py test_api_inference.py test_api_deploy_lifecycle.py \
-   test_api_cluster_dashboard.py test_api_storage.py -v --tb=short -p no:cacheprovider"
+   test_api_cluster_dashboard.py test_api_storage.py test_api_quantize.py -v --tb=short -p no:cacheprovider"
 
 # E2E (real GPU, requires no task in use; ~14 min)
 docker exec fintune-backend-1 sh -c \
@@ -78,3 +79,12 @@ docker exec fintune-backend-1 sh -c \
   → deploy → inference → eval, full pipeline)
 - md5 consistent across three locations: local = /opt/vervedeck source tree =
   /app inside the container
+
+## 5. Change Log
+
+- **2026-11-16**: added `test_api_quantize.py` — 33 E2E cases for the quantize
+  (model compression) module (suite grows 13 → 14 files); also fixed the
+  `delete_task` artifact-protection defect (see 08-acceptance-report §3.3).
+  The quantize cases rely on the real scheduler thread for reconciliation and
+  run as-is inside the container; on a GPU-less dev box they can be validated
+  against a local SQLite-backed backend (tasks stay pending, no GPU used).

@@ -117,7 +117,32 @@ def delete_task(tid: int, db=Depends(get_db), user=Depends(get_current_user)):
     _check(db, t.project_id, user)
     if t.status in ("pending", "running"):
         raise HTTPException(400, "进行中（排队/运行）的压缩任务不可删除，请等待完成或节点空闲后重试")
+    # 产物保护：成功任务的量化产物可能已注册进模型仓库（path == output_dir），
+    # 此时删除任务目录会连带 rmtree 量化权重、留下悬空资产 → 拒绝删除
+    # （与训练任务"已产出模型资产不可删"的约定一致）
+    out = t.output_dir or f"{qs.task_dir(tid)}/out"
+    if db.query(ModelAsset).filter(ModelAsset.path == out).first():
+        raise HTTPException(400, "任务已产出模型资产，请先在模型仓库删除对应产物再删除任务")
     db.delete(t)
     db.commit()
     shutil.rmtree(qs.task_dir(tid), ignore_errors=True)
     return {"ok": True}
+
+
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/batch-delete")
+def batch_delete_tasks(req: BatchDeleteReq, db=Depends(get_db), user=Depends(get_current_user)):
+    """批量删除：逐个执行单删逻辑（进行中的任务跳过并报错），返回部分结果"""
+    deleted: list[int] = []
+    failed: list[dict] = []
+    for tid in req.ids:
+        try:
+            delete_task(tid, db=db, user=user)
+            deleted.append(tid)
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"id": tid, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}
