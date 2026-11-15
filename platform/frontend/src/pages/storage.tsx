@@ -268,6 +268,3 @@ export default function StoragePage() {
     </div>
   )
 }
-
-/** 系统管理内旧入口（保留兼容） */
-export const StorageTab = StoragePage

@@ -12,30 +12,11 @@ import os
 import logging
 
 from ..config import settings
-from ..database import SessionLocal
-from ..models import StorageQueue
 
 log = logging.getLogger("storage")
 
 _client = None
 _bucket_ready = False
-
-
-def record(op: str, key: str, local_path: str, ok: bool, err: str = "") -> None:
-    """对象存储同步留痕（同步队列）：每个上传/下载/删除操作一条记录。
-
-    在后台线程中调用，独立短会话；写库失败仅告警，绝不影响主流程。
-    """
-    try:
-        db = SessionLocal()
-        try:
-            db.add(StorageQueue(op=op, key=key[:500], local_path=local_path[:500],
-                                status="done" if ok else "failed", error=(err or "")[:1000]))
-            db.commit()
-        finally:
-            db.close()
-    except Exception as e:
-        log.warning("storage queue record failed: %s", e)
 
 
 def enabled() -> bool:
@@ -95,14 +76,9 @@ def put_file(local_path: str) -> bool:
         stat = os.stat(local_path)
         c.fput_object(settings.s3_bucket, key, local_path)
         log.info("s3 upload %s (%d bytes)", key, stat.st_size)
-        record("put", key, local_path, True)
         return True
     except Exception as e:
         log.warning("s3 upload %s failed: %s", local_path, e)
-        try:
-            record("put", _key(local_path), local_path, False, str(e))
-        except Exception:
-            pass
         return False
 
 
@@ -134,14 +110,9 @@ def ensure_local(local_path: str) -> bool:
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         c.fget_object(settings.s3_bucket, key, local_path)
         log.info("s3 download %s -> %s", key, local_path)
-        record("get", key, local_path, True)
         return True
     except Exception as e:
         log.warning("s3 download %s failed: %s", local_path, e)
-        try:
-            record("get", _key(local_path), local_path, False, str(e))
-        except Exception:
-            pass
         return False
 
 
@@ -154,19 +125,16 @@ def delete_dir(local_dir: str) -> None:
         prefix = _key(local_dir.rstrip(os.sep)) + "/"
     except ValueError:
         return
-    ok, err, n = False, "", 0
+    n = 0
     try:
         ensure_bucket()
         c = client()
         for o in c.list_objects(settings.s3_bucket, prefix=prefix, recursive=True):
             c.remove_object(settings.s3_bucket, o.object_name)
             n += 1
-        ok = True
         log.info("s3 deleted prefix %s (%d objects)", prefix, n)
     except Exception as e:
-        err = str(e)
         log.warning("s3 delete prefix %s failed: %s", local_dir, e)
-    record("delete", prefix, local_dir, ok, err if not ok else f"{n} objects")
 
 
 def health() -> dict:
@@ -211,7 +179,6 @@ def delete_prefix(prefix: str, cap: int = 5000) -> int:
         deleted += 1
         if deleted > cap:
             raise RuntimeError(f"prefix 下对象超过 {cap} 个，已中止（防误删）")
-    record("delete", prefix, "", True, f"{deleted} objects (manual)")
     return deleted
 
 
@@ -265,9 +232,21 @@ def probe_object(cfg: dict) -> dict:
 
 
 def probe_path(path: str) -> dict:
-    """local/nfs/block 探测：把宿主路径只读挂进一次性容器跑 df。
-    挂载成功即证明路径存在且可读，顺带拿到容量。"""
+    """local/nfs/block 探测：把宿主目录的**父目录**只读挂进一次性容器跑 df。
+
+    容器内只能访问挂载点 /probe，无法直接引用宿主路径；挂父目录后检查
+    /probe/<basename> 是否存在，可正确识别路径不存在（直接挂目标路径会被
+    docker 自动补建空目录，误报 ok）。顺带 df 拿到宿主文件系统容量。
+    显式 create/start/wait/logs/remove（docker-py 7.x 的 containers.run
+    在 detach=False 时返回 logs bytes 而非容器对象，且 remove=False 会
+    残留容器，故不走 run 快捷方法）。
+    """
     import docker
+    path = (path or "").strip().rstrip("/")
+    if not path.startswith("/"):
+        return {"ok": False, "detail": "path 需为绝对路径", "size_used": 0, "size_total": 0}
+    parent = os.path.dirname(path) or "/"
+    target = "/probe/" + os.path.basename(path)
     try:
         d = docker.from_env()
         probe_img = "fintune/web:1.0"
@@ -275,16 +254,18 @@ def probe_path(path: str) -> dict:
             d.images.get(probe_img)
         except Exception:
             probe_img = "alpine:3.20"
-        ctr = d.containers.run(
+        ctr = d.containers.create(
             probe_img,
-            entrypoint=["sh", "-c", f"test -d {path!r} && df -kP {path!r} | tail -1"],
-            volumes={path: {"bind": "/probe", "mode": "ro"}},
-            remove=False)
+            entrypoint=["sh", "-c", f"test -d {target!r} && df -kP {target!r} | tail -1"],
+            volumes={parent: {"bind": "/probe", "mode": "ro"}},
+        )
         try:
+            ctr.start()
+            res = ctr.wait(timeout=60)
             out = ctr.logs().decode("utf-8", "ignore").strip()
         finally:
             ctr.remove(force=True)
-        if not out or "No such file" in out:
+        if res.get("StatusCode", 0) != 0 or not out or "No such file" in out:
             return {"ok": False, "detail": f"路径 {path} 不存在或不可读"}
         p = out.split()
         # df -kP: fs blocks(1K) used available capacity mountpoint

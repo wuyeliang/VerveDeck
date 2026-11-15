@@ -1,6 +1,7 @@
 """存储管理：多类型存储后端注册（对象/本地/NFS/块存储）+ 对象浏览/删除
 
-同步队列 UI/端点已按需求移除；内部同步留痕（services.storage.record）仍保留于数据库。
+对象存储同步队列已整体移除（前端 UI、API 端点、StorageQueue 模型、同步留痕均不再保留）。
+local/object 类型真实可用；nfs/block 为注册 + 状态占位（探测宿主挂载点路径）。
 """
 import os
 import shutil
@@ -179,7 +180,7 @@ def test_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
 
 @router.delete("/backends/{bid}")
 def delete_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
-    b = db_get_backend(bid, db)
+    b = _get_backend_or_404(bid, db)
     db.delete(b)
     db.commit()
     return {"ok": True}
