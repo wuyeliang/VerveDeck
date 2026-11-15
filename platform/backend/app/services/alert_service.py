@@ -362,8 +362,10 @@ def evaluate(db):
                            f"磁盘 {host.disk_pct:.0f}%（{host.disk_used_mb / 1024 / 1024:.1f}/{host.disk_total_mb / 1024 / 1024:.1f} GB）")
             elif rule.metric in ("gpu_util", "gpu_temp", "gpu_mem"):
                 gpus = gpus or _gpu_rows(db)
+                # 规则指标名 → _gpu_rows 返回的列键
+                col = {"gpu_util": "util", "gpu_temp": "temp", "gpu_mem": "mem_pct"}[rule.metric]
                 for g in gpus:
-                    v = g[rule.metric]
+                    v = g[col]
                     unit = {"gpu_util": f"利用率 {v:.0f}%",
                             "gpu_temp": f"温度 {v:.0f}°C",
                             "gpu_mem": f"显存 {v:.0f}%"}[rule.metric]
