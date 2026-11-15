@@ -102,7 +102,11 @@
     "mergeEnqueued": "Merge/export job enqueued", "logsTitle": "Run Log", "noLogs": "(no logs yet)", "paramLoading": "Loading parameter spec…",
     "stageCpt": "CPT continued pre-training", "stageSft": "SFT supervised fine-tuning", "stageDpo": "DPO alignment", "stageExport": "Merge & Export",
     "ftLora": "LoRA", "ftFull": "Full", "ftFreeze": "Freeze",
-    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3"
+    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3",
+    "secDist": "Distributed Training", "nodeCount": "Nodes (containers)", "nprocPerNode": "GPUs per node", "framework": "Training framework",
+    "fwDdp": "Native DDP (data parallel)", "fwFsdP": "PyTorch FSDP", "summaryDist": "Distributed topology",
+    "distHint": "Nodes × GPUs/node = total GPUs; multi-GPU/multi-node runs distributed over the container network (torchrun), supports IB/RDMA",
+    "ncclEnv": "NCCL environment (optional)", "ncclEnvTip": "IB/RDMA e.g. NCCL_IB_HCA=mlx5_0,mlx5_1 · NCCL_SOCKET_IFNAME=eth0 · NCCL_NET_GDR_LEVEL=SYS · NCCL_P2P_DISABLE=0", "ncclAdd": "Add NCCL variable"
   },
   "pg": {
     "data": "Data & Sequences", "train": "Training Strategy", "precision": "Precision & Quantization", "lora": "LoRA",

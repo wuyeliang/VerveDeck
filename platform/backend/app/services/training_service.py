@@ -1,7 +1,11 @@
 """训练任务服务（LLaMA-Factory 引擎）
 
-架构：每个训练任务 = 一个独立 pause 占位容器，exec 拉起 llamafactory-cli train。
-- GPU 设备在容器创建时按 gpu_count 独占绑定（资源隔离）
+架构：每个训练任务 = 每个节点一个独立 pause 占位容器，exec 拉起训练进程。
+- 单机单卡：单容器 + 原生 llamafactory-cli（与旧版一致）
+- 单机多卡 / 多机多卡：每节点一个容器（共享 /data），torchrun 分布式；
+  rank0 为主节点（MASTER），跨节点经容器网络互达，NCCL 支持 IB/RDMA
+- 训练框架：原生 DDP / DeepSpeed ZeRO-2/3 / PyTorch FSDP（job.deepspeed 字段）
+- GPU 设备在容器创建时按每节点卡数独占绑定（资源隔离）
 - 配置/日志/tensorboard 全部落在 /data/jobs/<id>/
 - 断点续训：基于输出目录中的 checkpoint-xxx 新建任务
 """
@@ -9,6 +13,7 @@ import json
 import logging
 import os
 import glob
+import time
 import uuid
 
 import yaml
@@ -60,6 +65,105 @@ def image_has_tensorboard(image: str) -> bool:
 def job_dir(jid: int) -> str:
     """训练任务工作目录：/data/jobs/<id>/（config.yaml / run.log / ckpt / runs / merged）"""
     return os.path.join(settings.data_dir, "jobs", str(jid))
+
+
+# ---------------------------------------------------------------------------
+# 分布式训练编排（单机多卡 / 多机多卡，torchrun + LLaMA-Factory 原生框架）
+#   - 每节点一个任务容器（共享 /data），rank0 为主节点（MASTER）
+#   - 单卡回退：node_count==1 且 nproc_per_node==1 时 = 原生 llamafactory-cli
+#     （命令/容器/env 与旧版字节级一致，保证单卡回归不变）
+# ---------------------------------------------------------------------------
+MASTER_PORT_BASE = 29500
+
+
+def job_gpu_need(job) -> int:
+    """任务总卡数 = 节点数 × 每节点卡数。
+
+    兼容旧任务：旧行 node_count/nproc_per_node 默认为 1，但 gpu_count 可能 > 1
+    （旧「单节点多卡」写法），取两者较大值，避免准入/统计低估。
+    """
+    nn = max(1, int(job.node_count or 1))
+    nproc = max(1, int(job.nproc_per_node or 1))
+    return max(int(job.gpu_count or 1), nn * nproc)
+
+
+def rank_container_names(job) -> list:
+    """各 rank 任务容器名。rank0 沿用旧命名 ft-train-<id>（单卡回退不变）。"""
+    nn = max(1, int(job.node_count or 1))
+    return [f"ft-train-{job.id}"] + [f"ft-train-{job.id}-r{k}" for k in range(1, nn)]
+
+
+def rank_task_keys(job) -> list:
+    """各 rank 的 exec 任务键。rank0=train-<id>（与旧版一致，供调度器收敛轮询）。"""
+    nn = max(1, int(job.node_count or 1))
+    return [f"train-{job.id}"] + [f"train-{job.id}-r{k}" for k in range(1, nn)]
+
+
+def rank_log_paths(job) -> list:
+    """各 rank 的 run.log 路径（rank0 为主日志，其余 run_r<k>.log）。"""
+    base = job_dir(job.id)
+    nn = max(1, int(job.node_count or 1))
+    return [os.path.join(base, "run.log")] + \
+           [os.path.join(base, f"run_r{k}.log") for k in range(1, nn)]
+
+
+def master_port(job) -> int:
+    """torchrun rendezvous 端口：按 job.id 错开，避免同机并发多任务端口冲突。"""
+    return MASTER_PORT_BASE + (int(job.id or 0) % 1000)
+
+
+def container_env(job) -> dict:
+    """训练容器环境变量（含 NCCL 通信配置，IB/RDMA 友好）。
+
+    - 多卡默认注入 NCCL_P2P_DISABLE=1（4090/PCIe P2P 不稳兜底）
+    - 多机默认 NCCL_DEBUG=INFO（便于排障）
+    - IB/RDMA：用户经 job.nccl_env 覆盖（NCCL_IB_HCA / NCCL_SOCKET_IFNAME /
+      NCCL_NET_GDR_LEVEL / NCCL_IB_GID_INDEX / NCCL_P2P_DISABLE=0 等），优先级最高
+    """
+    env = {"OMP_NUM_THREADS": "4"}
+    total = job_gpu_need(job)
+    nn = max(1, int(job.node_count or 1))
+    if total > 1:
+        env["NCCL_P2P_DISABLE"] = "1"
+    if nn > 1:
+        env.setdefault("NCCL_DEBUG", "INFO")
+        env.setdefault("NCCL_SHM_DISABLE", "0")
+    user = job.nccl_env or {}
+    if isinstance(user, dict):
+        env.update({str(k): str(v) for k, v in user.items()})
+    return env
+
+
+def training_cmd(job, cfg: str, rank: int, nnodes: int, nproc: int,
+                 master_addr: str, port: int) -> list:
+    """构造单 rank 容器内的启动命令。
+
+    单卡回退：nnodes==1 且 nproc==1 → 原生 llamafactory-cli（与旧版一致）。
+    多卡/多机：torchrun 分布式——torchrun 自动为每进程注入 RANK/WORLD_SIZE/
+    LOCAL_RANK，MASTER_ADDR/MASTER_PORT 经命令行注入（跨节点经容器网络互达）。
+    """
+    if nnodes == 1 and nproc == 1:
+        return ["bash", "-lc", f"cd /data && llamafactory-cli train {cfg} 2>&1"]
+    return ["bash", "-lc",
+            f"cd /data && torchrun "
+            f"--nproc_per_node={nproc} --nnodes={nnodes} --node_rank={rank} "
+            f"--master_addr={master_addr} --master_port={port} "
+            f"-m llamafactory.cli train {cfg} 2>&1"]
+
+
+def resolve_master_addr(cids: list, nnodes: int) -> str:
+    """多机取 rank0 容器 IP 作 MASTER_ADDR（fintune_net 内互达）；单机/单卡走回环。
+
+    容器 IP 由 docker 在 create/run 时同步分配，正常一次可得；重试兜底网络未就绪。
+    """
+    if nnodes <= 1:
+        return "127.0.0.1"
+    for _ in range(10):
+        ip = tc.container_ip(cids[0])
+        if ip:
+            return ip
+        time.sleep(1)
+    raise RuntimeError("无法获取主容器 IP（fintune_net 未就绪），多机训练需容器网络互通")
 
 
 # DeepSpeed ZeRO 配置模板（内嵌，替代原镜像内 /workspace/ds_*.json 拷贝，
@@ -416,6 +520,8 @@ def build_config(job: TrainingJob, db) -> dict:
         with open(os.path.join(job_dir(job.id), "dataset_info.json"), "w", encoding="utf-8") as f:
             json.dump(dataset_info, f, ensure_ascii=False, indent=1)
 
+    # 分布式训练框架（job.deepspeed 现扩展为全量框架选择器）：
+    #   zero2/zero3 → 写 DeepSpeed 配置；fsdp → 注入 HF FSDP 参数；none(原生 DDP) 不写额外配置。
     # DeepSpeed：模板内嵌于后端（不依赖镜像内 /workspace/ds_*.json，兼容官方预构建镜像），
     # 按需写出到任务工作目录（容器内 /data/jobs/<id>/ 可见）
     if job.deepspeed in DEEPSPEED_CONFIGS:
@@ -424,6 +530,16 @@ def build_config(job: TrainingJob, db) -> dict:
         with open(dst, "w", encoding="utf-8") as f:
             json.dump(DEEPSPEED_CONFIGS[job.deepspeed], f, ensure_ascii=False, indent=2)
         d["deepspeed"] = dst
+    elif job.deepspeed == "fsdp":
+        # PyTorch FSDP（HF TrainingArguments 的 FSDP 字段，torchrun 兼容）。
+        # 核心项内置；其余高级项（fsdp_state_dict_type / fsdp_offload_params* /
+        # fsdp_sharding_strategy 等）经 hyperparams/extra_args「未知键透传」注入，
+        # 避免硬编码镜像 LF 版本可能不支持的键触发 HfArgumentParser「未使用」报错。
+        d["fsdp"] = ("full_shard auto_wrap"
+                     if hp.get("fsdp_transformer_layer_cls_to_wrap") else "full_shard")
+        d["fsdp_use_orig_params"] = True
+        if hp.get("fsdp_transformer_layer_cls_to_wrap"):
+            d["fsdp_transformer_layer_cls_to_wrap"] = str(hp["fsdp_transformer_layer_cls_to_wrap"])
 
     # 内部键最后兜底（防止 extra_args/透传覆盖平台装配值）
     d.update({
@@ -459,29 +575,54 @@ def write_config(job: TrainingJob, db) -> str:
 
 
 def launch(job: TrainingJob) -> None:
-    """创建任务容器（pause 占位）并 exec 启动训练"""
+    """创建任务容器并 exec 启动训练（单机单卡 / 单机多卡 / 多机多卡）。
+
+    - 单机单卡：单容器 + 原生 llamafactory-cli（与旧版字节级一致）
+    - 单机多卡/多机多卡：每节点一个任务容器（共享 /data，各自独占 nproc 张卡），
+      torchrun 分布式；rank0 为主节点，MASTER_ADDR 取其容器 IP（容器网络互达）
+    """
     db = SessionLocal()
     try:
         cfg = write_config(job, db)
     finally:
         db.close()
-    name = f"ft-train-{job.id}"
-    tc.remove_container(name, force=True)
-    cid = tc.create_container(
-        name=name, image=upgrade_service.current_image("llamafactory"),
-        gpus=job.gpu_count,
-        cpus=(job.gpu_count * 4) or 4,
-        mem_gb=24.0,
-        env={"OMP_NUM_THREADS": "4"},
-        labels={"fintune.job": str(job.id), "fintune.type": "training"},
-    )
-    cmd = ["bash", "-lc", f"cd /data && llamafactory-cli train {cfg} 2>&1"]
-    tc.start_task(f"train-{job.id}", cid, cmd, os.path.join(job_dir(job.id), "run.log"))
+
+    nnodes = max(1, int(job.node_count or 1))
+    nproc = max(1, int(job.nproc_per_node or 1))
+    port = master_port(job)
+    image = upgrade_service.current_image("llamafactory")
+    env = container_env(job)
+    names = rank_container_names(job)
+
+    # 清理上一轮残留的 rank 容器
+    for name in names:
+        tc.remove_container(name, force=True)
+
+    # 逐 rank 建占位容器（rank0 先建，便于取 MASTER_ADDR；镜像懒加载在此按 rank0 门控）
+    cids = []
+    for r, name in enumerate(names):
+        cid = tc.create_container(
+            name=name, image=image, gpus=nproc,
+            cpus=(nproc * 4) or 4, mem_gb=24.0, env=env,
+            labels={"fintune.job": str(job.id), "fintune.type": "training",
+                    "fintune.rank": str(r)},
+        )
+        cids.append(cid)
+
+    master_addr = resolve_master_addr(cids, nnodes)
+
+    # 每容器 exec 拉起对应 rank 的启动命令（单卡回退为原生 llamafactory-cli）
+    keys = rank_task_keys(job)
+    logs = rank_log_paths(job)
+    for r in range(nnodes):
+        tc.start_task(keys[r], cids[r], training_cmd(job, cfg, r, nnodes, nproc,
+                                                     master_addr, port), logs[r])
+
     db = SessionLocal()
     try:
         j = db.get(TrainingJob, job.id)
-        j.container_id = cid
-        j.container_name = name
+        j.container_id = cids[0]
+        j.container_name = names[0]
         j.config_path = cfg
         j.output_dir = f"{job_dir(job.id)}/ckpt"
         j.tensorboard_dir = f"{job_dir(job.id)}/runs"
@@ -495,10 +636,14 @@ def launch(job: TrainingJob) -> None:
 
 
 def cancel(job: TrainingJob) -> None:
-    # 杀掉容器内训练进程（占位容器保留以便看日志，随后由调度器清理）
-    if job.container_id:
-        tc.exec_run(job.container_id, ["pkill", "-9", "-f", "llamafactory-cli"], timeout=30)
-    tc.remove_container(job.container_name, force=True)
+    # 杀掉各 rank 容器内训练进程（torchrun/llamafactory），随后清理全部 rank 容器
+    for name in rank_container_names(job):
+        if tc.container_alive(name):
+            try:
+                tc.exec_run(name, ["pkill", "-9", "-f", "llamafactory"], timeout=30)
+            except Exception:
+                pass
+        tc.remove_container(name, force=True)
 
 
 def checkpoints(job: TrainingJob) -> list[dict]:

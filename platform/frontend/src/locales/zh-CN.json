@@ -102,7 +102,11 @@
     "mergeEnqueued": "合并导出任务已入队", "logsTitle": "运行日志", "noLogs": "(暂无日志)", "paramLoading": "参数面加载中…",
     "stageCpt": "CPT 继续预训练", "stageSft": "SFT 监督微调", "stageDpo": "DPO 对齐", "stageExport": "合并导出",
     "ftLora": "LoRA", "ftFull": "Full 全参", "ftFreeze": "Freeze 冻结",
-    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3"
+    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3",
+    "secDist": "分布式训练", "nodeCount": "节点数（容器）", "nprocPerNode": "每节点卡数", "framework": "训练框架",
+    "fwDdp": "原生 DDP（数据并行）", "fwFsdP": "PyTorch FSDP", "summaryDist": "分布式拓扑",
+    "distHint": "节点数×每节点卡数=总卡数；多卡/多机经容器网络(torchrun)分布式，支持 IB/RDMA",
+    "ncclEnv": "NCCL 环境变量（可选）", "ncclEnvTip": "IB/RDMA 示例：NCCL_IB_HCA=mlx5_0,mlx5_1 · NCCL_SOCKET_IFNAME=eth0 · NCCL_NET_GDR_LEVEL=SYS · NCCL_P2P_DISABLE=0", "ncclAdd": "添加 NCCL 变量"
   },
   "pg": {
     "data": "数据与序列", "train": "训练策略", "precision": "精度与量化", "lora": "LoRA",

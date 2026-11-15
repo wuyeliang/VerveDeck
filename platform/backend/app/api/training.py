@@ -26,7 +26,9 @@ def _brief(j: TrainingJob, db: Session) -> dict:
         "id": j.id, "project_id": j.project_id, "name": j.name, "stage": j.stage,
         "finetuning_type": j.finetuning_type, "base_model": base.name if base else "",
         "dataset_version_ids": j.dataset_version_ids or [],
-        "gpu_count": j.gpu_count, "priority": j.priority, "deepspeed": j.deepspeed,
+        "gpu_count": j.gpu_count, "node_count": j.node_count or 1,
+        "nproc_per_node": j.nproc_per_node or 1, "nccl_env": j.nccl_env or {},
+        "priority": j.priority, "deepspeed": j.deepspeed,
         "status": j.status, "hyperparams": j.hyperparams or {},
         "resume_from_job_id": j.resume_from_job_id,
         "error": j.error, "work_dir": j.work_dir,
@@ -44,8 +46,11 @@ class JobReq(BaseModel):
     adapter_asset_id: int | None = None  # export 用
     dataset_version_ids: list[int] = []
     hyperparams: dict = {}
-    deepspeed: str = "none"  # none/zero2/zero3
-    gpu_count: int = 1
+    deepspeed: str = "none"  # none(原生DDP)/zero2/zero3/fsdp
+    node_count: int = 1        # nnodes：参与训练的节点（任务容器）数
+    nproc_per_node: int = 1    # 每节点 GPU 数
+    nccl_env: dict = {}        # NCCL 通信环境变量（IB/RDMA 等）
+    gpu_count: int = 1         # 兼容字段（总卡数）；显式给了 node_count/nproc_per_node 时以其为准
     priority: int = 5
 
 
@@ -65,12 +70,19 @@ def create_job(req: JobReq, db=Depends(get_db), user=Depends(get_current_user)):
         raise HTTPException(400, f"基座模型未就绪(status={base.status})，请等待下载完成")
     if req.stage == "export" and not req.adapter_asset_id:
         raise HTTPException(400, "export 需指定 LoRA 产物 (adapter_asset_id)")
+    # 分布式拓扑：节点数 × 每节点卡数；兼容旧客户端仅传 gpu_count（→ 单节点多卡）
+    node_count = max(1, req.node_count or 1)
+    nproc = max(1, req.nproc_per_node or 1)
+    if node_count == 1 and nproc == 1 and (req.gpu_count or 1) > 1:
+        nproc = max(1, req.gpu_count)
+    total = node_count * nproc
     job = TrainingJob(
         project_id=req.project_id, name=req.name, stage=req.stage,
         finetuning_type=req.finetuning_type if req.stage != "export" else "lora",
         base_model_id=req.base_model_id, adapter_asset_id=req.adapter_asset_id,
         dataset_version_ids=req.dataset_version_ids, hyperparams=req.hyperparams,
-        deepspeed=req.deepspeed, gpu_count=req.gpu_count, priority=req.priority,
+        deepspeed=req.deepspeed, node_count=node_count, nproc_per_node=nproc,
+        nccl_env=req.nccl_env or {}, gpu_count=total, priority=req.priority,
         status="queued", submitted_by=user.id,
     )
     db.add(job)
@@ -203,7 +215,9 @@ def resume_job(jid: int, req: ResumeReq, db=Depends(get_db), user=Depends(get_cu
         finetuning_type=j.finetuning_type, base_model_id=j.base_model_id,
         dataset_version_ids=j.dataset_version_ids,
         hyperparams={**(j.hyperparams or {}), "resume_from_checkpoint": ckpt},
-        deepspeed=j.deepspeed, gpu_count=j.gpu_count, priority=j.priority,
+        deepspeed=j.deepspeed, node_count=j.node_count or 1,
+        nproc_per_node=j.nproc_per_node or 1, nccl_env=j.nccl_env or {},
+        gpu_count=j.gpu_count, priority=j.priority,
         status="queued", submitted_by=user.id, resume_from_job_id=j.id,
     )
     db.add(new)

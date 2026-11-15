@@ -59,12 +59,16 @@ export default function TrainCenter() {
   const wDsId = Form.useWatch('dataset_id', form)
   const wVerIds = Form.useWatch('dataset_version_ids', form)
   const wVal = Form.useWatch('val_size', form)
-  const wGpu = Form.useWatch('gpu_count', form)
+  const wNode = Form.useWatch('node_count', form)
+  const wNproc = Form.useWatch('nproc_per_node', form)
   const wDeep = Form.useWatch('deepspeed', form)
   const wPriority = Form.useWatch('priority', form)
 
   const STAGE_LABEL: Record<string, string> = {
     cpt: t('train.stageCpt'), sft: t('train.stageSft'), dpo: t('train.stageDpo'), export: t('train.stageExport'),
+  }
+  const FW_LABEL: Record<string, string> = {
+    none: t('train.fwDdp'), zero2: t('train.dsZero2'), zero3: t('train.dsZero3'), fsdp: t('train.fwFsdP'),
   }
 
   const specIndex: Record<string, any> = {}
@@ -103,7 +107,7 @@ export default function TrainCenter() {
 
   const openWizard = () => {
     form.resetFields()
-    form.setFieldsValue({ stage: 'sft', finetuning_type: 'lora', priority: 5, gpu_count: 1, deepspeed: 'none', ...specDefaults() })
+    form.setFieldsValue({ stage: 'sft', finetuning_type: 'lora', priority: 5, node_count: 1, nproc_per_node: 1, deepspeed: 'none', nccl_env: [], ...specDefaults() })
     setStage('sft')
     setDsVersions([])
     api.get('/api/models', { params: { project_id: projectId } }).then((r) => setModels(r.data.filter((m: any) => m.status === 'ready'))).catch(() => {})
@@ -129,7 +133,7 @@ export default function TrainCenter() {
 
   // 必填字段（提交前统一强制校验，缺失则原地停留并标红）
   const requiredFields = () => {
-    const base = ['name', 'stage', 'finetuning_type', 'base_model_id', 'deepspeed', 'gpu_count']
+    const base = ['name', 'stage', 'finetuning_type', 'base_model_id', 'deepspeed', 'node_count', 'nproc_per_node']
     return stage === 'export' ? [...base, 'adapter_asset_id'] : [...base, 'dataset_id', 'dataset_version_ids']
   }
 
@@ -145,6 +149,15 @@ export default function TrainCenter() {
     return out
   }
 
+  // NCCL 环境变量：Form.List 的 {key,value}[] → dict（剔除空 key）
+  const collectNccl = (rows: any[]) => {
+    const out: any = {}
+    for (const r of rows || []) {
+      if (r && r.key) out[r.key] = (r.value === undefined || r.value === null) ? '' : r.value
+    }
+    return out
+  }
+
   const submit = async () => {
     try { await form.validateFields(requiredFields()) } catch { return }
     const v = form.getFieldsValue()
@@ -153,7 +166,8 @@ export default function TrainCenter() {
       base_model_id: v.base_model_id, adapter_asset_id: v.adapter_asset_id || null,
       dataset_version_ids: v.dataset_version_ids || [],
       hyperparams: collectHyperparams(),
-      deepspeed: v.deepspeed, gpu_count: v.gpu_count, priority: v.priority,
+      deepspeed: v.deepspeed, node_count: v.node_count, nproc_per_node: v.nproc_per_node,
+      nccl_env: collectNccl(v.nccl_env), priority: v.priority,
     })
     message.success(t('train.enqueued'))
     setOpen(false)
@@ -315,14 +329,49 @@ export default function TrainCenter() {
                     }))} />
                 )}
               </Section>
+              <Section title={t('train.secDist')}>
+                <Row gutter={12}>
+                  <Col span={8}><Form.Item name="node_count" label={t('train.nodeCount')} rules={[{ required: true, message: t('common.required') }]}>
+                    <InputNumber min={1} max={16} style={{ width: '100%' }} />
+                  </Form.Item></Col>
+                  <Col span={8}><Form.Item name="nproc_per_node" label={t('train.nprocPerNode')} rules={[{ required: true, message: t('common.required') }]}>
+                    <InputNumber min={1} max={16} style={{ width: '100%' }} />
+                  </Form.Item></Col>
+                  <Col span={8}><Form.Item name="deepspeed" label={t('train.framework')} rules={[{ required: true, message: t('common.required') }]}>
+                    <Select style={{ width: '100%' }} options={[
+                      { value: 'none', label: t('train.fwDdp') },
+                      { value: 'zero2', label: t('train.dsZero2') },
+                      { value: 'zero3', label: t('train.dsZero3') },
+                      { value: 'fsdp', label: t('train.fwFsdP') },
+                    ]} />
+                  </Form.Item></Col>
+                </Row>
+                <p style={{ color: '#888', marginTop: 4 }}>{t('train.distHint')}</p>
+                <Form.Item label={t('train.ncclEnv')} tooltip={t('train.ncclEnvTip')}>
+                  <Form.List name="nccl_env">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...rest }: any) => (
+                          <Space key={key} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
+                            <Form.Item {...rest} name={[name, 'key']} noStyle>
+                              <Input style={{ width: 220 }} placeholder="NCCL_IB_HCA" />
+                            </Form.Item>
+                            <Form.Item {...rest} name={[name, 'value']} noStyle>
+                              <Input style={{ width: 300 }} placeholder="mlx5_0,mlx5_1" />
+                            </Form.Item>
+                            <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                          </Space>
+                        ))}
+                        <Button type="dashed" onClick={() => add()} icon={<PlusOutlined />} style={{ width: 220 }}>
+                          {t('train.ncclAdd')}
+                        </Button>
+                      </>
+                    )}
+                  </Form.List>
+                </Form.Item>
+              </Section>
               <Section title={t('train.secOutput')}>
                 <Row gutter={12}>
-                  <Col span={8}><Form.Item name="deepspeed" label={t('train.deepspeed')} rules={[{ required: true, message: t('common.required') }]}>
-                    <Select style={{ width: '100%' }} options={[{ value: 'none', label: t('train.noDs') }, { value: 'zero2', label: t('train.dsZero2') }, { value: 'zero3', label: t('train.dsZero3') }]} />
-                  </Form.Item></Col>
-                  <Col span={8}><Form.Item name="gpu_count" label={t('train.gpuCount')} rules={[{ required: true, message: t('common.required') }]}>
-                    <InputNumber min={1} max={4} style={{ width: '100%' }} />
-                  </Form.Item></Col>
                   <Col span={8}><Form.Item name="save_steps" label={t('pp.save_steps', '保存间隔 save_steps')}>
                     <InputNumber min={1} style={{ width: '100%' }} />
                   </Form.Item></Col>
@@ -344,7 +393,7 @@ export default function TrainCenter() {
                     ? (models.find((m) => m.id === wAdapter)?.name || '-')
                     : `${datasets.find((d) => d.id === wDsId)?.name || '-'} (${(wVerIds || []).length})` },
                   ...(stage !== 'export' ? [{ key: 5, label: t('train.summaryVal'), children: `${((wVal || 0) * 100).toFixed(0)}%` }] : []),
-                  { key: 6, label: t('train.summaryGpu'), children: `${wGpu ?? 1} GPU · ${wDeep}` },
+                  { key: 6, label: t('train.summaryDist'), children: `${wNode ?? 1} × ${wNproc ?? 1} = ${(wNode ?? 1) * (wNproc ?? 1)} GPU · ${FW_LABEL[wDeep] || wDeep}` },
                   { key: 7, label: t('train.summaryPriority'), children: wPriority ?? 5 },
                 ]} />
             </Card>
@@ -365,8 +414,8 @@ export default function TrainCenter() {
                 { key: 2, label: t('train.dStage'), children: detail.stage },
                 { key: 3, label: t('train.dMethod'), children: detail.finetuning_type },
                 { key: 4, label: t('train.colBase'), children: detail.base_model },
-                { key: 5, label: t('train.dGpu'), children: detail.gpu_count },
-                { key: 6, label: t('train.deepspeed'), children: detail.deepspeed },
+                { key: 5, label: t('train.dGpu'), children: `${detail.gpu_count}（${detail.node_count ?? 1} × ${detail.nproc_per_node ?? 1}）` },
+                { key: 6, label: t('train.framework'), children: FW_LABEL[detail.deepspeed] || detail.deepspeed },
               ]} />
             {detail.error && <p style={{ color: '#cf1322', whiteSpace: 'pre-wrap' }}>{detail.error}</p>}
             {Object.keys(detail.config || {}).length > 0 && (

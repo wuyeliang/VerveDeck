@@ -67,6 +67,12 @@ def _migrate_columns():
             ],
             "audit_logs": [("action", "VARCHAR(64) NOT NULL DEFAULT ''")],
             "api_keys": [("model_ids", f"{json_type} NOT NULL DEFAULT '[]'")],
+            "training_jobs": [
+                # 多机多卡/单机多卡分布式训练（#60）：节点数 × 每节点卡数 + NCCL 通信环境
+                ("node_count", "INTEGER NOT NULL DEFAULT 1"),
+                ("nproc_per_node", "INTEGER NOT NULL DEFAULT 1"),
+                ("nccl_env", f"{json_type} NOT NULL DEFAULT '{{}}'"),
+            ],
         }
         with engine.begin() as conn:
             for table, cols in plan.items():

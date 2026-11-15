@@ -143,8 +143,18 @@ class TrainingJob(Base):
     adapter_asset_id: Mapped[int | None] = mapped_column(ForeignKey("model_assets.id"), nullable=True)  # export 用
     dataset_version_ids: Mapped[list] = mapped_column(JSON, default=list)
     hyperparams: Mapped[dict] = mapped_column(JSON, default=dict)
-    deepspeed: Mapped[str] = mapped_column(String(16), default="none")  # none/zero2/zero3
-    gpu_count: Mapped[int] = mapped_column(Integer, default=1)
+    # 分布式训练框架（历史列名 deepspeed，现扩展为全量框架选择器）：
+    #   none   = 原生 DDP（数据并行，torchrun 多卡/多机，无额外后端）
+    #   zero2  = DeepSpeed ZeRO-2
+    #   zero3  = DeepSpeed ZeRO-3
+    #   fsdp   = PyTorch FSDP（full shard）
+    deepspeed: Mapped[str] = mapped_column(String(16), default="none")  # none(原生DDP)/zero2/zero3/fsdp
+    # 分布式拓扑：node_count(=nnodes 节点/容器数) × nproc_per_node(每节点卡数)
+    node_count: Mapped[int] = mapped_column(Integer, default=1)          # nnodes：参与训练的节点（任务容器）数
+    nproc_per_node: Mapped[int] = mapped_column(Integer, default=1)      # 每节点 GPU 数（torchrun --nproc_per_node）
+    # NCCL 通信环境变量（IB/RDMA 等），dict 键值对；平台多卡默认注入 NCCL_P2P_DISABLE=1，此处可覆盖
+    nccl_env: Mapped[dict] = mapped_column(JSON, default=dict)
+    gpu_count: Mapped[int] = mapped_column(Integer, default=1)  # 总卡数 = node_count × nproc_per_node（单节点时=旧语义）
     priority: Mapped[int] = mapped_column(Integer, default=5)  # 1-9, 越大越优先
     status: Mapped[str] = mapped_column(String(32), default="queued")  # queued/running/succeeded/failed/cancelled
     container_id: Mapped[str] = mapped_column(String(64), default="")

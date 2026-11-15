@@ -102,7 +102,11 @@
     "mergeEnqueued": "マージエクスポートジョブをキューに追加しました", "logsTitle": "実行ログ", "noLogs": "(ログなし)", "paramLoading": "パラメータ面を読み込み中…",
     "stageCpt": "CPT 継続事前学習", "stageSft": "SFT 教師あり微調整", "stageDpo": "DPO 整列", "stageExport": "マージエクスポート",
     "ftLora": "LoRA", "ftFull": "Full 全パラメータ", "ftFreeze": "Freeze 凍結",
-    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3"
+    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3",
+    "secDist": "分散トレーニング", "nodeCount": "ノード数（コンテナ）", "nprocPerNode": "ノードあたりGPU数", "framework": "学習フレームワーク",
+    "fwDdp": "ネイティブ DDP（データ並列）", "fwFsdP": "PyTorch FSDP", "summaryDist": "分散トポロジー",
+    "distHint": "ノード数×ノードあたりGPU数=総GPU数；マルチGPU/マルチノードはコンテナネットワーク(torchrun)で分散、IB/RDMA 対応",
+    "ncclEnv": "NCCL 環境変数（任意）", "ncclEnvTip": "IB/RDMA 例：NCCL_IB_HCA=mlx5_0,mlx5_1 · NCCL_SOCKET_IFNAME=eth0 · NCCL_NET_GDR_LEVEL=SYS · NCCL_P2P_DISABLE=0", "ncclAdd": "NCCL 変数を追加"
   },
   "pg": {
     "data": "データとシーケンス", "train": "トレーニング戦略", "precision": "精度と量子化", "lora": "LoRA",

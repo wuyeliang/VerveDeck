@@ -77,6 +77,70 @@ def nodes(db=Depends(get_db), user=Depends(get_current_user)):
     return out
 
 
+class NodeReq(BaseModel):
+    name: str = ""
+    gpu_count: int | None = None
+    status: str = ""        # online/offline（空=不修改）
+    meta: dict = {}         # 扩展信息：names / IB-RDMA 网络（ib_hca, net_ifname, gid_index...）
+
+
+def _node_brief(n: GpuNode) -> dict:
+    return {"id": n.id, "name": n.name, "gpu_count": n.gpu_count,
+            "status": n.status, "meta": n.meta or {}}
+
+
+@router.post("/nodes")
+def register_node(req: NodeReq, db=Depends(get_db), user=Depends(get_current_user)):
+    """注册计算节点（多机多卡集群纳管）。meta 可携带 IB/RDMA 网络信息。"""
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(400, "节点名不能为空")
+    if db.query(GpuNode).filter_by(name=name).first():
+        raise HTTPException(400, f"节点 {name} 已存在")
+    n = GpuNode(
+        name=name, gpu_count=max(0, req.gpu_count or 0),
+        status=req.status if req.status in ("online", "offline") else "online",
+        meta=req.meta or {},
+    )
+    db.add(n)
+    db.commit()
+    db.refresh(n)
+    return _node_brief(n)
+
+
+@router.put("/nodes/{nid}")
+def update_node(nid: int, req: NodeReq, db=Depends(get_db), user=Depends(get_current_user)):
+    n = db.get(GpuNode, nid)
+    if not n:
+        raise HTTPException(404, "节点不存在")
+    if req.name and req.name.strip() != n.name:
+        new_name = req.name.strip()
+        if db.query(GpuNode).filter(GpuNode.name == new_name, GpuNode.id != nid).first():
+            raise HTTPException(400, f"节点名 {new_name} 已被占用")
+        n.name = new_name
+    if req.gpu_count is not None:
+        n.gpu_count = max(0, req.gpu_count)
+    if req.status in ("online", "offline"):
+        n.status = req.status
+    if req.meta:
+        n.meta = {**(n.meta or {}), **req.meta}
+    db.commit()
+    db.refresh(n)
+    return _node_brief(n)
+
+
+@router.delete("/nodes/{nid}")
+def delete_node(nid: int, db=Depends(get_db), user=Depends(get_current_user)):
+    n = db.get(GpuNode, nid)
+    if not n:
+        raise HTTPException(404, "节点不存在")
+    if n.name == settings.node_name:
+        raise HTTPException(400, "本节点不可删除")
+    db.delete(n)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/nodes/{nid}/metrics")
 def node_metrics(nid: int, minutes: int = 60, db=Depends(get_db), user=Depends(get_current_user)):
     """单节点 GPU 指标趋势（DCGM 区间查询；监控大屏主视图已改 Grafana 嵌入）"""

@@ -102,7 +102,11 @@
     "mergeEnqueued": "Tâche de fusion/export en file", "logsTitle": "Journal d'exécution", "noLogs": "(aucun journal)", "paramLoading": "Chargement des paramètres…",
     "stageCpt": "CPT pré-entraînement continu", "stageSft": "SFT fine-tuning supervisé", "stageDpo": "DPO alignement", "stageExport": "Fusion et export",
     "ftLora": "LoRA", "ftFull": "Full complet", "ftFreeze": "Freeze gelé",
-    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3"
+    "dsZero2": "ZeRO-2", "dsZero3": "ZeRO-3",
+    "secDist": "Entraînement distribué", "nodeCount": "Nœuds (conteneurs)", "nprocPerNode": "GPU par nœud", "framework": "Framework d'entraînement",
+    "fwDdp": "DDP natif (parallélisme de données)", "fwFsdP": "PyTorch FSDP", "summaryDist": "Topologie distribuée",
+    "distHint": "Nœuds × GPU/nœud = GPU au total ; multi-GPU/multi-nœud réparti sur le réseau de conteneurs (torchrun), compatible IB/RDMA",
+    "ncclEnv": "Variables NCCL (optionnel)", "ncclEnvTip": "Ex. IB/RDMA : NCCL_IB_HCA=mlx5_0,mlx5_1 · NCCL_SOCKET_IFNAME=eth0 · NCCL_NET_GDR_LEVEL=SYS · NCCL_P2P_DISABLE=0", "ncclAdd": "Ajouter une variable NCCL"
   },
   "pg": {
     "data": "Données et séquences", "train": "Stratégie d'entraînement", "precision": "Précision et quantification", "lora": "LoRA",
