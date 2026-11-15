@@ -247,6 +247,7 @@
     "mGpuMemTemp": "メモリ温度", "mGpuPower": "消費電力", "mGpuXid": "XIDエラー",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "推論キュー", "mInferLatency": "推論レイテンシ p95",
     "mInferDown": "推論サービス停止", "mSystemUp": "ノードオンライン", "promHint": "しきい値ルールは Prometheus がリアルタイムで評価（60 秒持続）、Alertmanager が設定済みチャネルへ通知",
+    "lcTitle": "ログインセキュリティ", "lcDefault": "デフォルト", "lcWhitelist": "IP ホワイトリスト", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "有効にするとリスト内の IP のみログイン可能（カンマ/改行区切り、CIDR 対応）", "lcUserAttempts": "アカウントロック失敗回数", "lcIpAttempts": "IP ロック失敗回数", "lcLockMinutes": "ロック時間（分）",
     "evNodeOnline": "ノード復旧", "evTrainFailed": "学習タスク失敗", "evEvalFailed": "評価タスク失敗",
     "evQuantFailed": "量子化タスク失敗", "evInferDown": "推論サービス利用不可", "eventsTitle": "アラートイベント（直近100件）",
     "colLevel": "レベル", "colTarget": "対象", "colTitle": "タイトル",

@@ -288,6 +288,19 @@ class AlertChannelConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
+class LoginSecurityConfig(Base):
+    """登录安全配置（单行表 id=1）：IP 白名单 + 防暴破锁定参数。
+    UI 可配置（系统管理→设置）；未配置时用 auth 内置默认（5 次/30 次/15 分钟）。"""
+    __tablename__ = "login_security_config"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    ip_whitelist_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # 关闭=不限制
+    ip_whitelist: Mapped[str] = mapped_column(Text, default="")  # 逗号/换行分隔，支持 CIDR（1.2.3.4/24）
+    user_attempts: Mapped[int] = mapped_column(Integer, default=5)   # 单账号失败次数阈值
+    ip_attempts: Mapped[int] = mapped_column(Integer, default=30)    # 单 IP 失败次数阈值
+    lock_minutes: Mapped[int] = mapped_column(Integer, default=15)   # 锁定时长（分钟）
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
 class GuardRule(Base):
     __tablename__ = "guard_rules"
     id: Mapped[int] = mapped_column(primary_key=True)

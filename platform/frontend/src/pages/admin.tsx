@@ -538,22 +538,73 @@ function SettingsTab() {
   const { t, i18n: ti18n } = useTranslation()
   const { mode, setMode } = useTheme()
   return (
-    <Card size="small" title={t('admin.tabSettings')} style={{ maxWidth: 480 }}>
-      <Form layout="vertical">
-        <Form.Item label={t('header.theme')}>
-          <Select value={mode} style={{ width: 200 }}
-            options={[
-              { value: 'light', label: t('header.themeLight') },
-              { value: 'dark', label: t('header.themeDark') },
-              { value: 'system', label: t('header.themeSystem') },
-            ]}
-            onChange={(v) => setMode(v)} />
+    <div>
+      <Card size="small" title={t('admin.tabSettings')} style={{ maxWidth: 480 }}>
+        <Form layout="vertical">
+          <Form.Item label={t('header.theme')}>
+            <Select value={mode} style={{ width: 200 }}
+              options={[
+                { value: 'light', label: t('header.themeLight') },
+                { value: 'dark', label: t('header.themeDark') },
+                { value: 'system', label: t('header.themeSystem') },
+              ]}
+              onChange={(v) => setMode(v)} />
+          </Form.Item>
+          <Form.Item label={t('admin.langLabel')}>
+            <Select value={ti18n.language} style={{ width: 200 }}
+              options={LANGS.map((l) => ({ value: l.code, label: l.label }))}
+              onChange={(v) => setLang(v)} />
+          </Form.Item>
+        </Form>
+      </Card>
+      <LoginSecurityCard />
+    </div>
+  )
+}
+
+/** 登录安全：IP 白名单 + 防暴破锁定参数（DB 持久化，缺省 5 次/30 次/15 分钟） */
+function LoginSecurityCard() {
+  const { t } = useTranslation()
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const [source, setSource] = useState('default')
+  const load = () => api.get('/api/admin/login-config').then((r) => {
+    setSource(r.data.source)
+    form.setFieldsValue({
+      ip_whitelist_enabled: r.data.ip_whitelist_enabled, ip_whitelist: r.data.ip_whitelist,
+      user_attempts: r.data.user_attempts, ip_attempts: r.data.ip_attempts,
+      lock_minutes: r.data.lock_minutes,
+    })
+  }).catch(() => {})
+  useEffect(() => { load() }, [])
+  const save = async () => {
+    const v = await form.validateFields()
+    setSaving(true)
+    try {
+      await api.put('/api/admin/login-config', v)
+      message.success(t('admin.saved')); load()
+    } finally { setSaving(false) }
+  }
+  return (
+    <Card size="small" style={{ maxWidth: 560, marginTop: 12 }}
+      title={<Space>{t('admin.lcTitle')}
+        {source === 'default' && <Tag>{t('admin.lcDefault')}</Tag>}</Space>}
+      extra={<Button type="primary" size="small" loading={saving} onClick={save}>{t('admin.saveCfg')}</Button>}>
+      <Form form={form} layout="vertical"
+        initialValues={{ ip_whitelist_enabled: false, ip_whitelist: '', user_attempts: 5, ip_attempts: 30, lock_minutes: 15 }}>
+        <Space size={8} align="center" style={{ marginBottom: 8 }}>
+          <Form.Item name="ip_whitelist_enabled" valuePropName="checked" noStyle><Switch size="small" /></Form.Item>
+          <span>{t('admin.lcWhitelist')}</span>
+        </Space>
+        <Form.Item name="ip_whitelist" style={{ marginBottom: 12 }}>
+          <Input.TextArea rows={3} placeholder={t('admin.lcWhitelistPh')} />
         </Form.Item>
-        <Form.Item label={t('admin.langLabel')}>
-          <Select value={ti18n.language} style={{ width: 200 }}
-            options={LANGS.map((l) => ({ value: l.code, label: l.label }))}
-            onChange={(v) => setLang(v)} />
-        </Form.Item>
+        <div style={{ color: '#999', fontSize: 12, marginTop: -8, marginBottom: 12 }}>{t('admin.lcWhitelistHint')}</div>
+        <Row gutter={12}>
+          <Col span={8}><Form.Item name="user_attempts" label={t('admin.lcUserAttempts')}><InputNumber size="small" style={{ width: '100%' }} min={1} max={100} /></Form.Item></Col>
+          <Col span={8}><Form.Item name="ip_attempts" label={t('admin.lcIpAttempts')}><InputNumber size="small" style={{ width: '100%' }} min={1} max={1000} /></Form.Item></Col>
+          <Col span={8}><Form.Item name="lock_minutes" label={t('admin.lcLockMinutes')}><InputNumber size="small" style={{ width: '100%' }} min={1} max={1440} /></Form.Item></Col>
+        </Row>
       </Form>
     </Card>
   )

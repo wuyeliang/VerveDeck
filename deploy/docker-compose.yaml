@@ -67,6 +67,8 @@ services:
       ARGILLA_REDIS_URL: redis://redis:6379
     volumes:
       - /data/argilla:/data/argilla
+    ports:
+      - "127.0.0.1:3002:3000"    # 仅本机：web（host 网络）经此转发 /argilla/（3002 避让 grafana 3000）
     depends_on:
       opensearch:
         condition: service_healthy
@@ -156,6 +158,8 @@ services:
       - /data:/data
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/vervedeck:/repo:ro
+    ports:
+      - "127.0.0.1:3001:3001"    # 仅本机：web（host 网络）经此转发 /api/ 与 /v1/
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3001/health || exit 1"]
       interval: 10s
@@ -175,13 +179,14 @@ services:
     image: fintune/web:1.0
     build: ../platform/frontend
     restart: unless-stopped
-    ports:
-      - "443:443"
+    # host 网络：nginx $remote_addr 为真实客户端 IP（登录 IP 白名单依赖；
+    # bridge 端口映射下所有来源都呈现为 docker 网关 IP，白名单失效）
+    # 后端经 127.0.0.1 端口映射访问（backend 3001 / argilla 3002 / grafana 3000）
+    network_mode: host
     volumes:
       - ./tls:/etc/nginx/tls:ro
     depends_on:
       - backend
-    networks: [fintune]
 
   # 节点心跳 Agent：GPU 指标已由 dcgm-exporter（Prometheus 链路）采集，本容器只负责
   # 节点在线判定（agent.ts 心跳）与 GPU 型号登记（agent.names），供平台节点表/离线事件使用

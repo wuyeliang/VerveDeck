@@ -247,6 +247,7 @@
     "mGpuMemTemp": "Mem temp", "mGpuPower": "Power", "mGpuXid": "XID error",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "Inference queue", "mInferLatency": "Inference latency p95",
     "mInferDown": "Inference down", "mSystemUp": "Node up", "promHint": "Threshold rules are evaluated in real time by Prometheus (sustained 60s) and pushed by Alertmanager via the configured channels",
+    "lcTitle": "Login Security", "lcDefault": "Defaults", "lcWhitelist": "IP Whitelist", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "When enabled, only listed IPs can log in (comma/newline separated, CIDR supported)", "lcUserAttempts": "Account lockout attempts", "lcIpAttempts": "IP lockout attempts", "lcLockMinutes": "Lock duration (min)",
     "evNodeOnline": "Compute node back online", "evTrainFailed": "Training job failed", "evEvalFailed": "Eval task failed",
     "evQuantFailed": "Quant task failed", "evInferDown": "Inference service unavailable", "eventsTitle": "Alert events (last 100)",
     "colLevel": "Level", "colTarget": "Target", "colTitle": "Title",

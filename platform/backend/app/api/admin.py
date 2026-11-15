@@ -11,7 +11,8 @@ import time
 from ..database import get_db
 from ..security import get_current_user, require_role, hash_password, new_api_key, can_access_project
 from ..models import (Tenant, User, Project, ProjectMember, ApiKey, GuardRule,
-                      AuditLog, Dataset, AlertRule, AlertEvent, UpgradeTask)
+                      AuditLog, Dataset, AlertRule, AlertEvent, UpgradeTask,
+                      LoginSecurityConfig)
 from ..services import alert_service
 from ..services import prom_service
 from ..services import upgrade_service
@@ -382,6 +383,71 @@ def test_notify_channel(req: dict, db=Depends(get_db),
                         user=Depends(require_role("super_admin"))):
     """按通道发送测试通知（wecom / email）"""
     return alert_service.test_channel(db, str(req.get("channel") or ""))
+
+
+# ---------- 登录安全（IP 白名单 + 防暴破锁定参数） ----------
+
+class LoginConfigReq(BaseModel):
+    ip_whitelist_enabled: bool = False
+    ip_whitelist: str = ""          # 逗号/换行分隔，支持 CIDR
+    user_attempts: int = 5
+    ip_attempts: int = 30
+    lock_minutes: int = 15
+
+
+def _parse_whitelist(text: str) -> list[str]:
+    """解析并校验白名单条目，返回规范化 token 列表（原样返回供展示）"""
+    import ipaddress as _ip
+    out = []
+    for tok in (text or "").replace("\n", ",").replace(" ", ",").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            _ip.ip_network(tok, strict=False)
+        except ValueError:
+            raise HTTPException(400, f"白名单条目非法（需为 IP 或 CIDR）：{tok}")
+        out.append(tok)
+    return out
+
+
+@router.get("/login-config")
+def get_login_config(db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    row = db.get(LoginSecurityConfig, 1)
+    if row is None:
+        return {"ip_whitelist_enabled": False, "ip_whitelist": "",
+                "user_attempts": 5, "ip_attempts": 30, "lock_minutes": 15,
+                "source": "default", "updated_at": ""}
+    return {"ip_whitelist_enabled": bool(row.ip_whitelist_enabled),
+            "ip_whitelist": row.ip_whitelist or "",
+            "user_attempts": row.user_attempts, "ip_attempts": row.ip_attempts,
+            "lock_minutes": row.lock_minutes,
+            "source": "db", "updated_at": str(row.updated_at) if row.updated_at else ""}
+
+
+@router.put("/login-config")
+def save_login_config(req: LoginConfigReq, db=Depends(get_db),
+                      user=Depends(require_role("super_admin"))):
+    if not (1 <= req.user_attempts <= 100):
+        raise HTTPException(400, "账号失败次数阈值需为 1-100")
+    if not (1 <= req.ip_attempts <= 1000):
+        raise HTTPException(400, "IP 失败次数阈值需为 1-1000")
+    if not (1 <= req.lock_minutes <= 1440):
+        raise HTTPException(400, "锁定时长需为 1-1440 分钟")
+    toks = _parse_whitelist(req.ip_whitelist)
+    row = db.get(LoginSecurityConfig, 1)
+    if row is None:
+        row = LoginSecurityConfig(id=1)
+        db.add(row)
+    row.ip_whitelist_enabled = bool(req.ip_whitelist_enabled)
+    row.ip_whitelist = ",".join(toks)
+    row.user_attempts = req.user_attempts
+    row.ip_attempts = req.ip_attempts
+    row.lock_minutes = req.lock_minutes
+    db.commit()
+    from . import auth as _auth
+    _auth.invalidate_login_config_cache()
+    return get_login_config(db=db, user=user)
 
 
 @router.get("/alerts/events")

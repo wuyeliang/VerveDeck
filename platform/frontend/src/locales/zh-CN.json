@@ -247,6 +247,7 @@
     "mGpuMemTemp": "显存温度", "mGpuPower": "功耗", "mGpuXid": "XID 错误",
     "mGpuEccDbe": "ECC dbe", "mInferWaiting": "推理排队", "mInferLatency": "推理延迟 p95",
     "mInferDown": "推理服务宕机", "mSystemUp": "节点在线", "promHint": "阈值规则由 Prometheus 实时评估（持续 60s），经 Alertmanager 按已配置通道推送",
+    "lcTitle": "登录安全", "lcDefault": "默认值", "lcWhitelist": "IP 白名单", "lcWhitelistPh": "192.168.1.0/24, 10.0.0.1", "lcWhitelistHint": "开启后仅名单内 IP 可登录（逗号或换行分隔，支持 CIDR 网段）", "lcUserAttempts": "账号失败锁定次数", "lcIpAttempts": "IP 失败锁定次数", "lcLockMinutes": "锁定时长（分钟）",
     "evNodeOnline": "计算节点恢复在线", "evTrainFailed": "训练任务失败", "evEvalFailed": "评测任务失败",
     "evQuantFailed": "量化任务失败", "evInferDown": "推理服务不可用", "eventsTitle": "告警事件（近 100 条）",
     "colLevel": "级别", "colTarget": "目标", "colTitle": "标题",
