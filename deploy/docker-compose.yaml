@@ -45,8 +45,9 @@ services:
     networks: [fintune]
 
   argilla:
-    image: fintune/argilla:1.0
-    build: ../images/argilla
+    # 官方镜像（argilla-server 2.8.0，与自构版同版本同 CLI）；镜像内以 argilla 用户
+    # (uid=1000) 运行，宿主机数据目录须 chown 1000:1000 /data/argilla
+    image: argilla/argilla-server:v2.8.0
     restart: unless-stopped
     # argilla-server 2.8.0: 数据库由 ARGILLA_ 前缀环境变量配置；
     # 启动前跑迁移并预建服务账号（2.x 改为 DB 级 API key 认证）

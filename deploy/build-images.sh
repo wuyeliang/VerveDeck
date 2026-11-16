@@ -20,8 +20,13 @@ build() {
 
 # 评测引擎（evalscope + 平台 runner）
 build images/evalscope    fintune/evalscope:1.0
-# 数据标注（compose 服务，同样在此统一构建便于一键）
-build images/argilla      fintune/argilla:1.0
+# 数据标注：已切官方镜像 argilla/argilla-server:v2.8.0（部署时确保已拉取）；
+# images/argilla 保留为离线/气隔环境自构兜底——需要时恢复下面两行并去掉 compose 里的官方 image
+# build images/argilla      fintune/argilla:1.0
+if ! docker image inspect argilla/argilla-server:v2.8.0 >/dev/null 2>&1; then
+  echo "==> 拉取 argilla/argilla-server:v2.8.0"
+  docker pull argilla/argilla-server:v2.8.0
+fi
 # PDF 解析（compose 服务，占 1 张 GPU）
 build images/mineru       fintune/mineru:1.0
 # GPU 监控 Agent：直接用 NVIDIA 开源 nvidia/dcgm 镜像（本地零构建），部署时确保已拉取
