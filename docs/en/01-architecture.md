@@ -13,8 +13,10 @@ closed-loop on a single machine (one GPU server), with 7 functional modules:
 | Model Repository | Base model download, LoRA/merged artifacts, lineage | HuggingFace Hub + DVC (local metadata) |
 | Training Center | CPT/SFT/DPO/merge, LoRA/Full/Freeze, DeepSpeed | LLaMA-Factory (task containers) |
 | Evaluation Center | Rule matching / LLM-Judge / evalscope benchmarks | evalscope (task containers) |
-| Inference Deployment | vLLM/SGLang multi-replica, hot LoRA adapter loading | vLLM/SGLang (task containers) |
-| Cluster & Monitoring | GPU heartbeat, queue scheduling, utilization, Dashboard | gpu-agent + scheduler thread |
+| Inference Deployment | vLLM/SGLang multi-replica, hot LoRA adapter loading, OpenAI-compatible proxy | vLLM/SGLang (task containers) |
+| Model Compression | GPTQ/AWQ/LLM.int8 quantization, artifacts auto-registered with lineage | quantization task containers |
+| Cluster & Monitoring | GPU heartbeat, queue scheduling, utilization, dashboards, alerting | gpu-agent + node/dcgm-exporter + Prometheus/Grafana/Alertmanager + scheduler thread |
+| Platform Ops | Image management (lazy load/probe/pull/rebuild), storage backends, cluster upgrade (blue-green), log center | Docker API + S3 + upgrade service |
 
 ```
                         ┌────────────────────────────────────────────┐
@@ -117,6 +119,24 @@ hard isolation is guaranteed by the nvidia runtime.
   (including 401/403 rejections);
 - Guard rules (GuardRule): regex hits on input/output are intercepted, with
   project-level or global scope.
+
+### 2.5 Multi-Node Multi-GPU Distributed Training
+
+- Register-based nodes: each machine's gpu-agent heartbeats (GPU list/driver/CUDA/host metrics); the backend maintains `gpu_nodes` (UNIQUE name);
+- A job declares "nodes × GPUs-per-node"; the scheduler allocates GPUs across nodes;
+- torchrun launches multi-process inside the container network, supporting native DDP / DeepSpeed ZeRO / FSDP; NCCL params for IB/RDMA passed through job advanced parameters.
+
+### 2.6 Monitoring & Alerting (Prometheus Stack)
+
+- Three collection layers: gpu-agent heartbeat (node liveness/driver/CUDA/host metrics) + node-exporter (CPU/memory/disk/network) + dcgm-exporter (GPU utilization/memory/temp/power/ECC/Xid/throttling/Remap); native `/metrics` of vLLM/SGLang/LLaMA-Factory scraped directly by Prometheus (serving QPS/latency/KV cache, training loss/eval);
+- Alerting: DB-managed Prometheus alert rules (UI CRUD + dry-run), routed by Alertmanager to WeCom/email (channels DB-configurable);
+- Visualization: Grafana embedded in the platform dashboard via iframe (`GF_SECURITY_ALLOW_EMBEDDING=true` + `GF_SERVER_ROOT_URL` sub-path, anonymous read-only Viewer).
+
+### 2.7 Cluster Upgrade (Blue-Green)
+
+- Engine kinds (vllm/sglang/llamafactory/gpu-agent): Docker Hub version probe (10min cache) → pull new tag → write runtime pin (`/data/upgrade/image_pins.json`); running jobs untouched, new jobs use the new image;
+- Platform kinds (backend/web): rebuild image from host `/repo` + blue-green container recreate (temp-named new container → verify running → stop old, remove old, rename; service aliases keep DNS stable);
+- Self-upgrade convergence: when backend upgrades itself, the old process dies with its container; the new process's scheduler `converge()` completes the switch each round (15min timeout → failed).
 
 ## 3. Data Directory Layout (host `/data`)
 

@@ -54,6 +54,8 @@ VerveDeck 是一个开箱即用的一体化 LLM 微调训练平台：在单机/�
 | [docs/05-API参考.md](docs/05-API参考.md) | 全模块 REST API 路由表 |
 | [docs/06-测试体系.md](docs/06-测试体系.md) | 双层测试（单元/API 套件 + E2E 10 用例）、运行方式、踩坑约定 |
 | [docs/07-运维手册.md](docs/07-运维手册.md) | 日常命令、故障排查、备份迁移、容量清理、安全基线 |
+| [docs/09-用户手册.md](docs/09-用户手册.md) | 面向使用者的操作手册：登录/数据集/模型仓库/训练/评测/量化/推理/集群运维/系统管理 |
+| [docs/10-技术白皮书.md](docs/10-技术白皮书.md) | 产品定位、总体架构、核心机制（pause 容器/镜像懒加载/血缘/热加载/多机多卡/监控告警/蓝绿升级/安全模型）、部署形态 |
 
 ### 目录结构
 
@@ -199,6 +201,8 @@ Key highlights:
 | [docs/en/05-api-reference.md](docs/en/05-api-reference.md) | REST API route table for all modules |
 | [docs/en/06-testing.md](docs/en/06-testing.md) | Two-tier testing (unit/API suite + 10 E2E cases), how to run, pitfalls |
 | [docs/en/07-operations.md](docs/en/07-operations.md) | Daily commands, troubleshooting, backup/migration, capacity cleanup, security baseline |
+| [docs/en/09-user-guide.md](docs/en/09-user-guide.md) | End-user guide: login/datasets/model repository/training/eval/quantization/serving/cluster ops/system |
+| [docs/en/10-technical-whitepaper.md](docs/en/10-technical-whitepaper.md) | Product positioning, architecture, core mechanisms (pause containers/image lazy loading/lineage/hot loading/multi-node/monitoring/blue-green upgrade/security model), deployment topologies |
 
 > 中文版见上文「文档」表格（docs/ 根目录）。
 

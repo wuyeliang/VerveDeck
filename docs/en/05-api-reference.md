@@ -1,147 +1,237 @@
 # API Reference
 
-Base URL: `https://<ip>/api/...` (443 forces HTTPS via the web reverse proxy;
-inside the container network it is `:3001`; add `-k` to curl for the
-self-signed cert)
-Auth: `Authorization: Bearer <token>` (obtained from `POST /api/auth/login`,
-valid for 72h by default)
+Complete REST API route table of the VerveDeck platform backend, one-to-one with `platform/backend/app/api/*.py` (13 modules, ~110 endpoints).
+
+## General Conventions
+
+- **Base URL**: `https://<host>:443/api/...` (443 forces HTTPS via the web reverse proxy; inside the container network it is `backend:3001`; add `-k` to curl for the self-signed cert)
+- **Auth**: `Authorization: Bearer <token>`. Obtained from `POST /api/auth/login`, valid for 72h by default (adjustable via login config); brute-force protection: user lockout after too many failures
+- **Request/Response**: JSON (file uploads use multipart/form-data)
+- **Error format**: `{"detail": "message"}` with HTTP status 400/401/403/404/409/422/502/503
+- **RBAC**: roles super_admin > tenant_admin > developer > viewer; endpoints requiring a higher role return 403
+- **Batch delete unified response** (all `/batch-delete` endpoints):
+
+  ```json
+  {"deleted": [1, 2], "failed": [{"id": 3, "error": "referenced by a training job"}]}
+  ```
+
+  Executes the single-delete logic in a loop; one failure does not block the rest; referenced/non-existent items go to `failed` with a reason.
+- **Audit**: all write operations and 401/403 denials are recorded in the audit log (queryable via `/api/admin/audit`)
 
 ## Auth /api/auth
 
 | Method | Path | Description |
 |---|---|---|
-| POST | /api/auth/login | `{username, password}` → `{token, user}` |
+| POST | /api/auth/login | `{username, password}` → `{token, user}`; failures counted, lockout after threshold |
 | GET | /api/auth/me | Current user info |
-| PUT | /api/auth/password | Change password `{old_password, new_password}` |
+| PUT | /api/auth/password | Change password `{old_password, new_password}` (forced on first login) |
 
-## Admin /api/admin (admin or project owner)
+## Tenants & Projects /api/admin (super_admin; project owner may manage own project)
 
 | Method | Path | Description |
 |---|---|---|
-| GET/POST | /api/admin/tenants | List tenants / create |
-| GET/POST | /api/admin/projects | List projects / create `{tenant_id, name}` |
+| GET/POST | /api/admin/tenants | List / create tenant `{name}` |
+| GET/POST | /api/admin/projects | List projects (incl. member user-id list) / create `{tenant_id, name}` |
 | PUT | /api/admin/projects/{pid}/members | Update member `{user_id, role}` |
 | DELETE | /api/admin/projects/{pid}/members/{uid} | Remove member |
-| GET/POST | /api/admin/users | List users / create |
+| GET/POST | /api/admin/users | List / create user `{username, password, role}` |
 | PUT | /api/admin/users/{uid} | Modify user (role / password reset) |
-| GET/POST/DELETE | /api/admin/projects/{pid}/api-keys[/{kid}] | Project API keys (auth for the OpenAI-compatible proxy) |
-| GET/POST/DELETE | /api/admin/guard-rules[/{rid}] | Guardrail rules |
-| GET | /api/admin/audit | Audit log (paginated/filterable) |
 
-## Datasets /api/datasets
+### API Keys (OpenAI-compatible proxy auth, model-scoped)
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/datasets?project_id= | List |
-| POST | /api/datasets | Create `{project_id, name, description, kind?, scenario?}` (initializes the DVC repo) |
-| DELETE | /api/datasets/{id} | Delete (local + DVC + **S3 prefix**) |
-| GET | /api/datasets/{id} | Details |
-| GET | /api/datasets/{id}/versions | Version list |
-| POST | /api/datasets/{id}/versions/upload | Upload JSONL/JSON/CSV to create a new version (multipart `file`, `fmt`) |
-| POST | /api/datasets/{id}/versions/{vid}/commit | DVC commit (`v{N}` lands in DVC rev, synced to S3) |
-| GET | /api/datasets/{id}/versions/{vid}/samples?page&size | Sample preview (auto-fetched from S3) |
-| GET | /api/datasets/{id}/versions/{vid}/raw | Original document (parsing artifact) |
-| GET | /api/datasets/{id}/dvc-log | DVC commit history |
-| POST | /api/datasets/parse | Document parsing (MinerU, multipart) → new version |
-| POST | /api/datasets/clean | Cleaning task (backend thread) → new version |
-| POST | /api/datasets/synth | Synthesis task (QA/CoT, calls an inference deployment) → new version |
-| POST | /api/datasets/{id}/annotate | Push to Argilla for annotation |
-| GET | /api/datasets/tasks | Data task queue (parse/clean/synth status polling) |
+| GET/POST | /api/admin/projects/{pid}/api-keys | List / create `{name, models?}` (empty models = unrestricted) |
+| DELETE | /api/admin/projects/{pid}/api-keys/{kid} | Delete (sets is_active=false) |
+| POST | /api/admin/projects/{pid}/api-keys/batch-delete | Batch delete `{ids}` |
 
-## Models /api/models
+### Guard Rules (content-safety interception)
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/models?project_id= | Asset list (base/lora/merged + status; live download size for pending) |
-| GET | /api/models/search?source=hf\|ms&q= | Model search (backend proxy for HuggingFace / ModelScope) |
-| POST | /api/models/base | Register a base model `{project_id, name, hf_id}` (prefix `ms:` for ModelScope) → background download |
-| POST | /api/models/upload | Local upload: zip of a full model dir (multipart) |
-| POST | /api/models | Register an existing local asset `{path, type}` |
-| GET | /api/models/{id} | Details |
-| GET | /api/models/{id}/lineage | Lineage chain |
-| DELETE | /api/models/{id} | Delete |
+| GET/POST | /api/admin/guard-rules | List / create (regex/keyword, input/output, scope) |
+| DELETE | /api/admin/guard-rules/{rid} | Delete |
+| POST | /api/admin/guard-rules/batch-delete | Batch delete `{ids}` |
 
-## Training /api/training
+### Alert Rules & Notification
 
 | Method | Path | Description |
 |---|---|---|
-| POST | /api/training/jobs | Create job `{project_id, name, stage(cpt/sft/dpo/export), finetuning_type(lora/full/freeze), base_model_id, dataset_version_ids[], hyperparams{}, deepspeed(none/zero2/zero3), gpu_count, priority, adapter_asset_id?}` |
-| GET | /api/training/jobs?project_id&status | List |
-| GET | /api/training/jobs/{id} | Details (incl. checkpoints, container_name) |
-| GET | /api/training/jobs/{id}/metrics | tensorboard metrics (loss/lr/epoch series) |
-| GET | /api/training/jobs/{id}/logs?tail= | Tail of the run log |
-| POST | /api/training/jobs/{id}/cancel | Cancel (kill process + remove container, checkpoints kept) |
-| POST | /api/training/jobs/{id}/resume | Resume from checkpoint (creates a new job; empty `checkpoint`=latest) |
-| GET | /api/training/params | **Full parameter surface (10 groups, 94 params; drives the UI form)** |
-| GET | /api/training/templates | Stage hyperparameter templates |
+| GET/POST | /api/admin/alerts/rules | List / create alert rule (Prometheus expr, severity, duration) |
+| PUT | /api/admin/alerts/rules/{rid} | Update rule |
+| DELETE | /api/admin/alerts/rules/{rid} | Delete |
+| POST | /api/admin/alerts/rules/batch-delete | Batch delete `{ids}` |
+| POST | /api/admin/alerts/rules/{rid}/test | Dry-run rule (currently firing or not) |
+| GET/PUT | /api/admin/notify-config | Notification channels (WeCom / email, DB-backed) |
+| POST | /api/admin/notify-config/test | Send test notification |
+| GET | /api/admin/alerts/events | Alert event stream `{limit}` |
 
-## Evaluation /api/evals
+### Login Security & System Config
 
 | Method | Path | Description |
 |---|---|---|
-| POST | /api/evals | Create `{project_id, dataset_version_id, target_deployment_id / target_asset_id, method(rule/judge/both/benchmark), judge_deployment_id?, benchmark?, limit?}` |
+| GET/PUT | /api/admin/login-config | Login security params (IP whitelist, lockout threshold/duration) |
+| GET | /api/admin/audit | Audit log (pagination + action/user/status filters) |
+| GET | /api/admin/audit/actions | Audit action enum |
+| GET/PUT | /api/admin/time-config | Timezone config |
+| POST | /api/admin/time-config/probe | Probe host timezone |
+
+## Cluster Upgrade /api/admin/upgrade (super_admin)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/admin/upgrade/status | Per-component upgrade state (current pin / local image / runtime version / running task) |
+| POST | /api/admin/upgrade/check | `{target, force?}` → available versions from Docker Hub (10min cache) |
+| POST | /api/admin/upgrade/execute | `{target, to_version}` create upgrade task (pull new tag / rebuild + blue-green container switch) |
+| GET | /api/admin/upgrade/tasks | Upgrade task history `{limit}` |
+
+Components: vllm / sglang / llamafactory / gpu_agent (pull kind, tag swap); backend / web (build kind, rebuilt from host /repo + blue-green container recreate; self-upgrade converges via the scheduler).
+
+## Datasets /api/datasets (developer+, tenant-scoped)
+
+| Method | Path | Description |
+|---|---|---|
+| GET/POST | /api/datasets | List (search/paging) / create |
+| DELETE | /api/datasets/{dsid} | Delete (409 when referenced) |
+| POST | /api/datasets/batch-delete | Batch delete `{ids}` |
+| GET | /api/datasets/tasks | Background dataset task status |
+| GET | /api/datasets/template | Template download |
+| POST | /api/datasets/import-s3 | Import from object storage |
+| GET | /api/datasets/{dsid} | Detail |
+| GET | /api/datasets/{dsid}/versions | Version list (DVC) |
+| POST | /api/datasets/{dsid}/versions/{vid}/commit | Commit new version |
+| GET | /api/datasets/{dsid}/versions/{vid}/samples | Sample preview |
+| GET | /api/datasets/{dsid}/versions/{vid}/raw | Raw file |
+| GET | /api/datasets/{dsid}/dvc-log | DVC operation log |
+| POST | /api/datasets/{dsid}/versions/upload | Upload new version (multipart) |
+| POST | /api/datasets/parse | File parsing (PDF/Office → text, MinerU) |
+| POST | /api/datasets/clean | Data cleaning task |
+| POST | /api/datasets/synth | Data synthesis task |
+| POST | /api/datasets/{dsid}/annotate | Annotation task (Argilla) |
+
+## Model Repository /api/models (developer+)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/models | Asset list (search/category/lineage filters) |
+| POST | /api/models/base | Register base model (local path / download) |
+| GET | /api/models/search | Search HF / ModelScope |
+| POST | /api/models/upload | Local upload (multipart, resumable) |
+| POST | /api/models | Create asset record |
+| PUT | /api/models/{aid}/meta | Update metadata (category/notes) |
+| GET | /api/models/{aid} | Detail |
+| GET | /api/models/{aid}/lineage | Lineage chain (base → LoRA → merged/quantized artifact) |
+| DELETE | /api/models/{aid} | Delete (409 when referenced; quantized artifacts protected) |
+| POST | /api/models/batch-delete | Batch delete `{ids}` |
+
+## Training /api/training (developer+)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/training/jobs | Create job (94 params aligned with LLaMA-Factory; multi-node/multi-GPU: nodes × GPUs-per-node, torchrun/DDP/DeepSpeed/FSDP) |
+| GET | /api/training/jobs | Job list |
+| GET | /api/training/jobs/{jid} | Detail (incl. full training-param snapshot) |
+| GET | /api/training/jobs/{jid}/metrics | Training curves (loss/eval, via Prometheus) |
+| GET | /api/training/jobs/{jid}/logs | Live logs |
+| POST | /api/training/jobs/{jid}/cancel | Cancel (container paused, scene preserved) |
+| DELETE | /api/training/jobs/{jid} | Delete record (artifacts protected) |
+| POST | /api/training/jobs/{jid}/resume | Resume (continue from paused scene) |
+| GET | /api/training/params | Param metadata (94 × 10 groups) |
+| GET | /api/training/templates | Training templates |
+
+## Evaluation /api/evals (developer+)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/evals | Create eval (rule-based / LLM judge, baseline comparison) |
 | GET | /api/evals | List |
-| GET | /api/evals/{id} | Details (summary + details) |
-| GET | /api/evals/{id}/report | Download the evaluation report (Markdown) |
+| GET | /api/evals/{tid} | Detail |
+| GET | /api/evals/{tid}/report | Report (JSON, downloadable Markdown) |
 | POST | /api/evals/compare | Multi-task comparison |
-| DELETE | /api/evals/{id} | Delete |
+| DELETE | /api/evals/{tid} | Delete |
+| POST | /api/evals/batch-delete | Batch delete `{ids}` |
 
-## Inference /api/inference/deployments
+## Model Compression (Quantization) /api/quantize (developer+)
 
 | Method | Path | Description |
 |---|---|---|
-| POST | /api/inference/deployments | Create `{project_id, name, model_asset_id, engine(vllm/sglang), quantization, tensor_parallel, max_model_len, gpu_mem_util, replicas, enable_lora?, lora_adapters?, description?}` |
+| GET | /api/quantize/methods | Method metadata (GPTQ/AWQ/LLM.int8/GPTQ-v2 etc., incl. hardware requirements) |
+| GET/POST | /api/quantize | Task list / create (4 quantization modes; artifacts auto-registered as merged assets with lineage) |
+| GET | /api/quantize/{tid} | Detail |
+| GET | /api/quantize/{tid}/logs | Logs |
+| DELETE | /api/quantize/{tid} | Delete (registered artifacts of succeeded tasks protected, 400) |
+| POST | /api/quantize/batch-delete | Batch delete `{ids}` |
+
+## Inference Deployment /api/inference (developer+)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/inference/deployments | Create deployment (vLLM/SGLang, advanced params: max_num_seqs/dtype/prefix_caching/chunked_prefill/served_model_name/api_key/extra_args etc.) |
 | GET | /api/inference/deployments | List |
-| GET | /api/inference/deployments/{id} | Details (endpoint / containers / status) |
-| POST | /api/inference/deployments/{id}/start | Start |
-| POST | /api/inference/deployments/{id}/stop | Stop |
-| POST | /api/inference/deployments/{id}/scale | Scale replicas `{replicas}` |
-| GET | /api/inference/deployments/{id}/logs | Logs |
-| POST | /api/inference/deployments/{id}/adapters | Mount LoRA `{name, asset_id}` (vLLM hot-load) |
-| DELETE | /api/inference/deployments/{id}/adapters/{name} | Unload LoRA |
-| DELETE | /api/inference/deployments/{id} | Delete deployment |
+| GET | /api/inference/deployments/{did} | Detail (incl. openai_base_url example) |
+| POST | /api/inference/deployments/{did}/start | Start |
+| POST | /api/inference/deployments/{did}/stop | Stop |
+| DELETE | /api/inference/deployments/{did} | Delete (stops first if running) |
+| POST | /api/inference/deployments/batch-delete | Batch delete `{ids}` (running ones stopped first) |
+| POST | /api/inference/deployments/{did}/scale | Scale replicas `{replicas}` |
+| GET | /api/inference/deployments/{did}/logs | Engine logs |
+| GET | /api/inference/deployments/{did}/metrics | Engine metrics (QPS/latency/KV cache, via Prometheus) |
+| POST | /api/inference/deployments/{did}/adapters | LoRA hot-load `{name}` (attach adapter without restart) |
+| DELETE | /api/inference/deployments/{did}/adapters/{name} | LoRA hot-unload |
 
-Once a deployment is ready it exposes an **OpenAI-compatible endpoint**
-(`https://<ip>/v1/<deploy_name>/chat/completions`), authenticated with a project
-API key; guardrails apply to the output side.
+### OpenAI-Compatible Proxy
 
-## Model Compression /api/quantize
+`POST/GET /v1/{deploy_name}/{rest:path}` (via web 443 reverse proxy)
 
-| Method | Path | Description |
-|---|---|---|
-| GET | /api/quantize/methods | Supported quantization methods (bnb4/bnb8/gptq4/awq4) |
-| GET | /api/quantize?project_id= | Quantization task list |
-| POST | /api/quantize | Create task `{project_id, name, model_asset_id, method}` |
-| GET | /api/quantize/{id} | Details |
-| GET | /api/quantize/{id}/logs?tail= | Run log tail |
-| DELETE | /api/quantize/{id} | Delete (terminal-state tasks only) |
+- Auth: `Authorization: Bearer <project API Key>` (when the Key is model-scoped, the request model is validated)
+- Pass-through: `/v1/{deploy_name}/chat/completions` (incl. streaming SSE), `/v1/{deploy_name}/models`, etc.
+- Guardrails: input/output matching a guard rule returns 451
+- Returns 503 when the deployment is not running; served_model_name mapping auto-normalizes the request model
 
-Quantized artifacts are auto-registered in the model repository as `type=merged`
-and can be deployed directly.
-
-## Cluster /api/cluster
+## Cluster Ops /api/cluster (developer+ read; node writes need super_admin)
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/cluster/nodes | GPU nodes (heartbeat / online status) |
-| GET | /api/cluster/nodes/{id}/metrics | Historical utilization curves |
-| GET | /api/cluster/queue | Queued + running tasks |
-| PUT | /api/cluster/queue/{jid} | Adjust priority `{priority}` |
-| POST | /api/cluster/queue/{jid}/promote | Move to front of queue |
-| GET | /api/cluster/utilization | Current GPU occupancy breakdown |
+| GET | /api/cluster/nodes | Compute nodes (heartbeat/driver/CUDA/host CPU/mem/disk/net/GPU detail/DCGM health) |
+| POST | /api/cluster/nodes | Register node (multi-node scaling) |
+| PUT | /api/cluster/nodes/{nid} | Update node |
+| DELETE | /api/cluster/nodes/{nid} | Remove node |
+| GET | /api/cluster/nodes/{nid}/metrics | Node metric history `{minutes}` (Prometheus) |
+| GET | /api/cluster/system | System metrics (CPU/mem/disk/net/OS) |
+| GET | /api/cluster/queue | Task queue (queued/running, GPU usage) |
+| PUT | /api/cluster/queue/{jid} | Adjust priority `{priority 1-9}` |
+| POST | /api/cluster/queue/{jid}/promote | Promote to head of queue |
+| GET | /api/cluster/utilization | Utilization summary |
+| GET | /api/cluster/inference | Inference resource usage |
 
-## Dashboard /api/dashboard
+## Monitoring & Logs
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/dashboard/summary | Aggregates: dataset/model/task/eval/deployment counts, GPU status, **object storage health (storage)**, recent tasks/evals/deployments/audit |
+| GET | /api/dashboard/summary | Dashboard summary (jobs/resources/alerts aggregate) |
+| GET | /api/logs/services | Service (container) list |
+| GET | /api/logs | Container logs `{service, tail, ...}` |
 
-## General Conventions
+## Object Storage /api/storage (super_admin)
 
-- Errors: HTTP 4xx/5xx + `{"detail": "..."}`; both 401/403 are written to the
-  audit log;
-- List pagination: most endpoints take `?page&size` or `limit` (see the
-  specific implementation);
-- Task-entity state machine: `queued → running → succeeded / failed / cancelled`;
-- All write operations require the corresponding project role:
-  `owner/admin/developer` (viewer is read-only).
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/storage | Storage overview (per-backend usage) |
+| GET | /api/storage/objects | Object browse `{prefix, backend}` (S3 directory-style) |
+| POST | /api/storage/objects/batch-delete | Batch delete `{names, backend}` (S3 idempotent semantics) |
+| DELETE | /api/storage/objects | Delete single object `{name, backend}` |
+| GET/POST | /api/storage/backends | Backend list / add (S3-compatible: endpoint/ak/sk/bucket) |
+| POST | /api/storage/backends/{bid}/test | Connectivity test |
+| DELETE | /api/storage/backends/{bid} | Delete backend |
+
+## Image Management /api/images (super_admin)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/images | Platform engine image inventory (version probe 5min cache + stale fallback, non-blocking; custom images; pull/build status) |
+| GET | /api/images/custom | Custom image list |
+| POST | /api/images/custom | Register custom image `{name: tag, note}` (domestic accelerators etc.) |
+| DELETE | /api/images/custom/{cid} | Remove registration |
+| POST | /api/images/custom/batch-delete | Batch remove `{ids}` |
+| POST | /api/images/{key}/probe | Force version probe (synchronous; key: vllm/sglang/llamafactory/gpu-agent) |
+| POST | /api/images/{key}/refresh | Background pull/rebuild `{force?}` (async, status polled via GET /api/images) |

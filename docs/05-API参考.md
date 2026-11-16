@@ -1,123 +1,237 @@
 # API 参考
 
-Base URL：`https://<ip>/api/...`（443 强制 HTTPS，经 web 反代；容器内网为 `:3001`；自签证书 curl 需加 `-k`）
-认证：`Authorization: Bearer <token>`（`POST /api/auth/login` 获取，默认 72h 有效）
+VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/app/api/*.py` 一一对应（13 个模块，约 110 个端点）。
+
+## 通用约定
+
+- **Base URL**：`https://<host>:443/api/...`（443 强制 HTTPS，经 web 反代；容器内网为 `backend:3001`；自签证书 curl 需加 `-k`）
+- **认证**：`Authorization: Bearer <token>`。`POST /api/auth/login` 获取，默认 72h 有效（可由登录配置调整）；暴力破解保护：失败超限锁定用户
+- **请求/响应**：JSON（文件上传除外，为 multipart/form-data）
+- **错误格式**：`{"detail": "错误信息"}`，HTTP 状态码 400/401/403/404/409/422/502/503
+- **RBAC**：角色 super_admin > tenant_admin > developer > viewer；标注权限的端点低于该角色返回 403
+- **批量删除统一响应**（所有 `/batch-delete` 端点）：
+
+  ```json
+  {"deleted": [1, 2], "failed": [{"id": 3, "error": "被训练任务引用"}]}
+  ```
+
+  循环执行单删逻辑，单个失败不阻塞其余；被引用/不存在的条目进 `failed` 并附原因。
+- **审计**：所有写操作与 401/403 拒绝均记入审计日志（`/api/admin/audit` 可查）
 
 ## 认证 /api/auth
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | /api/auth/login | `{username, password}` → `{token, user}` |
+| POST | /api/auth/login | `{username, password}` → `{token, user}`；失败计次，超限锁定 |
 | GET | /api/auth/me | 当前用户信息 |
-| PUT | /api/auth/password | 修改密码 `{old_password, new_password}` |
+| PUT | /api/auth/password | 修改密码 `{old_password, new_password}`（首次登录强制改密） |
 
-## 管理 /api/admin（admin 或项目 owner）
+## 租户与项目 /api/admin（super_admin；项目 owner 可管理本项目）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET/POST | /api/admin/tenants | 租户列表 / 创建 |
-| GET/POST | /api/admin/projects | 项目列表 / 创建 `{tenant_id, name}` |
+| GET/POST | /api/admin/tenants | 租户列表 / 创建 `{name}` |
+| GET/POST | /api/admin/projects | 项目列表（含 members 用户 id 列表）/ 创建 `{tenant_id, name}` |
 | PUT | /api/admin/projects/{pid}/members | 更新成员 `{user_id, role}` |
 | DELETE | /api/admin/projects/{pid}/members/{uid} | 移除成员 |
-| GET/POST | /api/admin/users | 用户列表 / 创建 |
-| PUT | /api/admin/users/{uid} | 修改用户（角色/密码重置） |
-| GET/POST/DELETE | /api/admin/projects/{pid}/api-keys[/{kid}] | 项目 API Key（OpenAI 兼容代理鉴权） |
-| GET/POST/DELETE | /api/admin/guard-rules[/{rid}] | 护栏规则 |
-| GET | /api/admin/audit | 审计日志（分页/过滤） |
+| GET/POST | /api/admin/users | 用户列表 / 创建 `{username, password, role}` |
+| PUT | /api/admin/users/{uid} | 修改用户（角色/重置密码） |
 
-## 数据集 /api/datasets
+### API Key（OpenAI 兼容代理鉴权，可限定模型）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/datasets?project_id= | 列表 |
-| POST | /api/datasets | 创建 `{project_id, name, description}`（初始化 DVC 仓） |
-| DELETE | /api/datasets/{id} | 删除（本地 + DVC + **S3 前缀**） |
-| GET | /api/datasets/{id} | 详情 |
-| GET | /api/datasets/{id}/versions | 版本列表 |
-| POST | /api/datasets/{id}/versions/upload | 上传 JSONL/JSON/CSV 生成新版本（multipart `file`，`fmt`） |
-| POST | /api/datasets/{id}/versions/{vid}/commit | DVC commit（`v{N}` 落 DVC rev，并同步 S3） |
-| GET | /api/datasets/{id}/versions/{vid}/samples?page&size | 样本预览（自动回源 S3） |
-| GET | /api/datasets/{id}/versions/{vid}/raw | 原始文档（解析产物） |
-| GET | /api/datasets/{id}/dvc-log | DVC 提交历史 |
-| POST | /api/datasets/parse | 文档解析（MinerU，multipart）→ 新版本 |
-| POST | /api/datasets/clean | 清洗任务（backend 线程）→ 新版本 |
-| POST | /api/datasets/synth | 合成任务（QA/CoT，调推理部署）→ 新版本 |
-| POST | /api/datasets/{id}/annotate | 推送 Argilla 标注 |
-| GET | /api/datasets/tasks | 数据任务队列（parse/clean/synth 状态轮询） |
+| GET/POST | /api/admin/projects/{pid}/api-keys | 列表 / 创建 `{name, models?}`（models 留空=不限） |
+| DELETE | /api/admin/projects/{pid}/api-keys/{kid} | 删除（置 is_active=false） |
+| POST | /api/admin/projects/{pid}/api-keys/batch-delete | 批量删除 `{ids}` |
 
-## 模型 /api/models
+### 护栏规则（内容安全拦截）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/models?project_id= | 资产列表（base/lora/merged + status） |
-| POST | /api/models/base | 注册基座 `{project_id, name, hf_id}` → 后台下载 |
-| POST | /api/models | 登记已有本地资产 `{path, type}` |
-| GET | /api/models/{id} | 详情 |
-| GET | /api/models/{id}/lineage | 血缘链 |
-| DELETE | /api/models/{id} | 删除 |
+| GET/POST | /api/admin/guard-rules | 列表 / 创建（正则/关键词、输入/输出、作用域） |
+| DELETE | /api/admin/guard-rules/{rid} | 删除 |
+| POST | /api/admin/guard-rules/batch-delete | 批量删除 `{ids}` |
 
-## 训练 /api/training
+### 告警规则与通知
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | /api/training/jobs | 创建任务 `{project_id, name, stage(cpt/sft/dpo/export), finetuning_type(lora/full/freeze), base_model_id, dataset_version_ids[], hyperparams{}, deepspeed(none/zero2/zero3), gpu_count, priority, adapter_asset_id?}` |
-| GET | /api/training/jobs?project_id&status | 列表 |
-| GET | /api/training/jobs/{id} | 详情（含 checkpoints、container_name） |
-| GET | /api/training/jobs/{id}/metrics | tensorboard 指标（loss/lr/epoch 序列） |
-| GET | /api/training/jobs/{id}/logs?tail= | 运行日志尾部 |
-| POST | /api/training/jobs/{id}/cancel | 取消（杀进程 + 删容器，保留 checkpoint） |
-| POST | /api/training/jobs/{id}/resume | 断点续训（新建任务，`checkpoint` 空=最新） |
-| GET | /api/training/params | **全量参数面（10 组 94 参数，前端表单驱动）** |
-| GET | /api/training/templates | 阶段超参模板 |
+| GET/POST | /api/admin/alerts/rules | 告警规则列表 / 创建（Prometheus expr、级别、持续时长） |
+| PUT | /api/admin/alerts/rules/{rid} | 更新规则 |
+| DELETE | /api/admin/alerts/rules/{rid} | 删除 |
+| POST | /api/admin/alerts/rules/batch-delete | 批量删除 `{ids}` |
+| POST | /api/admin/alerts/rules/{rid}/test | 试算规则（当前是否触发） |
+| GET/PUT | /api/admin/notify-config | 通知通道配置（企业微信/邮件，DB 化） |
+| POST | /api/admin/notify-config/test | 发送测试通知 |
+| GET | /api/admin/alerts/events | 告警事件流 `{limit}` |
 
-## 评测 /api/evals
+### 登录安全与系统配置
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | /api/evals | 创建 `{project_id, dataset_version_id, target_deployment_id / target_asset_id, method(rule/judge/both/benchmark), judge_deployment_id?, benchmark?, limit?}` |
+| GET/PUT | /api/admin/login-config | 登录安全参数（IP 白名单、失败锁定阈值/时长） |
+| GET | /api/admin/audit | 审计日志（分页 + 动作/用户/状态过滤） |
+| GET | /api/admin/audit/actions | 审计动作枚举 |
+| GET/PUT | /api/admin/time-config | 时区配置 |
+| POST | /api/admin/time-config/probe | 探测宿主时区 |
+
+## 集群升级 /api/admin/upgrade（super_admin）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/admin/upgrade/status | 各组件升级状态（当前 pin / 本地镜像 / 运行时版本 / 进行中任务） |
+| POST | /api/admin/upgrade/check | `{target, force?}` → Docker Hub 可用版本列表（10min 缓存） |
+| POST | /api/admin/upgrade/execute | `{target, to_version}` 创建升级任务（pull 换 tag / build 重建 + 蓝绿切容器） |
+| GET | /api/admin/upgrade/tasks | 升级任务历史 `{limit}` |
+
+组件：vllm / sglang / llamafactory / gpu_agent（pull 类，换 tag）；backend / web（build 类，以宿主 /repo 重建 + 蓝绿重建容器，自升级由调度器 converge 兜底）。
+
+## 数据集 /api/datasets（developer+，租户内数据）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET/POST | /api/datasets | 列表（搜索/分页）/ 创建 |
+| DELETE | /api/datasets/{dsid} | 删除（被引用时 409） |
+| POST | /api/datasets/batch-delete | 批量删除 `{ids}` |
+| GET | /api/datasets/tasks | 数据集后台任务状态 |
+| GET | /api/datasets/template | 模板下载 |
+| POST | /api/datasets/import-s3 | 从对象存储导入 |
+| GET | /api/datasets/{dsid} | 详情 |
+| GET | /api/datasets/{dsid}/versions | 版本列表（DVC） |
+| POST | /api/datasets/{dsid}/versions/{vid}/commit | 提交新版本 |
+| GET | /api/datasets/{dsid}/versions/{vid}/samples | 抽样查看 |
+| GET | /api/datasets/{dsid}/versions/{vid}/raw | 原始文件 |
+| GET | /api/datasets/{dsid}/dvc-log | DVC 操作日志 |
+| POST | /api/datasets/{dsid}/versions/upload | 上传新版本（multipart） |
+| POST | /api/datasets/parse | 文件解析（PDF/Office → 文本，MinerU） |
+| POST | /api/datasets/clean | 数据清洗任务 |
+| POST | /api/datasets/synth | 数据合成任务 |
+| POST | /api/datasets/{dsid}/annotate | 标注任务（Argilla） |
+
+## 模型仓库 /api/models（developer+）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/models | 资产列表（搜索/分类/血缘过滤） |
+| POST | /api/models/base | 登记基座模型（本地路径/下载） |
+| GET | /api/models/search | HF / ModelScope 搜索 |
+| POST | /api/models/upload | 本地上传（multipart，断点续传） |
+| POST | /api/models | 创建资产记录 |
+| PUT | /api/models/{aid}/meta | 修改元数据（分类/说明） |
+| GET | /api/models/{aid} | 详情 |
+| GET | /api/models/{aid}/lineage | 血缘链（基座→LoRA→合并/量化产物） |
+| DELETE | /api/models/{aid} | 删除（被引用时 409；量化产物有保护规则） |
+| POST | /api/models/batch-delete | 批量删除 `{ids}` |
+
+## 训练 /api/training（developer+）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/training/jobs | 创建训练任务（94 参数对齐 LLaMA-Factory；多机多卡：节点数×每节点卡数，torchrun/DDP/DeepSpeed/FSDP） |
+| GET | /api/training/jobs | 任务列表 |
+| GET | /api/training/jobs/{jid} | 详情（含完整训练参数快照） |
+| GET | /api/training/jobs/{jid}/metrics | 训练曲线（loss/eval，经 Prometheus） |
+| GET | /api/training/jobs/{jid}/logs | 实时日志 |
+| POST | /api/training/jobs/{jid}/cancel | 取消（容器 pause 保留现场） |
+| DELETE | /api/training/jobs/{jid} | 删除记录（产物受保护） |
+| POST | /api/training/jobs/{jid}/resume | 恢复（从 pause 现场续跑） |
+| GET | /api/training/params | 参数元数据（94 项 × 10 组） |
+| GET | /api/training/templates | 训练模板 |
+
+## 评测 /api/evals（developer+）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/evals | 创建评测任务（规则/LLM 评审，基线模型对比） |
 | GET | /api/evals | 列表 |
-| GET | /api/evals/{id} | 详情（summary + details 分页） |
+| GET | /api/evals/{tid} | 详情 |
+| GET | /api/evals/{tid}/report | 报告（JSON，可下载 Markdown） |
 | POST | /api/evals/compare | 多任务对比 |
-| DELETE | /api/evals/{id} | 删除 |
+| DELETE | /api/evals/{tid} | 删除 |
+| POST | /api/evals/batch-delete | 批量删除 `{ids}` |
 
-## 推理 /api/inference/deployments
+## 模型压缩（量化）/api/quantize（developer+）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | /api/inference/deployments | 创建 `{project_id, name, model_asset_id, engine(vllm/sglang), tensor_parallel, replicas, port?, env?}` |
+| GET | /api/quantize/methods | 量化方法元数据（GPTQ/AWQ/LLM.int8/GPTQ-v2 等，含硬件要求） |
+| GET/POST | /api/quantize | 任务列表 / 创建（4 种量化方式；产物自动注册为 merged 资产并挂血缘） |
+| GET | /api/quantize/{tid} | 详情 |
+| GET | /api/quantize/{tid}/logs | 日志 |
+| DELETE | /api/quantize/{tid} | 删除（已成功任务的已注册产物受保护，400 拒绝） |
+| POST | /api/quantize/batch-delete | 批量删除 `{ids}` |
+
+## 推理部署 /api/inference（developer+）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/inference/deployments | 创建部署（vLLM/SGLang，高级参数：max_num_seqs/dtype/prefix_caching/chunked_prefill/served_model_name/api_key/extra_args 等） |
 | GET | /api/inference/deployments | 列表 |
-| GET | /api/inference/deployments/{id} | 详情（endpoint / 容器 / 状态） |
-| POST | /api/inference/deployments/{id}/start | 启动 |
-| POST | /api/inference/deployments/{id}/stop | 停止 |
-| POST | /api/inference/deployments/{id}/scale | 扩缩副本 `{replicas}` |
-| GET | /api/inference/deployments/{id}/logs | 日志 |
-| POST | /api/inference/deployments/{id}/adapters | 挂载 LoRA `{name, asset_id}`（vLLM 热加载） |
-| DELETE | /api/inference/deployments/{id}/adapters/{name} | 卸载 LoRA |
-| DELETE | /api/inference/deployments/{id} | 删除部署 |
+| GET | /api/inference/deployments/{did} | 详情（含 openai_base_url 示例） |
+| POST | /api/inference/deployments/{did}/start | 启动 |
+| POST | /api/inference/deployments/{did}/stop | 停止 |
+| DELETE | /api/inference/deployments/{did} | 删除（运行中先停） |
+| POST | /api/inference/deployments/batch-delete | 批量删除 `{ids}`（运行中先 stop 再删） |
+| POST | /api/inference/deployments/{did}/scale | 副本扩缩 `{replicas}` |
+| GET | /api/inference/deployments/{did}/logs | 引擎日志 |
+| GET | /api/inference/deployments/{did}/metrics | 引擎指标（QPS/时延/KV 缓存，经 Prometheus） |
+| POST | /api/inference/deployments/{did}/adapters | LoRA 热加载 `{name}`（不停机挂适配器） |
+| DELETE | /api/inference/deployments/{did}/adapters/{name} | LoRA 热卸载 |
 
-部署完成后提供 **OpenAI 兼容端点**（`https://<ip>/v1/<deploy_name>/chat/completions`），
-以项目 API Key 鉴权；护栏在输出侧生效。
+### OpenAI 兼容代理
 
-## 集群 /api/cluster
+`POST/GET /v1/{deploy_name}/{rest:path}`（经 web 443 反代）
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | /api/cluster/nodes | GPU 节点（心跳/在线状态） |
-| GET | /api/cluster/nodes/{id}/metrics | 历史利用率曲线 |
-| GET | /api/cluster/queue | 排队 + 运行中任务 |
-| PUT | /api/cluster/queue/{jid} | 调整优先级 `{priority}` |
-| POST | /api/cluster/queue/{jid}/promote | 提至队首 |
-| GET | /api/cluster/utilization | 当前 GPU 占用明细 |
+- 鉴权：`Authorization: Bearer <项目 API Key>`（Key 限定了 models 时校验请求 model）
+- 透传：`/v1/{deploy_name}/chat/completions`（含流式 SSE）、`/v1/{deploy_name}/models` 等
+- 护栏：输入/输出内容匹配护栏规则时返回 451
+- 部署非 running 时返回 503；served_model_name 映射自动归一请求体 model
 
-## Dashboard /api/dashboard
+## 集群运维 /api/cluster（developer+ 读；节点写需 super_admin）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/dashboard/summary | 汇总：数据集/模型/任务/评测/部署计数、GPU 状态、**对象存储健康（storage）**、最近任务 |
+| GET | /api/cluster/nodes | 计算节点列表（心跳/驱动/CUDA/宿主 CPU/内存/磁盘/网络/GPU 明细/DCGM 健康度） |
+| POST | /api/cluster/nodes | 注册节点（多机扩展） |
+| PUT | /api/cluster/nodes/{nid} | 更新节点 |
+| DELETE | /api/cluster/nodes/{nid} | 移除节点 |
+| GET | /api/cluster/nodes/{nid}/metrics | 节点指标历史 `{minutes}`（Prometheus） |
+| GET | /api/cluster/system | 系统指标（CPU/内存/磁盘/网络/OS） |
+| GET | /api/cluster/queue | 任务队列（queued/running，GPU 占用） |
+| PUT | /api/cluster/queue/{jid} | 调整优先级 `{priority 1-9}` |
+| POST | /api/cluster/queue/{jid}/promote | 插队到队首 |
+| GET | /api/cluster/utilization | 利用率汇总 |
+| GET | /api/cluster/inference | 推理资源占用 |
 
-## 通用约定
+## 监控与日志
 
-- 错误：HTTP 4xx/5xx + `{"detail": "..."}`；401/403 均写审计日志；
-- 列表分页：多数接口 `?page&size` 或 `limit`（见具体实现）；
-- 任务类实体状态机：`queued → running → succeeded / failed / cancelled`；
-- 所有写操作需要对应项目角色：`owner/admin/developer`（viewer 只读）。
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/dashboard/summary | Dashboard 汇总（任务/资源/告警聚合） |
+| GET | /api/logs/services | 服务列表（容器） |
+| GET | /api/logs | 容器日志 `{service, tail, ...}` |
+
+## 对象存储 /api/storage（super_admin）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/storage | 存储概览（各后端用量） |
+| GET | /api/storage/objects | 对象浏览 `{prefix, backend}`（S3 目录式） |
+| POST | /api/storage/objects/batch-delete | 批量删除 `{names, backend}`（S3 幂等语义） |
+| DELETE | /api/storage/objects | 单对象删除 `{name, backend}` |
+| GET/POST | /api/storage/backends | 后端列表 / 添加（S3 兼容：endpoint/ak/sk/bucket） |
+| POST | /api/storage/backends/{bid}/test | 连通性测试 |
+| DELETE | /api/storage/backends/{bid} | 删除后端 |
+
+## 镜像管理 /api/images（super_admin）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/images | 平台引擎镜像清单（版本探测 5min 缓存 + stale 兜底非阻塞；自定义镜像；pull/build 状态） |
+| GET | /api/images/custom | 自定义镜像列表 |
+| POST | /api/images/custom | 登记自定义镜像 `{name: tag, note}`（国产芯片等） |
+| DELETE | /api/images/custom/{cid} | 移除登记 |
+| POST | /api/images/custom/batch-delete | 批量移除 `{ids}` |
+| POST | /api/images/{key}/probe | 强制版本探测（同步；key: vllm/sglang/llamafactory/gpu-agent） |
+| POST | /api/images/{key}/refresh | 后台拉取/重建 `{force?}`（异步，状态经 GET /api/images 轮询） |

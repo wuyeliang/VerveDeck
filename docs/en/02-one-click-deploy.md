@@ -95,7 +95,12 @@ sudo bash deploy.sh
 | argilla | fintune/argilla:1.0 | internal 3000 | Data annotation; auto-creates service account on startup |
 | **rustfs** | rustfs/rustfs:latest | **9000** S3 / **9001** console | Object storage: primary store for dataset versions; named volume `rustfs-data` |
 | mineru | fintune/mineru:1.0 | internal 8000 | PDF/document parsing (occupies 1 GPU) |
-| gpu-agent | official nvidia/dcgm base | — | Writes heartbeat to `/data/gpu/agent.csv` every 5s |
+| gpu-agent | official nvidia/dcgm base | — | Heartbeat to `/data/gpu/agent.csv` every 5s (node registration/driver/CUDA/host metrics) |
+| dcgm-exporter | official nvidia/dcgm-exporter | internal 9400 | GPU metrics → Prometheus |
+| node-exporter | official prom/node-exporter | internal 9100 | CPU/memory/disk/network → Prometheus |
+| prometheus | official prom/prometheus | internal 9091 | Metrics storage + alert evaluation (persisted in `/data/monitor`) |
+| alertmanager | official prom/alertmanager | internal 9093 | Alert routing (WeCom/email) |
+| grafana | official grafana/grafana | internal 3000 (embedded via web `/grafana/`) | Monitoring dashboards (anonymous read-only Viewer) |
 
 **Task images** (not compose services; used by backend-created dynamic containers, lazy-loaded on demand):
 `hiyouga/llamafactory:0.9.5` (official prebuilt), `vllm/vllm-openai:v0.33.0`, `lmsysorg/sglang:v0.5.23`, `fintune/evalscope:1.0`
