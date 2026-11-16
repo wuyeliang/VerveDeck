@@ -1,4 +1,5 @@
 """日志查看：平台容器 + 任务容器的 docker logs 读取（仅超管）"""
+from docker.errors import NotFound
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..security import require_role
@@ -47,13 +48,15 @@ def read_logs(service: str, tail: int = 200, user=Depends(require_role("super_ad
     if service in PLATFORM_SERVICES:
         name = f"fintune-{service}-1"
     try:
+        # docker-py 容器不存在抛 docker.errors.NotFound（APIError 子类，非 LookupError）
+        from docker.errors import NotFound
         c = _docker()
         ct = c.containers.get(name)
         raw = ct.logs(tail=tail, timestamps=True)
         lines = raw.decode("utf-8", "replace").splitlines()
         return {"service": service, "container": name,
                 "running": ct.status == "running", "lines": lines}
-    except LookupError:
+    except NotFound:
         raise HTTPException(404, f"容器不存在: {name}")
     except Exception as e:
         raise HTTPException(500, f"读取日志失败: {str(e)[:200]}")
