@@ -159,10 +159,13 @@ def test_proxy_usage_fields(itok):
     assert body["usage"].get("total_tokens", 0) > 0
 
 
-def test_proxy_bad_model_passthrough_404(itok):
-    # vLLM 对未知 model 返回 404 NotFoundError（非 400），代理原样透传
+def test_proxy_unknown_model_normalized_to_served(itok):
+    # #96 行为变更（ac7907c）：代理转发前把请求体 model 归一为部署的
+    # served_model_name（存量部署 served==部署名），客户端任意 model 名均可用
+    # /v1/<部署名> 路径访问——不再 404 透传，而是 200 且响应 model 为归一名。
     r = _chat(tok=itok["jwt"], extra={"model": "no-such-model-x"})
-    assert r.status_code == 404, f"上游模型不存在应透传 404: {r.status_code} {r.text[:200]}"
+    assert r.status_code == 200, f"未知 model 应被归一为 served 名后正常完成: {r.status_code} {r.text[:200]}"
+    assert r.json()["model"] == DEPLOY_NAME, f"响应 model 应为归一名: {r.json().get('model')}"
 
 
 def test_proxy_bad_json_400(itok):

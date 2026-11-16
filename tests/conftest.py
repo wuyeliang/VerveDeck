@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""500 用例自动化测试套件共享 fixture。
+"""自动化测试套件共享 fixture（一级目录 tests/，2026-11-16 由 platform/backend/tests/ 迁入）。
 
 运行环境：backend 容器内（pytest 直连本进程 3001 端口，与 test_e2e.py 相同）。
 本套件为"快速集成 + 单测"套件：不执行真实 GPU 训练；仅包含少量受控的真实任务
@@ -12,9 +12,11 @@ import sys
 import time
 import uuid
 
-# 单测文件需导入 app 包（pytest 从 /app/tests 运行时 app 不在 sys.path）
-if "/app" not in sys.path:
-    sys.path.insert(0, "/app")
+# 单测文件需导入 app 包：容器内 /app，本地仓库 platform/backend
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in ("/app", os.path.abspath(os.path.join(_HERE, "..", "platform", "backend"))):
+    if os.path.isdir(os.path.join(_p, "app")) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import pytest
 import requests
@@ -23,6 +25,23 @@ BASE = "http://127.0.0.1:3001"
 SUF = uuid.uuid4().hex[:6]
 
 DEPLOY_NAME = "qwen25-05b-base"
+
+
+def retry_call(fn, tries: int = 3, delay: float = 15.0, desc: str = ""):
+    """整体重试工具（flaky 对策，不引入 pytest-rerunfailures 依赖）。
+
+    环境型瞬态失败（并发改动窗口 / 上游 LLM 偶发超时）下，整段重跑而非断言失败。
+    每次尝试应创建全新实体（带 SUF 后缀天然唯一），互不污染。
+    """
+    last = None
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 —— 重试即吞掉本次异常
+            last = e
+            if i < tries - 1:
+                time.sleep(delay)
+    raise AssertionError(f"[{desc or fn.__name__}] {tries} 次尝试均失败，最后异常: {last}")
 
 
 def login(username: str, password: str) -> str:

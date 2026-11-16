@@ -8,7 +8,7 @@ import json
 import pytest
 import requests
 
-from conftest import BASE, H, SUF, poll, DEFAULT_PROJECT, ALPACA_ROWS, DPO_ROWS
+from conftest import BASE, H, SUF, poll, retry_call, DEFAULT_PROJECT, ALPACA_ROWS, DPO_ROWS
 
 
 def _mk_ds(tok, name, proj=None):
@@ -465,18 +465,23 @@ def test_clean_cross_ds_version_404(admin_tok, dctx):
 # ---------- 合成（真实任务，1 次 LLM 调用） ----------
 
 def test_synth_real(admin_tok, dctx):
-    r = requests.post(f"{BASE}/api/datasets/synth", headers=H(admin_tok), timeout=30,
-                      json={"dataset_id": dctx["alpaca_ds"],
-                            "source_version_id": dctx["alpaca_ver"],
-                            "mode": "qa", "n_per_chunk": 1, "deployment_id": 1})
-    assert r.status_code == 200, r.text
-    t = _wait_task(admin_tok, r.json()["task_id"], timeout=600)
-    assert t["status"] == "done", f"synth 失败: {t['error']}"
-    assert t["result"]["generated"] >= 1
-    vers = requests.get(f"{BASE}/api/datasets/{dctx['alpaca_ds']}/versions",
-                        headers=H(admin_tok), timeout=15).json()
-    out = next(v for v in vers if v["id"] == t["output_version_id"])
-    assert out["sample_count"] >= 1
+    # flaky 对策（#80）：synth 依赖常驻部署 1 的真实 LLM 调用，全量运行窗口内上游
+    # 偶发超时/重启会致任务 failed（单跑均过、全量偶发失败）。整段重试 3 次：
+    # 每次提交全新合成任务（输出为新版本，互不污染）。
+    def synth_once():
+        r = requests.post(f"{BASE}/api/datasets/synth", headers=H(admin_tok), timeout=30,
+                          json={"dataset_id": dctx["alpaca_ds"],
+                                "source_version_id": dctx["alpaca_ver"],
+                                "mode": "qa", "n_per_chunk": 1, "deployment_id": 1})
+        assert r.status_code == 200, r.text
+        t = _wait_task(admin_tok, r.json()["task_id"], timeout=600)
+        assert t["status"] == "done", f"synth 失败: {t['error']}"
+        assert t["result"]["generated"] >= 1
+        vers = requests.get(f"{BASE}/api/datasets/{dctx['alpaca_ds']}/versions",
+                            headers=H(admin_tok), timeout=15).json()
+        out = next(v for v in vers if v["id"] == t["output_version_id"])
+        assert out["sample_count"] >= 1
+    retry_call(synth_once, tries=3, delay=20, desc="真实合成（1 次 LLM 调用）")
 
 
 def test_synth_missing_target_400(admin_tok, dctx):

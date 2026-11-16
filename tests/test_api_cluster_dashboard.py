@@ -3,7 +3,7 @@
 import pytest
 import requests
 
-from conftest import BASE, H, SUF, DEFAULT_PROJECT, BASE_MODEL_ASSET_ID
+from conftest import BASE, H, SUF, poll, DEFAULT_PROJECT, BASE_MODEL_ASSET_ID
 
 
 @pytest.fixture(scope="module")
@@ -156,10 +156,16 @@ def test_utilization_fields(admin_tok):
 
 
 def test_utilization_used_gte_1(admin_tok):
-    u = requests.get(f"{BASE}/api/cluster/utilization", headers=H(admin_tok),
-                     timeout=15).json()
-    assert u["used_gpus"] >= 1, "部署 1 运行中，GPU 占用应 ≥1"
-    assert u["running_deployments"] >= 1
+    # flaky 对策（#80）：全量套件运行窗口内，常驻部署 1 可能正被并发改动
+    # （容器重建/镜像升级）拉起重启（creating→running 需数分钟 vLLM 冷启），
+    # 瞬态窗口内 used_gpus/running_deployments 归零。改轮询等待收敛而非一次断言。
+    def check():
+        u = requests.get(f"{BASE}/api/cluster/utilization", headers=H(admin_tok),
+                         timeout=15).json()
+        return u if (u["used_gpus"] >= 1 and u["running_deployments"] >= 1) else None
+    u = poll(check, timeout=300, interval=10,
+             desc="部署 1 占用 GPU（used_gpus≥1 且 running_deployments≥1，"
+                  "容忍并发改动导致的重启瞬态窗口）")
 
 
 def test_utilization_free_consistency(admin_tok):
