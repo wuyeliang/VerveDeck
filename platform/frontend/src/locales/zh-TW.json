@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "平台總覽", "data": "數據倉庫", "models": "模型倉庫", "train": "訓練中心",
-    "evals": "評測中心", "quant": "模型壓縮", "infer": "推理部署", "cluster": "集群運維", "admin": "系統管理", "org": "租戶與項目", "logs": "日誌中心", "storage": "儲存管理", "images": "映像管理"
+    "evals": "評測中心", "quant": "模型壓縮", "infer": "推理部署", "cluster": "集群運維", "admin": "系統管理", "org": "用戶中心", "logs": "日誌中心", "storage": "儲存管理", "images": "映像管理"
   },
   "header": { "project": "項目空間", "selectProject": "選擇項目", "logout": "登出", "theme": "主題", "themeLight": "亮色", "themeDark": "暗色", "themeSystem": "跟隨系統", "changePassword": "修改密碼" },
   "login": {

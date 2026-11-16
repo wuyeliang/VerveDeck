@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "Tableau de bord", "data": "Entrepôt", "models": "Modèles", "train": "Formation",
-    "evals": "Évaluation", "quant": "Compression", "infer": "Inférence", "cluster": "Cluster", "admin": "Administration", "org": "Tenant & Projets", "logs": "Journaux", "storage": "Stockage", "images": "Images"
+    "evals": "Évaluation", "quant": "Compression", "infer": "Inférence", "cluster": "Cluster", "admin": "Administration", "org": "Centre Utilisateur", "logs": "Journaux", "storage": "Stockage", "images": "Images"
   },
   "header": { "project": "Projet", "selectProject": "Choisir un projet", "logout": "Se déconnecter", "theme": "Thème", "themeLight": "Clair", "themeDark": "Sombre", "themeSystem": "Système", "changePassword": "Changer le mot de passe" },
   "login": {

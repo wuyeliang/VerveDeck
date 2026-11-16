@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "Dashboard", "data": "Data Warehouse", "models": "Models", "train": "Training",
-    "evals": "Evaluation", "quant": "Compression", "infer": "Inference", "cluster": "Cluster", "admin": "Admin", "org": "Tenants & Projects", "logs": "Logs", "storage": "Storage", "images": "Images"
+    "evals": "Evaluation", "quant": "Compression", "infer": "Inference", "cluster": "Cluster", "admin": "Admin", "org": "User Center", "logs": "Logs", "storage": "Storage", "images": "Images"
   },
   "header": { "project": "Project", "selectProject": "Select project", "logout": "Sign out", "theme": "Theme", "themeLight": "Light", "themeDark": "Dark", "themeSystem": "System", "changePassword": "Change Password" },
   "login": {

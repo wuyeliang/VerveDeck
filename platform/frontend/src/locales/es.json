@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "Panel", "data": "Almacén", "models": "Modelos", "train": "Entrenamiento",
-    "evals": "Evaluación", "quant": "Compresión", "infer": "Inferencia", "cluster": "Clúster", "admin": "Administración", "org": "Tenants y Proyectos", "logs": "Registros", "storage": "Almacenamiento", "images": "Imágenes"
+    "evals": "Evaluación", "quant": "Compresión", "infer": "Inferencia", "cluster": "Clúster", "admin": "Administración", "org": "Centro de Usuarios", "logs": "Registros", "storage": "Almacenamiento", "images": "Imágenes"
   },
   "header": { "project": "Proyecto", "selectProject": "Seleccionar proyecto", "logout": "Cerrar sesión", "theme": "Tema", "themeLight": "Claro", "themeDark": "Oscuro", "themeSystem": "Sistema", "changePassword": "Cambiar contraseña" },
   "login": {

@@ -6,7 +6,7 @@ import { api } from '../api'
 
 const ROLE_COLOR: Record<string, string> = { super_admin: 'gold', tenant_admin: 'purple', developer: 'blue', viewer: 'default' }
 
-/** 租户与项目空间（一级菜单 /org：租户 / 项目空间 两个子页，避免单页过长） */
+/** 用户中心（一级菜单 /org，原「租户与项目」：租户 / 项目空间 两个子页，避免单页过长） */
 export default function OrgPage() {
   const { t } = useTranslation()
   return (

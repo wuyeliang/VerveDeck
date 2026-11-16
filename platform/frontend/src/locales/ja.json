@@ -1,7 +1,7 @@
 {
   "nav": {
     "dashboard": "ダッシュボード", "data": "データ", "models": "モデル", "train": "訓練",
-    "evals": "評価", "quant": "量子化", "infer": "推論", "cluster": "クラスタ", "admin": "管理", "org": "テナントとプロジェクト", "logs": "ログ", "storage": "ストレージ", "images": "イメージ管理"
+    "evals": "評価", "quant": "量子化", "infer": "推論", "cluster": "クラスタ", "admin": "管理", "org": "ユーザーセンター", "logs": "ログ", "storage": "ストレージ", "images": "イメージ管理"
   },
   "header": { "project": "プロジェクト", "selectProject": "プロジェクトを選択", "logout": "ログアウト", "theme": "テーマ", "themeLight": "ライト", "themeDark": "ダーク", "themeSystem": "システム", "changePassword": "パスワード変更" },
   "login": {
