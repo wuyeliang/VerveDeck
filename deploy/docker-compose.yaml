@@ -278,6 +278,8 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"           # 平台 iframe 嵌入免登录（只读 Viewer）
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_SIGNUP: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"         # 允许平台 iframe 嵌入；缺省为 false 时 Grafana 返回 X-Frame-Options: DENY，浏览器拒绝展示（即使同源）
+      GF_SERVER_ROOT_URL: "https://100.100.33.86/grafana/"    # 缺省时 Grafana 按 Host+监听端口(3000)生成 <base>，该端口仅本机可访问 → 静态资源全 404（"failed to load application files"）；设为含子路径的绝对 URL 后 <base> 为 /grafana/，资源经 nginx 前缀代理正常（已验证 2026-11-15）
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-vervedeck-grafana}
       GF_ANALYTICS_REPORTING_ENABLED: "false"
