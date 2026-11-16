@@ -19,6 +19,11 @@ rand_alnum() { openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | cut -c1-"${1:-12}"
 if [ ! -f .env ]; then
   # 首启自动生成强随机密钥（公网部署防默认弱口令被秒破）；.env 权限 600
   umask 077
+  # Grafana 大屏 root_url 需含外部访问 host（含非 443 端口），否则其生成的绝对链接指向错地址；
+  # 按服务器 IP + nginx 实际监听端口自动生成（git 默认 443 → 不带端口后缀）
+  VD_IP=$(hostname -I 2>/dev/null | awk '{print $1}'); VD_IP=${VD_IP:-127.0.0.1}
+  VD_PORT=$(grep -oE 'listen [0-9]+ ssl' ../platform/frontend/nginx.conf 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  if [ -n "$VD_PORT" ] && [ "$VD_PORT" != "443" ]; then VD_SUFFIX=":$VD_PORT"; else VD_SUFFIX=""; fi
   {
     echo "# VerveDeck 环境变量 —— deploy.sh 自动生成于 $(date '+%F %T')（请妥善保管本文件）"
     echo "ADMIN_PASSWORD=$(rand_alnum 12)"
@@ -35,6 +40,8 @@ if [ ! -f .env ]; then
     echo "GRAFANA_ANONYMOUS=true"
     echo "CORS_ORIGINS=*"
     echo "API_DOCS_ENABLED=true"
+    echo "GRAFANA_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana/"
+    echo "GRAFANA_LIGHT_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana-light/"
   } > .env
   echo "    已生成 .env（强随机密钥，权限 600；admin 初始密码见 .env ADMIN_PASSWORD）"
 else
@@ -46,9 +53,17 @@ else
   done
 fi
 mkdir -p /data/models/hub /data/datasets /data/jobs /data/evals /data/uploads \
-         /data/gpu /data/argilla /data/postgres /data/redis /data/opensearch
-# opensearch 容器以 UID 1000 运行，bind 挂载的数据目录必须可写（否则节点启动即 AccessDenied 崩溃）
-chown -R 1000:0 /data/opensearch 2>/dev/null || true
+         /data/gpu /data/argilla /data/postgres /data/redis /data/opensearch \
+         /data/grafana /data/grafana-light /data/prometheus \
+         /data/monitoring/rules /data/monitoring/sd /data/monitoring/am-data
+# 数据目录属主必须匹配容器运行用户，否则首启 AccessDenied 崩溃（postgres/redis 由镜像
+# entrypoint 以 root 自 chown 无需处理；opensearch/argilla/grafana/prometheus 需在此显式 chown）：
+chown -R 1000:0      /data/opensearch 2>/dev/null || true      # opensearch
+chown -R 1000:1000   /data/argilla    2>/dev/null || true      # argilla-server（uid=1000）
+chown -R 472:472     /data/grafana /data/grafana-light 2>/dev/null || true   # grafana（uid=472）
+chown -R 65534:65534 /data/prometheus 2>/dev/null || true      # prometheus（nobody=65534）
+# alertmanager 配置为单文件挂载：首启必须存在（否则 docker 建成目录致"目录挂到文件"挂载失败）
+[ -f /data/monitoring/alertmanager.yml ] || cp monitoring/alertmanager/alertmanager.yml /data/monitoring/alertmanager.yml
 
 # 网关限流默认配置（web 容器绑定挂载；必须在 compose up 前存在，否则 docker 建出空目录致 nginx 起不来）。
 # 平台页面（系统管理→设置→网关限流）保存后会覆盖本文件并热加载，此处仅首启默认值
@@ -102,6 +117,12 @@ docker compose exec -T rustfs sh -c "curl -sf http://127.0.0.1:9000/health >/dev
 
 echo ""
 docker compose ps
+# 全容器状态核对：防止个别服务（grafana/prometheus/argilla 等）crashloop 被静默当成"部署完成"
+bad=$(docker compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk '$2=="restarting"||$2=="exited"{print $1, $2}') || true
+if [ -n "$bad" ]; then
+  echo "  ⚠ 以下服务未正常拉起（多为数据目录属主问题，见 [2/5]；可稍后 docker compose restart <服务名> 修复）:"
+  echo "$bad" | sed 's/^/      /'
+fi
 echo ""
 ADMIN_PW=$(grep -E '^ADMIN_PASSWORD=' .env 2>/dev/null | cut -d= -f2)
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
