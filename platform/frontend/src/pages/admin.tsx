@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import {
   Tabs, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Card,
-  Switch, Row, Col,
+  Switch, Row, Col, Tooltip,
 } from 'antd'
-import { PlusOutlined, CopyOutlined, SendOutlined } from '@ant-design/icons'
+import { PlusOutlined, CopyOutlined, SendOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useBatchDelete } from '../batch'
@@ -575,6 +575,7 @@ function SettingsTab() {
         </Form>
       </Card>
       <LoginSecurityCard />
+      <TimeConfigCard />
     </div>
   )
 }
@@ -623,6 +624,125 @@ function LoginSecurityCard() {
           <Col span={8}><Form.Item name="lock_minutes" label={t('admin.lcLockMinutes')}><InputNumber size="small" style={{ width: '100%' }} min={1} max={1440} /></Form.Item></Col>
         </Row>
       </Form>
+    </Card>
+  )
+}
+
+/** 常见 IANA 时区（当前宿主时区不在列表时自动补入首项） */
+const TZ_OPTIONS = ['Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Singapore', 'Asia/Tokyo', 'Asia/Seoul',
+  'Asia/Kolkata', 'Asia/Dubai', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow',
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Sao_Paulo',
+  'Australia/Sydney', 'Pacific/Auckland', 'Etc/UTC']
+
+function tzOffsetLabel(tz: string): string {
+  try {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+      .formatToParts(new Date()).find((p) => p.type === 'timeZoneName')
+    return part ? ` (${part.value})` : ''
+  } catch { return '' }
+}
+
+/** 时间与 NTP：集群时区（立即应用宿主）+ NTP 服务器（写入宿主时钟同步配置，重启服务生效） */
+function TimeConfigCard() {
+  const { t } = useTranslation()
+  const [form] = Form.useForm()
+  const [state, setState] = useState<any>(null)
+  const [saving, setSaving] = useState(false)
+  const [probing, setProbing] = useState(false)
+  const [probeRes, setProbeRes] = useState<any[]>([])
+  const [drift, setDrift] = useState(0)      // 服务器时钟 - 本地时钟（ms），用于本地外推宿主时间
+  const [clock, setClock] = useState(() => Date.now())
+  const [restartHint, setRestartHint] = useState('')
+  const load = () => api.get('/api/admin/time-config').then((r) => {
+    setState(r.data)
+    setDrift((r.data.epoch || 0) * 1000 - Date.now())
+    form.setFieldsValue({ timezone: r.data.timezone, ntp_servers: (r.data.ntp_servers || []).join(' ') })
+  }).catch(() => {})
+  useEffect(() => {
+    load()
+    const x = setInterval(() => setClock(Date.now() + drift), 1000)
+    return () => clearInterval(x)
+  }, [drift])
+  const probe = async () => {
+    const v = form.getFieldValue('ntp_servers') || ''
+    if (!v.trim()) { message.warning(t('admin.tcNtpPh')); return }
+    setProbing(true); setProbeRes([])
+    try {
+      const r = await api.post('/api/admin/time-config/probe', { ntp_servers: v })
+      setProbeRes(r.data.results || [])
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t('api.requestFailed'))
+    } finally { setProbing(false) }
+  }
+  const save = async () => {
+    const v = await form.validateFields()
+    setSaving(true)
+    try {
+      const r = await api.put('/api/admin/time-config', v)
+      const a = r.data.applied || {}
+      if (a.timezone?.ok) message.success(a.timezone.detail)
+      else if (a.timezone) message.error(a.timezone.detail || t('admin.tcTzFail'))
+      if (a.ntp?.ok) {
+        message.success(a.ntp.detail)
+        setRestartHint(a.ntp.restart_hint || '')
+      } else if (a.ntp) {
+        message.error(a.ntp.detail || t('admin.tcNtpFail'))
+        setRestartHint('')
+      }
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t('api.requestFailed'))
+    } finally { setSaving(false) }
+  }
+  const tz = state?.timezone || 'Etc/UTC'
+  const fmtClock = (ms: number) => {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).format(new Date(ms))
+    } catch { return new Date(ms).toLocaleString() }
+  }
+  const hostTz = state?.host?.timezone
+  const tzOptions = (hostTz && !TZ_OPTIONS.includes(hostTz) ? [hostTz, ...TZ_OPTIONS] : TZ_OPTIONS)
+    .map((z) => ({ value: z, label: `${z}${tzOffsetLabel(z)}` }))
+  const ntp = state?.host?.ntp || {}
+  return (
+    <Card size="small" style={{ maxWidth: 560, marginTop: 12 }} title={<Space><ClockCircleOutlined />{t('admin.tcTitle')}</Space>}
+      extra={<Button type="primary" size="small" loading={saving} onClick={save}>{t('admin.tcSave')}</Button>}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+        <span style={{ fontSize: 12, color: '#999' }}>{t('admin.tcNow')}</span>
+        <Space size={8}>
+          <span style={{ fontSize: 16, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{state ? fmtClock(clock) : '…'}</span>
+          <Tag>{hostTz || '…'}</Tag>
+        </Space>
+      </div>
+      <Form form={form} layout="vertical">
+        <Form.Item name="timezone" label={t('admin.tcTz')} rules={[{ required: true }]}>
+          <Select showSearch optionFilterProp="label" options={tzOptions} />
+        </Form.Item>
+        <Form.Item name="ntp_servers" label={t('admin.tcNtp')}>
+          <Input.TextArea rows={2} placeholder={t('admin.tcNtpPh')} />
+        </Form.Item>
+      </Form>
+      <div style={{ color: '#999', fontSize: 12, marginTop: -8, marginBottom: 8 }}>{t('admin.tcNtpHint')}</div>
+      <Space wrap size={8} style={{ marginBottom: 8 }}>
+        <Button size="small" loading={probing} onClick={probe}>{t('admin.tcProbe')}</Button>
+        {probeRes.map((p) => (
+          <Tooltip key={p.server} title={p.detail || ''}>
+            <Tag color={p.ok ? 'success' : 'error'}>
+              {p.server} {p.ok ? `${t('admin.tcProbeOk')} ${p.offset_ms >= 0 ? '+' : ''}${p.offset_ms}ms` : t('admin.tcProbeFail')}
+            </Tag>
+          </Tooltip>
+        ))}
+      </Space>
+      {state && (
+        <div style={{ fontSize: 12, color: '#888', background: 'rgba(0,0,0,0.025)', borderRadius: 6, padding: '6px 10px' }}>
+          <div>{t('admin.tcImpl')}: <Tag>{ntp.impl || '-'}</Tag>
+            {t('admin.tcCfgServers')}: <code>{(ntp.configured || []).join(', ') || '-'}</code></div>
+        </div>
+      )}
+      {restartHint && <div style={{ marginTop: 8 }}><AlertLine>{t('admin.tcRestart')}: <code>{restartHint}</code></AlertLine></div>}
     </Card>
   )
 }

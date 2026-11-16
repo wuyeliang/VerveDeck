@@ -5,17 +5,20 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import re
 import threading
 import time
+from typing import Union
 
 from ..database import get_db
 from ..security import get_current_user, require_role, hash_password, new_api_key, can_access_project
 from ..models import (Tenant, User, Project, ProjectMember, ApiKey, GuardRule,
                       AuditLog, Dataset, AlertRule, AlertEvent, UpgradeTask,
-                      LoginSecurityConfig)
+                      LoginSecurityConfig, TimeConfig)
 from ..services import alert_service
 from ..services import prom_service
 from ..services import upgrade_service
+from ..services import time_service
 
 
 def _resync_rules():
@@ -600,3 +603,81 @@ def upgrade_tasks(limit: int = 50, db=Depends(get_db), user=Depends(require_role
          "finished_at": str(t.finished_at) if t.finished_at else None}
         for t in rows
     ]
+
+
+# ---------------- 集群时间配置（时区 + NTP） ----------------
+
+class TimeConfigReq(BaseModel):
+    timezone: str = ""                    # IANA 时区，如 Asia/Shanghai
+    ntp_servers: Union[list, str] = ""    # list 或逗号/空格分隔字符串（前端 TextArea 提交字符串），_parse_ntp_servers 归一化
+
+
+def _parse_ntp_servers(v) -> list:
+    """NTP 服务器输入归一化：str(逗号/分号/空白分隔) 或 list；去 scheme/空白/去重；校验主机与端口"""
+    toks = re.split(r"[,; \t\r\n]+", v) if isinstance(v, str) else [str(x) for x in (v or [])]
+    out: list = []
+    for t in toks:
+        t = t.strip().strip('"').strip("'").strip(",;")
+        t = re.sub(r"^(ntp|http|https)://", "", t)
+        if not t:
+            continue
+        host = t.rpartition(":")[0] if ":" in t else t
+        if not re.fullmatch(r"[A-Za-z0-9_\-./]+", host):
+            raise HTTPException(400, f"NTP 服务器非法：{t}")
+        if ":" in t:
+            port = t.rpartition(":")[2]
+            if not port.isdigit() or not (1 <= int(port) <= 65535):
+                raise HTTPException(400, f"NTP 服务器端口非法：{t}")
+        if t not in out:
+            out.append(t)
+    if len(out) > 8:
+        raise HTTPException(400, "NTP 服务器最多 8 个")
+    return out
+
+
+@router.get("/time-config")
+def get_time_config(db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    """集群时间配置 + 宿主实时状态（当前时区/当前时间/NTP 守护进程与已配服务器）"""
+    row = db.get(TimeConfig, 1)
+    host_tz = time_service.host_timezone()
+    ntp = time_service.detect_ntp()
+    tz = (row.timezone if row and row.timezone else host_tz)
+    return {
+        "timezone": tz,
+        "ntp_servers": (row.ntp_servers if row and row.ntp_servers else ntp["configured"]),
+        "source": "db" if row else "host",
+        "updated_at": str(row.updated_at) if row and row.updated_at else "",
+        "epoch": time.time(),
+        "host": {"timezone": host_tz, "now": time_service.host_now(tz), "ntp": ntp},
+    }
+
+
+@router.put("/time-config")
+def save_time_config(req: TimeConfigReq, db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    """保存并应用：时区立即写入宿主；NTP 写入守护进程配置（空=恢复默认，需重启服务生效）"""
+    tz = (req.timezone or "").strip()
+    if tz and not time_service.valid_timezone(tz):
+        raise HTTPException(400, f"时区 {tz} 不存在或非法")
+    servers = _parse_ntp_servers(req.ntp_servers)
+    applied = {}
+    if tz:
+        applied["timezone"] = time_service.apply_timezone(tz)
+    applied["ntp"] = time_service.apply_ntp(servers)
+    row = db.get(TimeConfig, 1)
+    if row is None:
+        row = TimeConfig(id=1)
+        db.add(row)
+    row.timezone = tz
+    row.ntp_servers = servers
+    db.commit()
+    return {"ok": all(r.get("ok") for r in applied.values()), "applied": applied,
+            "config": get_time_config(db=db, user=user)}
+
+
+@router.post("/time-config/probe")
+def probe_time_config(req: TimeConfigReq, user=Depends(require_role("super_admin"))):
+    """NTP 连通性探测（SNTP 单次查询）：返回逐服务器 {ok, offset_ms?/detail}"""
+    servers = _parse_ntp_servers(req.ntp_servers)
+    if not servers:
+        raise HTTPException(400, "请至少填写一个 NTP 服务器")
+    return {"results": time_service.probe_ntp(servers)}

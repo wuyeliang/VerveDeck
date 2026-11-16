@@ -270,7 +270,8 @@
     "upCurrentImage": "Imagen actual", "upPickVer": "Seleccionar versión destino", "upToVer": "Versión destino",
     "upNeedVer": "Seleccione una versión destino", "upTasks": "Tareas de actualización", "upTarget": "Componente",
     "upVersion": "Cambio de versión", "upSuccess": "Éxito", "upFailed": "Fallido",
-    "upStarted": "Tarea de actualización creada"
+    "upStarted": "Tarea de actualización creada",
+    "tcTitle": "Hora y NTP", "tcNow": "Hora actual del host", "tcTz": "Zona horaria del clúster", "tcNtp": "Servidores NTP", "tcNtpPh": "p. ej. ntp.aliyun.com, 10.0.0.5:123 — espacio/coma; vacío = predeterminado del sistema", "tcNtpHint": "Se escribe en la config del demonio de sincronización del host (chrony/ntpd/systemd-timesyncd); vacío = predeterminado (incl. DHCP)", "tcProbe": "Probar conectividad", "tcProbeOk": "alcanzable", "tcProbeFail": "inalcanzable", "tcSave": "Guardar y aplicar", "tcTzFail": "Error al aplicar zona horaria", "tcNtpFail": "Error al escribir config NTP", "tcRestart": "Reiniciar el servicio en el host con:", "tcImpl": "Implementación de sincronía", "tcCfgServers": "Servidores configurados", "tcHostTz": "Zona del host", "tcStatus": "Estado actual"
   },
   "quant": {
     "title": "Compresión de modelos",

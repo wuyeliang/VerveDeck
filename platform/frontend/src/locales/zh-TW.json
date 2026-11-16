@@ -270,7 +270,8 @@
     "upCurrentImage": "目前映像", "upPickVer": "選擇目標版本", "upToVer": "目標版本",
     "upNeedVer": "請選擇目標版本", "upTasks": "升級任務", "upTarget": "元件",
     "upVersion": "版本變遷", "upSuccess": "成功", "upFailed": "失敗",
-    "upStarted": "升級任務已建立"
+    "upStarted": "升級任務已建立",
+    "tcTitle": "時間與 NTP", "tcNow": "宿主目前時間", "tcTz": "叢集時區", "tcNtp": "NTP 伺服器", "tcNtpPh": "如 ntp.aliyun.com、10.0.0.5:123，空白/逗號分隔，留空=恢復系統預設", "tcNtpHint": "儲存後寫入宿主時鐘同步守護行程設定（chrony/ntpd/systemd-timesyncd）；留空=恢復系統預設（含 DHCP 下發）", "tcProbe": "測試連通性", "tcProbeOk": "可達", "tcProbeFail": "不可達", "tcSave": "儲存並套用", "tcTzFail": "時區套用失敗", "tcNtpFail": "NTP 設定寫入失敗", "tcRestart": "需宿主執行以下命令重新啟動服務後生效", "tcImpl": "時鐘同步實作", "tcCfgServers": "目前設定伺服器", "tcHostTz": "宿主時區", "tcStatus": "目前狀態"
   },
   "quant": {
     "title": "模型壓縮",

@@ -270,7 +270,8 @@
     "upCurrentImage": "Current Image", "upPickVer": "Select target version", "upToVer": "Target Version",
     "upNeedVer": "Please select a target version", "upTasks": "Upgrade Tasks", "upTarget": "Component",
     "upVersion": "Version Change", "upSuccess": "Success", "upFailed": "Failed",
-    "upStarted": "Upgrade task created"
+    "upStarted": "Upgrade task created",
+    "tcTitle": "Time & NTP", "tcNow": "Host current time", "tcTz": "Cluster timezone", "tcNtp": "NTP servers", "tcNtpPh": "e.g. ntp.aliyun.com, 10.0.0.5:123 — space/comma separated; empty = system default", "tcNtpHint": "Saved into the host clock-sync daemon config (chrony/ntpd/systemd-timesyncd); empty = restore system default (incl. DHCP-provided)", "tcProbe": "Test connectivity", "tcProbeOk": "reachable", "tcProbeFail": "unreachable", "tcSave": "Save & apply", "tcTzFail": "Failed to apply timezone", "tcNtpFail": "Failed to write NTP config", "tcRestart": "Restart the service on the host with:", "tcImpl": "Clock sync implementation", "tcCfgServers": "Configured servers", "tcHostTz": "Host timezone", "tcStatus": "Current status"
   },
   "quant": {
     "title": "Model Compression",

@@ -316,6 +316,19 @@ class LoginSecurityConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
+class TimeConfig(Base):
+    """集群时间配置（单行表 id=1）：时区 + NTP 服务器列表。
+    UI 可配置（系统管理→设置→时间与 NTP）；未配置时展示宿主当前值。
+    时区立即应用到宿主 /etc/localtime + /etc/timezone；
+    NTP 写入宿主时钟同步守护进程配置（chrony/ntpd/systemd-timesyncd），
+    需重启对应服务生效（API 返回重启命令）。"""
+    __tablename__ = "time_config"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    timezone: Mapped[str] = mapped_column(String(64), default="")    # IANA 时区，如 Asia/Shanghai
+    ntp_servers: Mapped[list] = mapped_column(JSON, default=list)   # ["ntp1.example.com", "10.0.0.5:123"]
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
 class GuardRule(Base):
     __tablename__ = "guard_rules"
     id: Mapped[int] = mapped_column(primary_key=True)
