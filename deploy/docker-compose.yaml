@@ -86,8 +86,8 @@ services:
       RUSTFS_ADDRESS: ":9000"
       RUSTFS_CONSOLE_ENABLE: "true"
     ports:
-      - "9000:9000"   # S3 API（宿主机 mc/客户端；backend 走内网 rustfs:9000）
-      - "9001:9001"   # Web 管理控制台
+      - "127.0.0.1:9000:9000"   # S3 API 仅本机（宿主机 mc/客户端）；公网部署严禁暴露（弱口令=数据泄露）
+      - "127.0.0.1:9001:9001"   # Web 管理控制台仅本机
     volumes:
       - rustfs-data:/data
     healthcheck:
@@ -123,6 +123,9 @@ services:
       DATA_DIR: /data
       DOCKER_NETWORK: fintune_net
       JWT_SECRET: ${JWT_SECRET:-vervedeck-dev-secret-change-me}
+      # 安全加固（公网部署建议收紧）：CORS 白名单（逗号分隔来源）、关闭 API 文档
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       MINERU_URL: http://mineru:8000
       ARGILLA_URL: http://argilla:3000
@@ -276,7 +279,7 @@ services:
     restart: unless-stopped
     environment:
       GF_PATHS_DATA: /data
-      GF_AUTH_ANONYMOUS_ENABLED: "true"           # 平台 iframe 嵌入免登录（只读 Viewer）
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS:-true}   # 平台 iframe 嵌入免登录（只读 Viewer）；公网部署可设 GRAFANA_ANONYMOUS=false 关闭（监控大屏页将要求 Grafana 登录）
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_SIGNUP: "true"
       GF_SECURITY_ALLOW_EMBEDDING: "true"         # 允许平台 iframe 嵌入；缺省为 false 时 Grafana 返回 X-Frame-Options: DENY，浏览器拒绝展示（即使同源）
@@ -291,6 +294,32 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - /data/grafana:/data
+    networks: [fintune]
+
+  # Grafana 浅色实例：匿名默认主题固定（11.6 镜像 default_theme=dark）且匿名 API 不允许改偏好（401），
+  # 平台浅色模式的大屏嵌入改指向本实例（default_theme=light）实现主题跟随；
+  # 数据卷独立（两实例共用同一 SQLite 有竞争风险），数据源/仪表盘走同一 provisioning
+  grafana-light:
+    image: grafana/grafana:11.6.2
+    restart: unless-stopped
+    environment:
+      GF_PATHS_DATA: /data
+      GF_USERS_DEFAULT_THEME: "light"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"           # 平台 iframe 嵌入免登录（只读 Viewer）
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_SIGNUP: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"         # 允许平台 iframe 嵌入（缺省 false → X-Frame-Options: DENY）
+      GF_SERVER_ROOT_URL: "https://100.100.33.86/grafana-light/"    # 含子路径绝对 URL → <base href="/grafana-light/">，资源经 nginx 前缀代理
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-vervedeck-grafana}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:3003:3000"    # 仅本机调试；平台内走 web 容器 /grafana-light 反向代理
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - /data/grafana-light:/data
     networks: [fintune]
 
 networks:

@@ -15,7 +15,36 @@ else
 fi
 
 echo "==> [2/5] 准备配置与环境"
-[ -f .env ] || { cp .env.example .env; echo "    已生成 .env（默认值，生产环境请修改密钥）"; }
+rand_alnum() { openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | cut -c1-"${1:-12}"; }
+if [ ! -f .env ]; then
+  # 首启自动生成强随机密钥（公网部署防默认弱口令被秒破）；.env 权限 600
+  umask 077
+  {
+    echo "# VerveDeck 环境变量 —— deploy.sh 自动生成于 $(date '+%F %T')（请妥善保管本文件）"
+    echo "ADMIN_PASSWORD=$(rand_alnum 12)"
+    echo "JWT_SECRET=$(openssl rand -hex 32)"
+    echo "POSTGRES_PASSWORD=$(openssl rand -hex 12)"
+    echo "RUSTFS_ACCESS_KEY=vervedeck"
+    echo "RUSTFS_SECRET_KEY=$(openssl rand -hex 16)"
+    echo "S3_ENDPOINT=http://rustfs:9000"
+    echo "S3_BUCKET=vervedeck-datasets"
+    echo "HF_ENDPOINT=https://hf-mirror.com"
+    echo "ARGILLA_API_KEY=$(openssl rand -hex 16)"
+    echo "GRAFANA_PASSWORD=$(rand_alnum 12)"
+    echo "AM_WEBHOOK_TOKEN=$(openssl rand -hex 16)"
+    echo "GRAFANA_ANONYMOUS=true"
+    echo "CORS_ORIGINS=*"
+    echo "API_DOCS_ENABLED=true"
+  } > .env
+  echo "    已生成 .env（强随机密钥，权限 600；admin 初始密码见 .env ADMIN_PASSWORD）"
+else
+  # 已有 .env：检查高危默认值是否仍未修改
+  for kv in "JWT_SECRET=vervedeck-dev-secret-change-me" "JWT_SECRET=please-change-me-to-a-long-random-string" "POSTGRES_PASSWORD=fintune123" "RUSTFS_SECRET_KEY=rustfsadmin"; do
+    if grep -q "^${kv}" .env; then
+      echo "    ⚠ 警告: .env 中 ${kv%%=*} 仍是默认弱值，公网部署请立即修改！"
+    fi
+  done
+fi
 mkdir -p /data/models/hub /data/datasets /data/jobs /data/evals /data/uploads \
          /data/gpu /data/argilla /data/postgres /data/redis /data/opensearch
 # opensearch 容器以 UID 1000 运行，bind 挂载的数据目录必须可写（否则节点启动即 AccessDenied 崩溃）
@@ -60,11 +89,18 @@ docker compose exec -T rustfs sh -c "curl -sf http://127.0.0.1:9000/health >/dev
 echo ""
 docker compose ps
 echo ""
-echo "================ 部署完成 ================"
+ADMIN_PW=$(grep -E '^ADMIN_PASSWORD=' .env 2>/dev/null | cut -d= -f2)
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+echo "================ 部署完成 ================"
 echo "  Web 控制台:     https://${IP:-<服务器IP>}（443 强制 HTTPS，自签证书浏览器需信任）"
-echo "  对象存储控制台: http://${IP:-<服务器IP>}:9001"
-echo "  S3 API:         http://${IP:-<服务器IP>}:9000"
-echo "  初始账号:       admin / ${ADMIN_PASSWORD:-admin123}"
+echo "  对象存储:       仅本机 127.0.0.1:9000/9001（公网部署严禁暴露 S3 端口）"
+echo "  初始账号:       admin / ${ADMIN_PW:-${ADMIN_PASSWORD:-admin123}}（首登强制改密）"
 echo "  常用命令:       docker compose -f deploy/docker-compose.yaml ps|logs|down"
+echo ""
+echo "  ---- 公网部署安全加固清单（详见 docs/11-安全加固.md）----"
+echo "  [必做] 防火墙只放 80/443（22 建议限源 IP）: ufw allow from <办公IP> to any port 22; ufw allow 80,443; ufw enable"
+echo "  [必做] 首登修改 admin 密码（强制）；系统管理→设置 开启登录 IP 白名单（办公出口 CIDR）"
+echo "  [建议] SSH 禁 root 直登+密码登录（PermitRootLogin no / PasswordAuthentication no），装 fail2ban"
+echo "  [建议] 自签证书替换为正式域名证书（deploy/tls/vervedeck.{crt,key}）"
+echo "  [可选] 公网可关 API 文档与 Grafana 匿名: .env 设 API_DOCS_ENABLED=false / GRAFANA_ANONYMOUS=false 后 compose up -d"
 echo "=========================================="

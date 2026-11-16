@@ -33,6 +33,7 @@ EVENT_NAMES = {
     "eval_failed": "评测任务失败",
     "quant_failed": "量化任务失败",
     "infer_down": "推理服务不可用",
+    "login_locked": "登录被锁定（疑似暴力破解）",
 }
 
 

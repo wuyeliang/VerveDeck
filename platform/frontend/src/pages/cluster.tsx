@@ -4,6 +4,7 @@ import { PlusOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useTheme } from '../theme'
 
 const healthTag = (health: number, t: any) => (
   <Tag color={health >= 2 ? 'error' : health === 1 ? 'warning' : 'success'}
@@ -253,11 +254,16 @@ function GpusView({ gpus }: { gpus: any[] }) {
   )
 }
 
-/** 监控大屏：Grafana 仪表盘嵌入（GPU / 系统 / 推理，kiosk 只读视图，经 nginx /grafana/ 同源代理）
+/** 监控大屏：Grafana 仪表盘嵌入（GPU / 系统 / 推理，kiosk 只读视图，经 nginx 同源代理）
+ *  主题跟随：Grafana 匿名主题固定（11.6 镜像 default_theme=dark，匿名 API 不允许改偏好），
+ *  故维护两个实例——深色走 /grafana（默认 dark），浅色走 /grafana-light（default_theme=light），
+ *  按平台主题选择入口，切换主题时 iframe 经 key 重载。
  *  数据底座 = Prometheus（dcgm-exporter + node-exporter + 引擎 /metrics，保留 15d）；
  *  最近告警 / 运行中任务仍由平台侧展示。 */
 function MonitorView({ queue, util, alerts, t }: { queue: any; util: any; alerts: any[]; t: (k: string) => string }) {
   const nav = useNavigate()
+  const { dark } = useTheme()
+  const gfBase = dark ? '/grafana' : '/grafana-light'
   const [mins, setMins] = useState(60)
   const [dash, setDash] = useState('vervedeck-gpu')
   const from = ({ 60: 'now-1h', 360: 'now-6h', 1440: 'now-24h' } as Record<number, string>)[mins]
@@ -278,14 +284,14 @@ function MonitorView({ queue, util, alerts, t }: { queue: any; util: any; alerts
                 { label: t('cluster.r6h'), value: 360 },
                 { label: t('cluster.r24h'), value: 1440 },
               ]} />
-            <Button size="small" onClick={() => window.open(`/grafana/d/${dash}/?orgId=1&from=${from}`, '_blank')}>{t('cluster.monFull')}</Button>
+            <Button size="small" onClick={() => window.open(`${gfBase}/d/${dash}/?orgId=1&from=${from}`, '_blank')}>{t('cluster.monFull')}</Button>
           </Space>
         }>
         <Tabs size="small" activeKey={dash} onChange={setDash}
           items={dashboards.map((d) => ({ key: d.key, label: d.label }))} />
-        <iframe key={`${dash}-${mins}`} title={dash}
-          src={`/grafana/d/${dash}/?kiosk&orgId=1&from=${from}&to=now`}
-          style={{ width: '100%', height: 540, border: '1px solid #f0f0f0', borderRadius: 6, background: '#fff' }} />
+        <iframe key={`${dash}-${mins}-${gfBase}`} title={dash}
+          src={`${gfBase}/d/${dash}/?kiosk&orgId=1&from=${from}&to=now`}
+          style={{ width: '100%', height: 540, border: `1px solid ${dark ? '#303030' : '#f0f0f0'}`, borderRadius: 6, background: dark ? '#111217' : '#fff' }} />
       </Card>
       <Row gutter={16}>
         <Col span={12}>

@@ -23,8 +23,14 @@ APP_VERSION = "1.1"
 APP_LICENSE = "Apache-2.0"
 APP_GITHUB = "https://github.com/wuyeliang/VerveDeck"
 
-app = FastAPI(title="VerveDeck 大模型微调训练平台", version=APP_VERSION)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
+# 安全加固：公网部署可设 API_DOCS_ENABLED=false 关闭接口文档（防接口清单泄露）
+_DOCS = settings.api_docs_enabled
+app = FastAPI(title="VerveDeck 大模型微调训练平台", version=APP_VERSION,
+              docs_url="/docs" if _DOCS else None,
+              redoc_url=None,
+              openapi_url="/openapi.json" if _DOCS else None)
+_CORS = [o.strip() for o in settings.cors_origins.split(",") if o.strip()] or ["*"]
+app.add_middleware(CORSMiddleware, allow_origins=_CORS, allow_methods=["*"],
                    allow_headers=["*"])
 app.add_middleware(AuditMiddleware)
 
@@ -105,6 +111,7 @@ DEFAULT_ALERT_RULES = [
     ("量化任务失败", "event", "", "", 0, "warning", 60, "quant_failed"),
     ("评测任务失败", "event", "", "", 0, "warning", 60, "eval_failed"),
     ("推理服务不可用", "event", "", "", 0, "critical", 300, "infer_down"),
+    ("登录锁定（疑似暴力破解）", "event", "", "", 0, "warning", 300, "login_locked"),
 ]
 
 
@@ -149,6 +156,13 @@ def init_db():
             for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
                 db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
                                  threshold=thr, event=event, severity=sev, cooldown=cd))
+        # 存量库幂等补事件规则（新代码新增的事件码，老库没有对应规则则补建）
+        for event in ("login_locked",):
+            if not db.query(AlertRule).filter(
+                    AlertRule.event == event, AlertRule.kind == "event").first():
+                db.add(AlertRule(name="登录锁定（疑似暴力破解）", kind="event",
+                                 metric="", op="", threshold=0, event=event,
+                                 severity="warning", cooldown=300))
         # 数据目录
         for d in ("models/hub", "datasets", "jobs", "evals", "infer", "gpu",
                   "uploads", "dvc-remote", "hf-cache", "argilla"):

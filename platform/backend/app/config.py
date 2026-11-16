@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     jwt_secret: str = "vervedeck-dev-secret-change-me"
     jwt_expire_hours: int = 72
     admin_password: str = "admin123"
+    # 安全加固（公网部署建议收紧）：
+    # CORS 允许来源，逗号分隔；默认 * （前端同源部署经 nginx 转发，实际不跨域）
+    cors_origins: str = "*"
+    # 公网部署建议 false：关闭 /docs、/redoc、/openapi.json（防接口清单泄露）
+    api_docs_enabled: bool = True
     hf_endpoint: str = "https://hf-mirror.com"
     mineru_url: str = "http://mineru:8000"
     argilla_url: str = "http://argilla:3000"

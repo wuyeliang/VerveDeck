@@ -154,6 +154,8 @@ def list_users(db=Depends(get_db), user=Depends(require_role("super_admin", "ten
 
 @router.post("/users")
 def create_user(req: UserReq, db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    if len(req.password or "") < 8:
+        raise HTTPException(400, "密码至少 8 位（公网部署建议含大小写与数字）")
     if db.query(User).filter_by(username=req.username).first():
         raise HTTPException(400, "用户名已存在")
     u = User(username=req.username, password_hash=hash_password(req.password),
@@ -174,6 +176,8 @@ def update_user(uid: int, req: dict, db=Depends(get_db), user=Depends(require_ro
         if k in req:
             setattr(u, k, req[k])
     if "password" in req and req["password"]:
+        if len(req["password"]) < 8:
+            raise HTTPException(400, "密码至少 8 位（公网部署建议含大小写与数字）")
         u.password_hash = hash_password(req["password"])
         u.must_change_password = True  # 重置密码 → 用户首登强制修改
     db.commit()

@@ -12,6 +12,7 @@ from starlette.responses import Response
 
 from .database import SessionLocal
 from .models import AuditLog
+from .iputil import client_ip
 
 MUTATING = {"POST", "PUT", "DELETE", "PATCH"}
 SKIP_PREFIXES = ("/api/dashboard", "/v1/", "/health")
@@ -168,7 +169,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                         user_id=user.id if user else None,
                         username=user.username if user else "",
                         method=request.method, path=path,
-                        ip=request.client.host if request.client else "",
+                        ip=client_ip(request),
                         status_code=response.status_code,
                         detail=(request.query_params.get("id") or "")[:200],
                         action=match_action(request.method, path, response.status_code),

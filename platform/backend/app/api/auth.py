@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db, SessionLocal
 from ..security import get_current_user, verify_password, create_token, hash_password
 from ..models import User, LoginSecurityConfig
+from ..iputil import client_ip
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -109,12 +110,18 @@ def _remaining(key: str, cfg: dict) -> int:
         return max(0, _threshold(key, cfg) - len(_attempts.get(key, [])))
 
 
-def _client_ip(request: Request) -> str:
-    """真实客户端 IP：nginx 代理传 X-Real-IP（$remote_addr）；
-    多级代理时取 X-Forwarded-For 最左端（原始客户端）"""
-    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    xri = (request.headers.get("x-real-ip") or "").strip()
-    return xri or xff or (request.client.host if request.client else "unknown")
+def _fire_login_alert(db, username: str, ip: str):
+    """锁定触发 → 安全告警（复用事件型规则机制：系统管理→告警 可配阈值/通道/开关）。
+    被规则 cooldown 去重（默认 300s 同 IP 不重复轰炸）；通知通道未配置时仅入库。"""
+    try:
+        from ..services import alert_service
+        alert_service.trigger_event(
+            db, "login_locked", target=f"login:{ip}",
+            title=f"登录锁定（疑似暴力破解）: {username or '未知账号'}",
+            detail=f"来源 IP: {ip}\n账号: {username or '-'}\n"
+                   f"触发: 连续失败达到锁定阈值，账号与 IP 已临时锁定")
+    except Exception:
+        pass  # 告警失败不影响登录主流程
 
 
 class LoginReq(BaseModel):
@@ -130,7 +137,7 @@ class PwReq(BaseModel):
 @router.post("/login")
 def login(req: LoginReq, request: Request, db: Session = Depends(get_db)):
     cfg = load_login_config()
-    ip = _client_ip(request)
+    ip = client_ip(request)
     # IP 白名单（启用后仅名单内可登录；不透露具体策略防探测）
     if cfg["ip_whitelist_enabled"] and cfg["whitelist"]:
         try:
@@ -147,6 +154,7 @@ def login(req: LoginReq, request: Request, db: Session = Depends(get_db)):
     if not user or not verify_password(req.password, user.password_hash):
         locked = _record_failure([ukey, ikey], cfg)
         if locked:
+            _fire_login_alert(db, req.username, ip)
             raise HTTPException(423, f"登录失败次数过多，账号已临时锁定 {cfg['lock_minutes']} 分钟")
         raise HTTPException(401, f"用户名或密码错误（还剩 {_remaining(ukey, cfg)} 次机会）")
     if not user.is_active:
@@ -166,8 +174,8 @@ def change_password(req: PwReq, user: User = Depends(get_current_user), db: Sess
         raise HTTPException(400, "原密码错误")
     if req.new_password == req.old_password:
         raise HTTPException(400, "新密码不能与原密码相同")
-    if len(req.new_password) < 6:
-        raise HTTPException(400, "新密码至少 6 位")
+    if len(req.new_password) < 8:
+        raise HTTPException(400, "新密码至少 8 位（公网部署建议含大小写与数字）")
     user.password_hash = hash_password(req.new_password)
     user.must_change_password = False  # 改密后解除首登强制
     db.commit()
