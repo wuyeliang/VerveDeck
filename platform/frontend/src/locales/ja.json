@@ -197,6 +197,7 @@
     "dImage": "エンジンイメージ", "formNode": "ノード配置", "formNodeHint": "単一ノードクラスター：このノードに自動スケジューリング", "advTitle": "詳細設定", "advHint": "空欄の場合はエンジン既定値を使用。extra_args は生 CLI 引数の透過（最終上書き）", "advMaxNumSeqs": "最大同時実行数 (max_num_seqs)", "advDtype": "データ型 dtype", "advServedName": "提供モデル名 (served_model_name)", "advEnforceEager": "強制 eager", "advPrefixCaching": "プレフィックスキャッシュ", "advChunkedPrefill": "チャンク分割プリフィル", "advApiKey": "エンジン API キー", "advMemFraction": "メモリ静的比率", "advDisableCudaGraph": "CUDA Graph 無効化", "advExtraArgs": "追加引数 extra_args", "advExtraArgsHint": "生 CLI 引数を起動コマンド末尾に追記（最優先、最終上書き）", "advExtraArgsPh": "例: --max-num-batched-tokens 8192", "advDefault": "既定"
   },
   "cluster": {
+    "addNode": "ノードを追加", "addNodeOk": "ノードを追加しました", "nodeName": "ノード名", "nodeGpuCount": "GPU 数", "addNodeHint": "ローカルノードは gpu-agent ハートビートで自動登録されます。リモートマシンはこのページから登録するか、リモートマシンで deploy/add-node.sh を実行して GPU/IB-RDMA 情報を自動収集して登録できます。",
     "title": "計算スケジューリングと運用", "heartbeat": "ハートビート {{ts}}", "gpuTotal": "GPU 総数", "gpuUsed": "使用中", "gpuFree": "空き",
     "gpuLine": "GPU {{idx}} · 使用率 {{util}}% · VRAM {{u}}/{{t}}GB · {{p}}W · {{c}}°C",
     "gpuDetail": "メモリ温度 {{mt}}°C · SM/メモリクロック {{sm}}/{{mc}}MHz · ECC dbe/sbe {{ecc}} · XID {{xid}} · スロットル {{thr}}",

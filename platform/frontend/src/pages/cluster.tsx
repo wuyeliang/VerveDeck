@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs, Segmented } from 'antd'
+import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs, Segmented, Modal, Form, Input, InputNumber, message } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
@@ -88,8 +89,26 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
 /** 计算节点：节点卡（含逐卡概览）+ 队列 + 运行中 */
 function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () => void }) {
   const { t } = useTranslation()
+  const [addOpen, setAddOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [form] = Form.useForm()
+  const submitNode = async () => {
+    try {
+      const v = await form.validateFields()
+      setBusy(true)
+      await api.post('/api/cluster/nodes', { name: v.name, gpu_count: v.gpu_count || 0, status: 'online' })
+      message.success(t('cluster.addNodeOk'))
+      setAddOpen(false); form.resetFields(); load()
+    } catch (e: any) {
+      if (e?.errorFields) return
+      message.error(e.response?.data?.detail || e?.message || t('api.requestFailed'))
+    } finally { setBusy(false) }
+  }
   return (
     <div>
+      <Space style={{ marginBottom: 12 }}>
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>{t('cluster.addNode')}</Button>
+      </Space>
       <Row gutter={16}>
         {nodes.map((n) => (
           <Col span={8} key={n.id}>
@@ -140,6 +159,18 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
           <RunningTable queue={queue} t={t} />
         </Col>
       </Row>
+      <Modal title={t('cluster.addNode')} open={addOpen} onCancel={() => setAddOpen(false)}
+        onOk={submitNode} confirmLoading={busy} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item name="name" label={t('cluster.nodeName')} rules={[{ required: true, message: t('cluster.nodeName') }]}>
+            <Input placeholder="node-2" />
+          </Form.Item>
+          <Form.Item name="gpu_count" label={t('cluster.nodeGpuCount')} initialValue={0}>
+            <InputNumber min={0} max={128} style={{ width: '100%' }} />
+          </Form.Item>
+          <p style={{ color: '#999', fontSize: 12, margin: 0 }}>{t('cluster.addNodeHint')}</p>
+        </Form>
+      </Modal>
     </div>
   )
 }

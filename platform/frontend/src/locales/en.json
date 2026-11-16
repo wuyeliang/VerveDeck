@@ -197,6 +197,7 @@
     "dImage": "Engine image", "formNode": "Node placement", "formNodeHint": "Single-node cluster: auto-scheduled to this node", "advTitle": "Advanced", "advHint": "Leave blank to use engine defaults; extra_args is raw CLI passthrough (last-resort override)", "advMaxNumSeqs": "Max Concurrency (max_num_seqs)", "advDtype": "Dtype", "advServedName": "Served Model Name (served_model_name)", "advEnforceEager": "Enforce Eager", "advPrefixCaching": "Prefix Caching", "advChunkedPrefill": "Chunked Prefill", "advApiKey": "Engine API Key", "advMemFraction": "Mem Fraction Static", "advDisableCudaGraph": "Disable CUDA Graph", "advExtraArgs": "Extra Args (extra_args)", "advExtraArgsHint": "Raw CLI args appended to the launch command (highest priority, last-resort)", "advExtraArgsPh": "e.g. --max-num-batched-tokens 8192", "advDefault": "default"
   },
   "cluster": {
+    "addNode": "Add Node", "addNodeOk": "Node added", "nodeName": "Node name", "nodeGpuCount": "GPU count", "addNodeHint": "The local node registers itself via the gpu-agent heartbeat. Register remote machines here, or run deploy/add-node.sh on the remote machine to auto-collect GPU/IB-RDMA info.",
     "title": "Compute Scheduling & Ops", "heartbeat": "Heartbeat {{ts}}", "gpuTotal": "GPUs", "gpuUsed": "In use", "gpuFree": "Free",
     "gpuLine": "GPU {{idx}} · Util {{util}}% · Mem {{u}}/{{t}}GB · {{p}}W · {{c}}°C",
     "gpuDetail": "Mem {{mt}}°C · SM/Mem clock {{sm}}/{{mc}}MHz · ECC dbe/sbe {{ecc}} · XID {{xid}} · Throttle {{thr}}",

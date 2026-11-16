@@ -41,6 +41,19 @@ def _volumes(base: dict):
     return vols
 
 
+def _rdma_devices() -> list[dict]:
+    """宿主 IB/RDMA 字符设备（uverbsN + rdma_cm）；无 RDMA 网卡时返回 []。
+    注入任务容器后 NCCL 可自动发现 HCA 走 IB 通信（多机训练）。"""
+    import glob
+    out = []
+    for d in sorted(glob.glob("/dev/infiniband/uverbs*")):
+        out.append({"PathOnHost": d, "PathInContainer": d, "CgroupPermissions": "rwm"})
+    if os.path.exists("/dev/infiniband/rdma_cm"):
+        out.append({"PathOnHost": "/dev/infiniband/rdma_cm",
+                    "PathInContainer": "/dev/infiniband/rdma_cm", "CgroupPermissions": "rwm"})
+    return out
+
+
 def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = None,
                      mem_gb: float | None = None, env: dict | None = None,
                      volumes: dict | None = None, labels: dict | None = None) -> str:
@@ -80,6 +93,17 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
         kwargs["device_requests"] = [
             docker.types.DeviceRequest(count=gpus, capabilities=[["gpu"]])
         ]
+    rdma = _rdma_devices()
+    if rdma:
+        # RDMA/IB：注入 HCA 字符设备；ipc=host 供 NCCL 共享内存；
+        # 宿主 libibverbs 只读挂入（引擎镜像默认无 IB 用户态库，缺则 NCCL 发现不了 HCA）
+        kwargs["devices"] = rdma
+        kwargs["ipc_mode"] = "host"
+        for host_lib in ("/usr/lib/x86_64-linux-gnu/libibverbs", "/usr/lib64/libibverbs", "/etc/libibverbs"):
+            if os.path.isdir(host_lib):
+                kwargs["volumes"][host_lib] = {"bind": host_lib, "mode": "ro"}
+        kwargs["environment"]["NCCL_IB_ENABLE"] = "1"
+        log.info("container %s: RDMA devices injected (%s)", name, ", ".join(d["PathOnHost"] for d in rdma))
     if cpus:
         # Docker 29 + docker-py 7.x: 用 cpu_quota/cpu_period 设置 CPU 限额
         # （实测 Docker 29 daemon 将 nano_cpus 误限流为固定 0.01 核，quota/period 行为正常）

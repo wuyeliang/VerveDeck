@@ -105,6 +105,15 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
 - Below: the task queue (priority +1/-1/promote-to-head) and the running-jobs list
 - Multi-node scaling: super_admin can register/remove nodes
 
+**Adding a Node** (two ways)
+1. **From the UI**: the "Add Node" button above the node list → enter a node name (e.g. `node-2`) + GPU count → OK. The local node needs no manual registration — gpu-agent's heartbeat registers it automatically; this entry is for remote nodes / resource records.
+2. **Via script** (recommended, auto-detection): on the *new machine*, run the repo's `deploy/add-node.sh`. It collects local GPU count/model/driver/CUDA and IB HCAs (stored in the node's meta for cross-node RDMA training reference), then registers:
+   ```bash
+   VD_PLATFORM=https://<platform-IP> VD_USER=admin VD_PASS=<password> \
+   bash add-node.sh [node-name]    # defaults to the local hostname
+   ```
+   A duplicate node name exits with an error (delete the old node first or use a different name). If the new machine should actually run jobs, deploy a full platform stack there too (`sudo bash install-from-iso.sh`); its node is then managed via gpu-agent heartbeats. Hosts with IB/RoCE NICs get RDMA devices injected into containers automatically (NCCL multi-node training over IB).
+
 **GPU Devices**
 - Cluster-wide GPU detail table: memory progress bar, temperature, power & power limit, SM/memory clocks, ECC errors, Xid, throttle reasons, Remap, health
 

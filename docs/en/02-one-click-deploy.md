@@ -54,6 +54,36 @@ nvidia-smi
 > Docker apt source is already configured, for resuming an interrupted install);
 > the complete script is the inline version above.
 
+### 1.2 Bare-Metal One-Click Install (install-from-iso.sh, recommended)
+
+Right after an Ubuntu ISO install, one command does everything: `deploy/install-from-iso.sh` (all deployment scripts live in the repo's `deploy/` subdirectory).
+
+```bash
+# Get the script onto the machine (USB / scp / standalone clone), then:
+sudo bash install-from-iso.sh
+```
+
+Four phases:
+
+| Phase | What it does |
+|---|---|
+| 1 System deps | OS check (Ubuntu 20.04+/x86_64) → git/curl → Docker CE (Aliyun mirror) + compose v2 → NVIDIA driver (newest 5xx in apt) → nvidia-container-toolkit → **RDMA detection** (below) |
+| 2 Code fetch | `git clone` into `/opt/vervedeck` (top-level project dir; existing repo → `git pull --ff-only`) |
+| 3 Platform deploy | `cd deploy && bash deploy.sh` (.env, /data dirs, task-image builds, compose up, health check) |
+| 4 Entry points | Platform URL https://<ip>, admin/admin123, common ops commands |
+
+Optional environment variables:
+
+| Var | Default | Meaning |
+|---|---|---|
+| `VD_REPO_URL` | `git@github.com:wuyeliang/VerveDeck.git` | Code repo (https URLs work too) |
+| `VD_INSTALL_DIR` | `/opt/vervedeck` | Install directory (top-level project dir) |
+| `VD_SKIP_DOCKER=1` | 0 | Skip Docker installation |
+| `VD_SKIP_DRIVER=1` | 0 | Skip NVIDIA driver installation |
+
+- **Idempotent**: safe to re-run — installed components are skipped, an existing clone is pulled. If a first-time driver install requires a reboot, reboot and re-run; dependencies are detected as already in place.
+- **RDMA network**: Phase 1 probes `/dev/infiniband` or `lspci` for IB HCAs and, when found, installs `rdma-core` / `ibverbs-utils` / `infiniband-diags`. On hosts with IB/RoCE NICs, training/inference containers then automatically get HCA character devices (`/dev/infiniband/uverbs*`), `ipc=host`, and the host's libibverbs libraries mounted — NCCL multi-node training uses IB transparently. Single-node hosts without IB NICs are unaffected (nothing is injected). Cross-node RDMA also requires the nodes' RDMA network to be reachable (IB fabric or RoCE with PFC/ECN).
+
 ## 2. Getting the Code
 
 ```bash
@@ -92,7 +122,7 @@ sudo bash deploy.sh
 | postgres | postgres:16-alpine | internal | Business DB fintune/fintune |
 | redis | redis:7-alpine | internal | Argilla cache |
 | opensearch | opensearch 2.17.1 | internal | Argilla 2.x mandatory search engine (single node, security plugin off) |
-| argilla | fintune/argilla:1.0 | internal 3000 | Data annotation; auto-creates service account on startup |
+| argilla | argilla/argilla-server:v2.8.0 (official) | internal 3000 | Data annotation; auto-creates service account on startup (image user uid=1000; `chown 1000:1000 /data/argilla` required) |
 | **rustfs** | rustfs/rustfs:latest | **9000** S3 / **9001** console | Object storage: primary store for dataset versions; named volume `rustfs-data` |
 | mineru | fintune/mineru:1.0 | internal 8000 | PDF/document parsing (occupies 1 GPU) |
 | gpu-agent | official nvidia/dcgm base | — | Heartbeat to `/data/gpu/agent.csv` every 5s (node registration/driver/CUDA/host metrics) |

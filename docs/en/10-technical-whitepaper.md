@@ -108,7 +108,8 @@ Serving deployments support attaching/detaching LoRA adapters without restart (v
 - Register-based nodes: each machine's gpu-agent heartbeats (GPU list, driver, CUDA, host metrics); the backend maintains `gpu_nodes`;
 - A job declares "nodes × GPUs-per-node"; the scheduler allocates across nodes;
 - torchrun launches multi-process inside the container network, supporting native DDP / DeepSpeed ZeRO / FSDP;
-- In IB/RDMA environments, NCCL parameters are configurable (NCCL_IB_* passed through job advanced params).
+- In IB/RDMA environments, NCCL parameters are configurable (NCCL_IB_* passed through job advanced params);
+- Automatic RDMA device injection: at container creation, host `/dev/infiniband` character devices (uverbs*/rdma_cm), `ipc=host`, and a read-only host libibverbs mount are injected automatically, so NCCL discovers the HCAs and uses IB; hosts without IB NICs are unaffected. The one-click installer auto-installs the rdma-core userspace stack when an IB HCA is detected.
 
 ### 3.6 OpenAI-Compatible Proxy & Guardrails
 

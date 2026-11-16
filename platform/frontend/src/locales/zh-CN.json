@@ -197,6 +197,7 @@
     "dImage": "引擎镜像", "formNode": "节点放置", "formNodeHint": "单节点集群：自动调度至本机", "advTitle": "高级参数", "advHint": "留空即用引擎默认值；extra_args 为原始命令行参数透传（兜底一切）", "advMaxNumSeqs": "最大并发 (max_num_seqs)", "advDtype": "数据类型 dtype", "advServedName": "对外模型名 (served_model_name)", "advEnforceEager": "强制 eager", "advPrefixCaching": "前缀缓存", "advChunkedPrefill": "分块预填充", "advApiKey": "引擎 API Key", "advMemFraction": "显存静态占比", "advDisableCudaGraph": "禁用 CUDA Graph", "advExtraArgs": "额外参数 extra_args", "advExtraArgsHint": "原始命令行参数，追加到启动命令末尾（最高优先级，兜底一切）", "advExtraArgsPh": "如 --max-num-batched-tokens 8192", "advDefault": "默认"
   },
   "cluster": {
+    "addNode": "添加节点", "addNodeOk": "节点已添加", "nodeName": "节点名称", "nodeGpuCount": "GPU 数量", "addNodeHint": "本机节点由 gpu-agent 心跳自动注册；远程机器可在此页注册，或在该机运行 deploy/add-node.sh 自动采集 GPU/IB-RDMA 信息注册。",
     "title": "算力调度与运维", "heartbeat": "心跳 {{ts}}", "gpuTotal": "GPU 总数", "gpuUsed": "占用", "gpuFree": "空闲",
     "gpuLine": "GPU {{idx}} · 利用率 {{util}}% · 显存 {{u}}/{{t}}GB · {{p}}W · {{c}}°C",
     "gpuDetail": "显存温度 {{mt}}°C · SM/显存时钟 {{sm}}/{{mc}}MHz · ECC dbe/sbe {{ecc}} · XID {{xid}} · 降频 {{thr}}",

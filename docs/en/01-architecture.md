@@ -124,7 +124,8 @@ hard isolation is guaranteed by the nvidia runtime.
 
 - Register-based nodes: each machine's gpu-agent heartbeats (GPU list/driver/CUDA/host metrics); the backend maintains `gpu_nodes` (UNIQUE name);
 - A job declares "nodes × GPUs-per-node"; the scheduler allocates GPUs across nodes;
-- torchrun launches multi-process inside the container network, supporting native DDP / DeepSpeed ZeRO / FSDP; NCCL params for IB/RDMA passed through job advanced parameters.
+- torchrun launches multi-process inside the container network, supporting native DDP / DeepSpeed ZeRO / FSDP; NCCL params for IB/RDMA passed through job advanced parameters;
+- Automatic RDMA device injection (taskcontainer): at container creation, host `/dev/infiniband` (uverbs*/rdma_cm) + `ipc=host` + read-only host libibverbs mount + `NCCL_IB_ENABLE=1` are injected so NCCL discovers the HCAs; skipped when no IB NIC exists (zero impact on single-node hosts).
 
 ### 2.6 Monitoring & Alerting (Prometheus Stack)
 
@@ -159,7 +160,7 @@ hard isolation is guaranteed by the nvidia runtime.
 |---|---|---|
 | `fintune/backend:1.0` | platform/backend | FastAPI platform backend (compose service) |
 | `fintune/web:1.0` | platform/frontend | React + AntD (nginx, compose service) |
-| `fintune/argilla:1.0` | images/argilla | Data annotation (compose service) |
+| `argilla/argilla-server:v2.8.0` | official | Data annotation (compose service); images/argilla kept as offline fallback |
 | `fintune/mineru:1.0` | images/mineru | PDF parsing (compose service, 1 GPU) |
 | `hiyouga/llamafactory:0.9.5` | official (hiyouga) | **Task image**: LLaMA-Factory 0.9.5 official prebuilt (CUDA 12.4 + torch); offline fallback self-build in images/llama-factory |
 | `vllm/vllm-openai:v0.33.0` | official | **Task image**: vLLM inference engine (CUDA 13.5 built-in) |
