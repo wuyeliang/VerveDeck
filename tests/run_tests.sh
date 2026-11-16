@@ -2,12 +2,18 @@
 # 一键测试运行器（在服务器 /opt/vervedeck 下执行；本机仅单测可跑）
 #
 # 用法：
-#   ./tests/run_tests.sh fast   # 快速套件（API 集成 + 单测，约 20-30 分钟，含部署生命周期）
-#   ./tests/run_tests.sh e2e    # E2E 真实 GPU 全链路（约 14 分钟，需无其他任务占卡）
-#   ./tests/run_tests.sh all    # fast + e2e
+#   ./tests/run_tests.sh fast     # 快速套件（backend 容器内，约 20 分钟，含部署生命周期）
+#   ./tests/run_tests.sh e2e      # E2E 真实 GPU 全链路（约 6-14 分钟，需无其他任务占卡）
+#   ./tests/run_tests.sh all      # fast + e2e（backend 容器内）
+#   ./tests/run_tests.sh runner   # 稳健运行器（推荐：有并发活动的环境）——独立容器跑全量，
+#                                 # backend 被重建不波及 pytest；按文件 3 次重试
 #
-# 约定：测试在 backend 容器内运行（pytest 直连 127.0.0.1:3001，与生产同环境）。
-# 前置：服务器 git 已与 origin/main 同步（git pull）。
+# 约定：测试直连 127.0.0.1:3001（与生产同环境）。
+# - fast/e2e/all：在 backend 容器内运行（docker exec）。缺点：backend 容器被重建时
+#   pytest 进程随之死亡（并行会话迭代部署时常见）。
+# - runner：独立容器（host 网络 + --add-host 解析 compose 服务名）挂载 tests/ 运行，
+#   backend 重建只造成瞬态不可用（重试兜底），pytest 进程本身不受影响。
+# 前置：服务器 git 已与 origin/main 同步（git pull），backend 镜像已构建。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONTAINER="${CONTAINER:-fintune-backend-1}"
@@ -31,9 +37,74 @@ run_e2e() {
     "cd /app/tests && python -m pytest test_e2e.py -v --tb=short -p no:cacheprovider"
 }
 
+# ---------- 稳健运行器（独立容器） ----------
+# 2026-11-16 #80 第三轮验证：有并行会话反复重建 backend 时，docker exec 方式必死；
+# 独立容器 + 按文件重试可完整跑完（全量 752 用例 18 分钟，零文件重试全绿）。
+RUNNER_NAME="ft-test-runner"
+COMPOSE_NET="${COMPOSE_NET:-fintune_net}"
+RUNNER_IMAGE="${RUNNER_IMAGE:-fintune/backend:1.0}"
+
+run_runner() {
+  local files=("$@")
+  local pg_ip rf_ip
+  pg_ip=$(docker inspect fintune-postgres-1 \
+    --format "{{(index .NetworkSettings.Networks \"$COMPOSE_NET\").IPAddress}}")
+  rf_ip=$(docker inspect fintune-rustfs-1 \
+    --format "{{(index .NetworkSettings.Networks \"$COMPOSE_NET\").IPAddress}}")
+  # host 网络容器不能挂第二网络 → 用 --add-host 静态解析 compose 服务名；
+  # S3 环境变量与 backend 容器一致（storage 用例不降级，保持覆盖一致）
+  docker rm -f "$RUNNER_NAME" 2>/dev/null
+  docker run -d --name "$RUNNER_NAME" --network host \
+    --add-host "postgres:$pg_ip" --add-host "rustfs:$rf_ip" \
+    -e S3_ENDPOINT="${S3_ENDPOINT:-http://rustfs:9000}" \
+    -e S3_ACCESS_KEY="${S3_ACCESS_KEY:-rustfsadmin}" \
+    -e S3_SECRET_KEY="${S3_SECRET_KEY:-rustfsadmin}" \
+    -e S3_BUCKET="${S3_BUCKET:-vervedeck-datasets}" \
+    -v "$ROOT/tests":/tests -v /data:/data \
+    "$RUNNER_IMAGE" bash -c '
+      cd /tests
+      wait_healthy() {
+        for _ in $(seq 1 36); do
+          if python -c "
+import sys, urllib.request, urllib.error
+try:
+    urllib.request.urlopen(\"http://127.0.0.1:3001/api/auth/login\", data=b\"{}\", timeout=3)
+except urllib.error.HTTPError:
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+"; then return 0; fi
+          sleep 5
+        done
+        return 1
+      }
+      fail=0
+      for f in "$@"; do
+        ok=1
+        for try in 1 2 3; do
+          if [ "$try" -gt 1 ]; then wait_healthy; fi
+          echo "==FILE== $f (try $try)"
+          if python -m pytest "$f" -v --tb=short -p no:cacheprovider; then ok=0; break; fi
+        done
+        if [ "$ok" -ne 0 ]; then fail=1; fi
+      done
+      echo "=== runner done: $([ $fail -eq 0 ] && echo GREEN || echo HAS-FAILURES) ==="
+      [ "$fail" -eq 0 ]
+    ' "${files[@]}"
+  docker logs -f "$RUNNER_NAME" || true
+  local rc
+  rc=$(docker inspect -f '{{.State.ExitCode}}' "$RUNNER_NAME" 2>/dev/null || echo 1)
+  docker rm -f "$RUNNER_NAME" 2>/dev/null
+  return "$rc"
+}
+
 case "$MODE" in
   fast) run_fast ;;
   e2e)  run_e2e ;;
   all)  run_fast && run_e2e ;;
-  *) echo "用法: $0 {fast|e2e|all}"; exit 2 ;;
+  runner)
+    mapfile -t FAST_FILES < <(cd "$ROOT/tests" && ls test_*.py | grep -v '^test_e2e\.py$')
+    run_runner "${FAST_FILES[@]}" test_e2e.py
+    ;;
+  *) echo "用法: $0 {fast|e2e|all|runner}"; exit 2 ;;
 esac

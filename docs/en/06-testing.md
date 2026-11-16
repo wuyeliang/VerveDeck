@@ -8,10 +8,13 @@ symlink for backward compatibility). See `tests/README.md`.
 
 | Layer | Files | Cases | Notes |
 |---|---|---|---|
-| Fast integration + unit | `tests/test_*.py` (26 files, excluding test_e2e.py) | **649** (605 migrated − 10 e2e + 54 new, 2026-11-16) | Run inside the container, ~20-30 min |
-| End-to-end regression | `tests/test_e2e.py` | **10** | Real GPU full pipeline, ~14 min |
+| Fast integration + unit | `tests/test_*.py` (excluding test_e2e.py) | **742** (measured in the final round, 27 files, 2026-11-16) | ~10-12 min (runner mode) |
+| End-to-end regression | `tests/test_e2e.py` | **10** | Real GPU full pipeline, ~6 min |
 
-Both layers total **659** cases (#80: 605 migrated to the top-level dir + 54 new).
+Both layers total **752** cases (final round, 2026-11-16). The suite grows
+dynamically with feature work (#80 round 2 was 659: 605 migrated + 54 new;
+later feature sessions added time-config, training batch-delete and more).
+The acceptance baseline is whatever `run_tests.sh` reports on the current run.
 
 Files and coverage:
 
@@ -43,6 +46,8 @@ Files and coverage:
 | test_api_login_security.py | **Login security config (#76)**: IP whitelist normalization/validation/threshold boundaries/RBAC/config restore |
 | test_api_images.py | **Image management**: component list / non-blocking probe regression (stale-while-revalidate) / custom image CRUD / RBAC |
 | test_api_logs.py | **Log center**: service list / container log reading / RBAC (skipped as a group outside compose envs) |
+| test_api_time.py | **Cluster time config (timezone + NTP)**: GET shape / invalid-param 400 / probe shape / RBAC (no real apply, to avoid polluting the shared env) |
+| test_unit_training_batch.py | Training-job batch-delete unit tests (#97 gap, sqlite in-memory, endpoint functions called directly) |
 
 ## 2. How to Run
 
@@ -50,9 +55,12 @@ Tests run **inside the backend container** (pytest hits 127.0.0.1:3001 directly,
 same environment as production):
 
 ```bash
-# On the server, in /opt/vervedeck (recommended, one-shot)
-./tests/run_tests.sh fast   # fast suite (~20-30 min, incl. real deployment switch)
-./tests/run_tests.sh e2e    # E2E (~14 min, requires no other task holding the GPU)
+# On the server, in /opt/vervedeck (one-shot)
+./tests/run_tests.sh runner  # resilient runner (recommended under concurrent
+                             # activity): separate container for the full suite,
+                             # backend rebuilds don't kill pytest, 3 retries per file (~18 min)
+./tests/run_tests.sh fast   # fast suite (inside backend container, ~20-30 min, incl. real deployment switch)
+./tests/run_tests.sh e2e    # E2E (~6-14 min, requires no other task holding the GPU)
 ./tests/run_tests.sh all
 
 # Equivalent manual commands
@@ -67,6 +75,20 @@ docker exec fintune-backend-1 sh -c \
 Local (no GPU / no compose): only `tests/test_unit_*.py` can run; the API tests
 depend on the resident deployment, Prometheus/DCGM, the docker socket and S3,
 and must run in a real environment.
+
+**Two server run modes** (proven in #80 round 3):
+
+| Mode | Where pytest runs | When backend is rebuilt | Use when |
+|---|---|---|---|
+| `fast/e2e/all` (docker exec) | inside the backend container | the pytest process dies with the container | no concurrent activity |
+| `runner` (separate container) | host-networked container mounting `tests/` + `/data` | only a transient API gap; per-file retries cover it | parallel sessions / deploys are active |
+
+Runner details: `--network host` to reach 127.0.0.1:3001; a host-network
+container cannot join a second network, so `postgres`/`rustfs` (compose
+service names, needed by unit tests that build their own engines) are mapped
+via `--add-host`; S3 env vars match the backend container (storage cases do
+not degrade); each file gets up to 3 attempts, waiting for API health first
+(up to 180s) before a retry.
 
 ## 3. Key Conventions (lessons learned)
 
@@ -111,15 +133,27 @@ New cases that depend on shared resident resources (deployment 1 / single GPU /
 background probing) should prefer `poll` + `retry_call` over fixed sleeps or
 one-shot assertions.
 
-## 5. Acceptance Baseline (Nov 2026, this round)
+## 5. Acceptance Baseline (final round, 2026-11-16)
 
-- Fast suite: **649/649 PASSED** (run on 100.100.33.86; incl. S3 integration,
-  full parameter surface, 9-endpoint batch delete)
+- Fast suite: **742/742 PASSED** (run on 100.100.33.86, runner mode, 27 files
+  with zero retries; incl. S3 integration, full parameter surface, 9-endpoint
+  batch delete, time config, training batch delete)
 - E2E regression: **10/10 PASSED** (dataset → clean → SFT training → LoRA merge
   → deploy → inference → eval, full pipeline)
+- Total **752/752 green** (2026-11-16 12:31, ~18 min)
 
 ## 6. Change Log
 
+- **2026-11-16 (#80 round 3)**: final full-suite acceptance **752/752 green**
+  (runner mode); fixed 2 product defects (`cluster/inference` NaN metric → 500;
+  `scale` to the same replica count not idempotent → 400; see 08 report §3.3);
+  log center unknown-service 500 → 404 (docker-py NotFound); test hardening:
+  `batch_delete` deployment-1 self-healing fixture (stopped → start → poll
+  running), `cluster_nodes` viewer case missing-argument fix + transient poll
+  for the inference overview; `run_tests.sh` gained the `runner` resilient
+  runner (separate container + 3 per-file retries, immune to backend
+  rebuilds); cleaned up historical leftovers (8 test nodes, a running
+  quantize-task row orphaned by a killed run).
 - **2026-11-16 (#80)**: suite moved to the top-level `tests/` directory (old
   path kept as a symlink); 5 new functional test files (batch delete / node
   registration / login security / images / logs, 54 cases); polling/retry
