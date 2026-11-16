@@ -104,6 +104,11 @@ function Shell({ children }: { children: React.ReactNode }) {
     { key: '/evals', icon: <BarChartOutlined />, label: t('nav.evals') },
     { key: '/quantize', icon: <ShrinkOutlined />, label: t('nav.quant') },
     { key: '/infer', icon: <CloudServerOutlined />, label: t('nav.infer') },
+    // 存储管理 / 镜像管理 置于集群运维上方（仅超管可见）
+    ...(isSuper ? [
+      { key: '/storage', icon: <HddOutlined />, label: t('nav.storage') },
+      { key: '/images', icon: <AppstoreOutlined />, label: t('nav.images') },
+    ] : []),
     {
       key: '/cluster', icon: <ClusterOutlined />, label: t('nav.cluster'),
       children: [
@@ -119,8 +124,6 @@ function Shell({ children }: { children: React.ReactNode }) {
     },
     ...(isSuper ? [
       { key: '/org', icon: <ApartmentOutlined />, label: t('nav.org') },
-      { key: '/storage', icon: <HddOutlined />, label: t('nav.storage') },
-      { key: '/images', icon: <AppstoreOutlined />, label: t('nav.images') },
       { key: '/admin', icon: <SettingOutlined />, label: t('nav.admin') },
     ] : []),
   ]
