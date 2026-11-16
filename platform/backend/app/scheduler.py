@@ -29,6 +29,13 @@ from .services import upgrade_service
 
 log = logging.getLogger("scheduler")
 
+# 部署"镜像已就绪→容器建成"宽限期（秒）。镜像就绪的瞬间，启动线程可能仍在
+# inf.launch() 建 docker 容器，此刻 container_alive 尚未为 True；宽限期内调度器
+# 不判"容器异常退出"，避免与启动线程竞态把部署误杀（见 #80）。模型加载发生在
+# 容器存活期间（走下方 wait_ready 分支），不受此宽限影响，仅覆盖容器创建窗口。
+_CREATION_GRACE = 300.0
+_image_ready_since: dict[int, float] = {}
+
 
 def _node(db):
     return db.query(GpuNode).filter_by(name=settings.node_name).first()
@@ -189,6 +196,7 @@ def _reconcile_deployments(db):
         ist = image_ops.ensure_image(img)
         if ist != "ready":
             dep.status = "creating"
+            _image_ready_since.pop(dep.id, None)  # 镜像回退为未就绪，重置宽限计时
             new_err = (f"引擎镜像拉取失败: {image_ops.image_status(img).get('error', '')}"
                        if ist == "failed"
                        else f"引擎镜像 {img} 下载中，完成后自动创建容器…")
@@ -196,9 +204,22 @@ def _reconcile_deployments(db):
                 dep.error = new_err
                 db.commit()
             continue
+        # 镜像就绪：首次记录时间戳，用于"建容器"宽限期判定
+        if dep.id not in _image_ready_since:
+            _image_ready_since[dep.id] = time.time()
         alive = all(tc.container_alive(n) for n in
                     (dep.container_ids or [f"ft-infer-{dep.id}"]))
         if not alive:
+            # 竞态防护：creating 且镜像刚就绪时，启动线程可能仍在 inf.launch() 建
+            # docker 容器（container_alive 尚未为 True）。宽限期内不判死，避免调度器
+            # 抢先于启动线程把部署误判为"容器异常退出"（#80 根因）。模型加载在容器
+            # 存活期间进行，走下方 wait_ready 分支，不受此宽限影响。
+            if dep.status == "creating" and \
+                    time.time() - _image_ready_since[dep.id] < _CREATION_GRACE:
+                if dep.error != "推理容器启动中（镜像已就绪，等待容器拉起）…":
+                    dep.error = "推理容器启动中（镜像已就绪，等待容器拉起）…"
+                    db.commit()
+                continue
             was_running = dep.status == "running"
             dep.status = "failed"
             dep.error = "推理容器异常退出（节点故障或 OOM），请重新启动"
@@ -208,7 +229,10 @@ def _reconcile_deployments(db):
                 alert_service.trigger_event(db, "infer_down", f"deploy:{dep.id}",
                                             f"推理服务不可用：{dep.name}",
                                             "推理容器异常退出（节点故障或 OOM），服务已中断，请重新启动")
+            _image_ready_since.pop(dep.id, None)
             continue
+        # 容器已存活，退出宽限态
+        _image_ready_since.pop(dep.id, None)
         if dep.status == "creating":
             ok = inference_service.wait_ready(dep, timeout=10)
             if ok:

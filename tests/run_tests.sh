@@ -51,11 +51,25 @@ run_runner() {
     --format "{{(index .NetworkSettings.Networks \"$COMPOSE_NET\").IPAddress}}")
   rf_ip=$(docker inspect fintune-rustfs-1 \
     --format "{{(index .NetworkSettings.Networks \"$COMPOSE_NET\").IPAddress}}")
-  # host 网络容器不能挂第二网络 → 用 --add-host 静态解析 compose 服务名；
-  # S3 环境变量与 backend 容器一致（storage 用例不降级，保持覆盖一致）
+  # host 网络容器不能挂第二网络 → 用 --add-host 静态解析 compose 服务名。
+  # 关键：deploy.sh 会为 DB / S3 生成随机凭证（DB_URL 随机口令、S3 key 非 rustfsadmin），
+  # 而 quantize/storage 等用例进程内 import app 直连 DB/S3，硬编码默认值会让它们
+  # OperationalError / InvalidAccessKeyId。故从 backend 容器抓取真实运行凭证并透传，
+  # 抓不到再回退默认（保持旧部署/纯本地模式可用）。
+  local be_env v
+  be_env=$(docker exec "$CONTAINER" env 2>/dev/null \
+    | grep -E "^(DB_URL|DATA_DIR|S3_ENDPOINT|S3_ACCESS_KEY|S3_SECRET_KEY|S3_BUCKET)=") || true
+  v=$(printf '%s\n' "$be_env" | sed -n 's/^DB_URL=//p');        [ -n "$v" ] && DB_URL="$v"
+  v=$(printf '%s\n' "$be_env" | sed -n 's/^DATA_DIR=//p');      [ -n "$v" ] && DATA_DIR="$v"
+  v=$(printf '%s\n' "$be_env" | sed -n 's/^S3_ENDPOINT=//p');   [ -n "$v" ] && S3_ENDPOINT="$v"
+  v=$(printf '%s\n' "$be_env" | sed -n 's/^S3_ACCESS_KEY=//p'); [ -n "$v" ] && S3_ACCESS_KEY="$v"
+  v=$(printf '%s\n' "$be_env" | sed -n 's/^S3_SECRET_KEY=//p'); [ -n "$v" ] && S3_SECRET_KEY="$v"
+  v=$(printf '%s\n' "$be_env" | sed -n 's/^S3_BUCKET=//p');     [ -n "$v" ] && S3_BUCKET="$v"
   docker rm -f "$RUNNER_NAME" 2>/dev/null
   docker run -d --name "$RUNNER_NAME" --network host \
     --add-host "postgres:$pg_ip" --add-host "rustfs:$rf_ip" \
+    -e DB_URL="${DB_URL:-postgresql://fintune:fintune123@postgres:5432/fintune}" \
+    -e DATA_DIR="${DATA_DIR:-/data}" \
     -e S3_ENDPOINT="${S3_ENDPOINT:-http://rustfs:9000}" \
     -e S3_ACCESS_KEY="${S3_ACCESS_KEY:-rustfsadmin}" \
     -e S3_SECRET_KEY="${S3_SECRET_KEY:-rustfsadmin}" \
