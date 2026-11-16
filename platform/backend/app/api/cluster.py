@@ -3,6 +3,7 @@
 指标数据底座 = Prometheus（dcgm-exporter / node-exporter / 推理引擎 /metrics），
 本模块只做查询与组装，不再读 GpuMetric/SystemMetric/InferenceMetric 旧表。
 """
+import math
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,9 +21,12 @@ router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 
 def _f(v, default=0.0):
     try:
-        return float(v)
+        x = float(v)
     except (TypeError, ValueError):
         return default
+    # Prometheus 可能返回 NaN（如空集上的 histogram_quantile）；非有限值无法 JSON 序列化
+    # （starlette allow_nan=False → 500），按"无数据"处理
+    return x if math.isfinite(x) else None
 
 
 def _merged_series(exprs: list[tuple[str, str]], minutes: int, step: str = "60s") -> list[dict]:
@@ -35,8 +39,11 @@ def _merged_series(exprs: list[tuple[str, str]], minutes: int, step: str = "60s"
             continue
         for r in results:
             for ts, v in r.get("values", []):
+                x = _f(v)
+                if x is None:
+                    continue  # NaN 数据点按缺失处理，不进序列
                 t = int(float(ts))
-                per_ts.setdefault(t, {"ts": t})[key] = _f(v)
+                per_ts.setdefault(t, {"ts": t})[key] = x
     return [per_ts[t] for t in sorted(per_ts)]
 
 
@@ -54,8 +61,11 @@ def _gpu_series(exprs: list[tuple[str, str]], minutes: int) -> dict[str, list[di
                 continue
             idx = int(g)
             for ts, v in r.get("values", []):
+                x = _f(v)
+                if x is None:
+                    continue  # NaN 数据点按缺失处理，不进序列
                 t = int(float(ts))
-                out.setdefault(idx, {}).setdefault(t, {"ts": t})[key] = _f(v)
+                out.setdefault(idx, {}).setdefault(t, {"ts": t})[key] = x
     return {str(i): [out[i][t] for t in sorted(out[i])] for i in sorted(out)}
 
 

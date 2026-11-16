@@ -45,6 +45,32 @@ def _mk_placeholder_base(tok, name, proj):
     return r.json()["id"]
 
 
+def _dep1(tok):
+    return requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",
+                        headers=H(tok), timeout=15).json()
+
+
+@pytest.fixture(scope="module")
+def dep1_running(admin_tok):
+    """部署 1 回到 running 稳态（自愈，flaky 对策）。
+
+    套件前提"常驻部署 1 占卡"可能被打破：前次运行被杀残留（部署 1 停在
+    stopped/creating）、并发改动重启。部署引用守卫只匹配 status==running，
+    故涉及"被运行中部署引用"的断言前必须先收敛到 running。
+    """
+    st = _dep1(admin_tok)["status"]
+    if st == "stopped":
+        r = requests.post(f"{BASE}/api/inference/deployments/{DEPLOY_ID}/start",
+                          headers=H(admin_tok), timeout=30)
+        assert r.status_code == 200, r.text
+
+    def _running():
+        d = _dep1(admin_tok)
+        return d if d["status"] == "running" else None
+    poll(_running, timeout=600, interval=10, desc="部署 1 回到 running（自愈）")
+    return True
+
+
 @pytest.fixture(scope="module")
 def bctx(admin_tok):
     """各资源上下文：占位模型 ×2 / 坏版本评测 ×2（快速 failed）/ 自定义镜像 ×2 / API Key ×2"""
@@ -156,7 +182,7 @@ def test_bd_models_ok(admin_tok, bctx):
         assert not os.path.isdir(f"/data/models/hub/{n}"), f"占位目录未清理: {n}"
 
 
-def test_bd_models_in_use_by_deploy(admin_tok):
+def test_bd_models_in_use_by_deploy(admin_tok, dep1_running):
     """被运行中部署引用的模型进 failed，部署 1 本身不受影响"""
     dep = requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",
                        headers=H(admin_tok), timeout=15).json()
@@ -262,7 +288,7 @@ def test_bd_alert_rules(admin_tok):
 
 # ---------- 推理部署（missing 分支，不触碰部署 1） ----------
 
-def test_bd_deploys_missing_only(admin_tok):
+def test_bd_deploys_missing_only(admin_tok, dep1_running):
     body = _bd(admin_tok, "/api/inference/deployments/batch-delete", [999999, 888888]).json()
     assert body["deleted"] == [] and len(body["failed"]) == 2
     dep = requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",

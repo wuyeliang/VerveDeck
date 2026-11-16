@@ -304,6 +304,9 @@ def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curre
     node = db.query(GpuNode).filter_by(name=settings.node_name).first()
     used = scheduler._gpu_in_use(db)
     want = max(1, int(req.get("replicas", d.replicas)))
+    if want == d.replicas:
+        # 幂等：副本数不变为 no-op，直接返回（不做 GPU 复检，避免瞬态占用误报 400）
+        return _brief(d, db)
     need = want * (d.tensor_parallel or 1)
     have = d.replicas * (d.tensor_parallel or 1)
     if node and need > (node.gpu_count or 0) - used + have:

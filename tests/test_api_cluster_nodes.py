@@ -8,7 +8,7 @@ RBAC 收窄如有调整需同步本文件。
 import pytest
 import requests
 
-from conftest import BASE, H, SUF, DEPLOY_NAME
+from conftest import BASE, H, SUF, DEPLOY_NAME, DEPLOY_ID, poll
 
 N1 = "node-1"  # 本节点（settings.node_name，心跳写入）
 
@@ -70,7 +70,7 @@ def test_register_offline_kept(admin_tok):
                     headers=H(admin_tok), timeout=15)
 
 
-def test_register_as_viewer_allowed(ntok):
+def test_register_as_viewer_allowed(ntok, admin_tok):
     """当前设计：任意登录用户可注册节点（运维入口，未收窄 RBAC）"""
     r = requests.post(f"{BASE}/api/cluster/nodes", headers=H(ntok["viewer"]), timeout=15,
                       json={"name": f"bdtv-{SUF}", "gpu_count": 1})
@@ -153,6 +153,15 @@ def test_system_metrics_shape(admin_tok):
 
 
 def test_inference_overview_contains_dep1(admin_tok):
+    # 容忍瞬态窗口（并发改动/前次异常退出致部署 1 重启中），等其回到 running（flaky 对策）
+    def _running():
+        r = requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",
+                         headers=H(admin_tok), timeout=15)
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        return d if d["status"] == "running" else None
+    poll(_running, timeout=300, interval=10, desc="部署 1 回到 running")
     r = requests.get(f"{BASE}/api/cluster/inference", headers=H(admin_tok), timeout=30)
     assert r.status_code == 200
     items = r.json()["items"]
