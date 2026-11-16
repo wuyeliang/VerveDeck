@@ -104,7 +104,9 @@ except Exception:
       done
       echo "=== runner done: $([ $fail -eq 0 ] && echo GREEN || echo HAS-FAILURES) ==="
       [ "$fail" -eq 0 ]
-    ' "${files[@]}"
+      # 注意：bash -c 'script' "$@" 会把第一个参数吞为 $0（不在 "$@" 内），
+      # 故必须垫一个占位符 `_` 作 $0，否则第一个测试文件会被静默跳过。
+    ' _ "${files[@]}"
   docker logs -f "$RUNNER_NAME" || true
   local rc
   rc=$(docker inspect -f '{{.State.ExitCode}}' "$RUNNER_NAME" 2>/dev/null || echo 1)
