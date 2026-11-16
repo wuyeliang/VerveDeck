@@ -228,10 +228,12 @@ class BatchDeleteReq(BaseModel):
 def batch_revoke_keys(pid: int, req: BatchDeleteReq, db=Depends(get_db),
                       user=Depends(require_role("super_admin", "tenant_admin", "developer"))):
     """批量吊销 API Key（限定项目范围内）"""
-    n = db.query(ApiKey).filter(ApiKey.id.in_(req.ids), ApiKey.project_id == pid) \
+    rows = db.query(ApiKey).filter(ApiKey.id.in_(req.ids), ApiKey.project_id == pid).all()
+    db.query(ApiKey).filter(ApiKey.id.in_(req.ids), ApiKey.project_id == pid) \
         .update({"is_active": False}, synchronize_session=False)
     db.commit()
-    return {"deleted": n, "failed": []}
+    # 统一批量删除契约：deleted 为 id 列表（前端 useBatchDelete 按 .length 展示计数）
+    return {"deleted": [k.id for k in rows], "failed": []}
 
 
 # ---------- 护栏规则 ----------
@@ -268,9 +270,10 @@ def delete_rule(rid: int, db=Depends(get_db), user=Depends(require_role("super_a
 @router.post("/guard-rules/batch-delete")
 def batch_delete_rules(req: BatchDeleteReq, db=Depends(get_db), user=Depends(require_role("super_admin", "tenant_admin"))):
     """批量删除护栏规则"""
-    n = db.query(GuardRule).filter(GuardRule.id.in_(req.ids)).delete(synchronize_session=False)
+    ids = [r.id for r in db.query(GuardRule).filter(GuardRule.id.in_(req.ids)).all()]
+    db.query(GuardRule).filter(GuardRule.id.in_(req.ids)).delete(synchronize_session=False)
     db.commit()
-    return {"deleted": n, "failed": []}
+    return {"deleted": ids, "failed": []}
 
 
 # ---------- 告警规则与事件 ----------
@@ -369,11 +372,12 @@ def delete_alert_rule(rid: int, db=Depends(get_db),
 def batch_delete_alert_rules(req: BatchDeleteReq, db=Depends(get_db),
                              user=Depends(require_role("super_admin", "tenant_admin"))):
     """批量删除告警规则（结束后统一重渲染 Prometheus 规则）"""
-    n = db.query(AlertRule).filter(AlertRule.id.in_(req.ids)).delete(synchronize_session=False)
+    ids = [r.id for r in db.query(AlertRule).filter(AlertRule.id.in_(req.ids)).all()]
+    db.query(AlertRule).filter(AlertRule.id.in_(req.ids)).delete(synchronize_session=False)
     db.commit()
-    if n:
+    if ids:
         _resync_rules()
-    return {"deleted": n, "failed": []}
+    return {"deleted": ids, "failed": []}
 
 
 @router.post("/alerts/rules/{rid}/test")
