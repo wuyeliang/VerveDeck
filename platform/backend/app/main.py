@@ -219,6 +219,34 @@ def _monitoring_bootstrap():
     threading.Thread(target=_loop, name="monitoring-bootstrap", daemon=True).start()
 
 
+def _gateway_rate_bootstrap():
+    """后台自愈：DB 已保存网关限流配置时重新渲染并热应用（覆盖保存时 docker
+    不可达/容器未就绪造成的漂移）。从未配置则直接返回（用镜像默认值）。"""
+    import threading
+    import time
+    from .models import GatewayRateConfig
+
+    def _loop():
+        from .services import gateway_service
+        for _ in range(30):  # web 容器可能还没起：10s 间隔，最多 5 分钟
+            db = SessionLocal()
+            try:
+                row = db.get(GatewayRateConfig, 1)
+            finally:
+                db.close()
+            if row is None:
+                return
+            res = gateway_service.apply_zones(gateway_service.render_zones(
+                row.login_rate, row.api_rate, row.v1_rate, row.conn_limit))
+            if res["ok"]:
+                log.info("gateway rate config reapplied (self-heal): %s", res["detail"])
+                return
+            time.sleep(10)
+        log.warning("gateway rate bootstrap gave up（下次保存时会重试）")
+
+    threading.Thread(target=_loop, name="gateway-rate-bootstrap", daemon=True).start()
+
+
 @app.on_event("startup")
 def startup():
     init_db()
@@ -226,6 +254,7 @@ def startup():
     if settings.s3_endpoint:
         _s3_bootstrap()
     _monitoring_bootstrap()
+    _gateway_rate_bootstrap()
     log.info("VerveDeck backend ready. data_dir=%s", settings.data_dir)
 
 

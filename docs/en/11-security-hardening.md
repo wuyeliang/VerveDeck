@@ -10,7 +10,7 @@ defense chain, and the mandatory/recommended checklist for public deployments.
 | Layer | Mechanism | Location |
 |---|---|---|
 | Gateway (nginx) | HTTP 301→HTTPS, TLS 1.2/1.3, HSTS | `platform/frontend/nginx.conf` |
-| Gateway | **Rate limiting**: login 5 r/s/IP, API 30 r/s/IP, inference proxy 60 r/s/IP, 50 conns/IP, 429 on excess | `platform/frontend/zones.conf` + `nginx.conf` |
+| Gateway | **Rate limiting**: login 5 r/s/IP, API 30 r/s/IP, inference proxy 60 r/s/IP, 50 conns/IP, 429 on excess; **all four parameters configurable from the UI with hot-apply** (Settings → Gateway Rate Limiting; nginx reload without dropping connections, invalid configs roll back) | `platform/frontend/zones.conf` + `app/services/gateway_service.py` |
 | Gateway | Security headers: X-Content-Type-Options / X-Frame-Options / Referrer-Policy; version hidden | `nginx.conf` |
 | App · login | **Brute-force lockout**: 5 fails/account or 30 fails/IP → 15-min lock (423); thresholds/duration/IP whitelist configurable in UI | `app/api/auth.py` (Settings) |
 | App · login | **Lockout alert**: firing the lock raises a `login_locked` event (WeCom/email channels + alert-events page, 5-min cooldown dedupe) | `app/services/alert_service.py` |
@@ -34,8 +34,14 @@ Attacker → public 443
   ④ audit log: every 401/423 recorded with real client IP — reconstruct attack source/accounts after the fact
 ```
 
-All parameters are tunable without code changes: nginx thresholds in `zones.conf` (rebuild web
-image); lockout thresholds/whitelist via Settings UI (DB-backed, effective in ~10s).
+All parameters are tunable without code changes:
+- **nginx rate limits**: Settings → Gateway Rate Limiting (four knobs: login/API/proxy
+  rates + per-IP concurrent connections). Saving re-renders `00-zones.conf`, validates with
+  `nginx -t` and hot-reloads via `nginx -s reload` (existing connections survive; invalid
+  configs roll back automatically). Values persist in the DB; after a web-container
+  recreation the backend self-heals by re-applying on startup. The deploy-side file
+  `deploy/nginx/00-zones.conf` is kept in sync (bind-mounted into the web container).
+- **Lockout thresholds/whitelist**: Settings UI (DB-backed, effective in ~10s).
 
 ## 3. Mandatory Checklist for Public Deployment
 
@@ -85,3 +91,4 @@ image); lockout thresholds/whitelist via Settings UI (DB-backed, effective in ~1
 | Date | Change |
 |---|---|
 | 2026-11-16 | Public-internet hardening landed: rustfs bound to 127.0.0.1; deploy.sh auto-generates strong random secrets + weak-default detection + hardening checklist output; nginx rate-limit zones (login 5 r/s / API 30 r/s / proxy 60 r/s / 50 conns) + security headers + version hidden; login lockout alert (login_locked event rule, auto-seeded on existing DBs); audit log records real client IP; unified password policy ≥ 8 chars; CORS origins and API-docs toggle configurable (`CORS_ORIGINS`/`API_DOCS_ENABLED`); Grafana anonymous access configurable (`GRAFANA_ANONYMOUS`) |
+| 2026-11-16 | The four nginx rate-limit knobs (login/API/proxy rates + per-IP concurrency) are now UI-configurable: Settings → Gateway Rate Limiting re-renders `00-zones.conf` and hot-reloads nginx (invalid configs roll back). The `limit_conn` value moved into the dynamic zones file; the zones file is bind-mounted from the host (`deploy/nginx/00-zones.conf`, generated on first deploy); the backend self-heals the config on startup |

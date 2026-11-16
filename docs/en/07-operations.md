@@ -151,6 +151,9 @@ brute-force chain, mandatory/recommended checklist). Key points:
 - Built-in login brute-force defense: lockout after 5 fails/account or 30 fails/IP
   (15 min) + IP whitelist (Settings) + lockout alert (`login_locked`, reaches you
   once a WeCom/email channel is configured) + nginx login rate limit 5 r/s/IP (429);
+  the four nginx rate-limit knobs (login/API/proxy rates + per-IP concurrency) are also
+  adjustable in Settings → Gateway Rate Limiting and hot-apply via nginx reload
+  (invalid configs roll back automatically);
 - For public deployments: firewall open 80/443 only (22 source-restricted), enable
   the login IP whitelist, `API_DOCS_ENABLED=false`, SSH keys-only + fail2ban;
 - API keys are project-scoped (`/api/admin/projects/{pid}/api-keys`); revoke

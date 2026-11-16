@@ -3,7 +3,7 @@ import {
   Tabs, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Card,
   Switch, Row, Col, Tooltip,
 } from 'antd'
-import { PlusOutlined, CopyOutlined, SendOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, CopyOutlined, SendOutlined, ClockCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useBatchDelete } from '../batch'
@@ -576,6 +576,7 @@ function SettingsTab() {
       </Card>
       <LoginSecurityCard />
       <TimeConfigCard />
+      <GatewayRateCard />
     </div>
   )
 }
@@ -743,6 +744,60 @@ function TimeConfigCard() {
         </div>
       )}
       {restartHint && <div style={{ marginTop: 8 }}><AlertLine>{t('admin.tcRestart')}: <code>{restartHint}</code></AlertLine></div>}
+    </Card>
+  )
+}
+
+/** 网关限流：nginx 三档速率 + 单 IP 并发（DB 持久化；保存后渲染 zones.conf 并 nginx reload 热生效，
+ *  校验失败自动回滚。未配置=默认 5/30/60 r/s + 并发 50，见 docs/11-安全加固） */
+function GatewayRateCard() {
+  const { t } = useTranslation()
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const [source, setSource] = useState('default')
+  const load = () => api.get('/api/admin/gateway-rate').then((r) => {
+    setSource(r.data.source)
+    form.setFieldsValue({
+      login_rate: r.data.login_rate, api_rate: r.data.api_rate,
+      v1_rate: r.data.v1_rate, conn_limit: r.data.conn_limit,
+    })
+  }).catch(() => {})
+  useEffect(() => { load() }, [])
+  const save = async () => {
+    const v = await form.validateFields()
+    setSaving(true)
+    try {
+      const r = await api.put('/api/admin/gateway-rate', v)
+      if (r.data.applied?.ok) message.success(r.data.applied.detail || t('admin.grApplied'))
+      else message.warning(r.data.applied?.detail || t('admin.saved'))
+      load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t('api.requestFailed'))
+    } finally { setSaving(false) }
+  }
+  return (
+    <Card size="small" style={{ maxWidth: 560, marginTop: 12 }}
+      title={<Space><SafetyCertificateOutlined />{t('admin.grTitle')}
+        {source === 'default' && <Tag>{t('admin.lcDefault')}</Tag>}</Space>}
+      extra={<Button type="primary" size="small" loading={saving} onClick={save}>{t('admin.saveCfg')}</Button>}>
+      <Form form={form} layout="vertical"
+        initialValues={{ login_rate: 5, api_rate: 30, v1_rate: 60, conn_limit: 50 }}>
+        <Row gutter={12}>
+          <Col span={8}>
+            <Form.Item name="login_rate" label={t('admin.grLoginRate')}><InputNumber size="small" style={{ width: '100%' }} min={1} max={1000} /></Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item name="api_rate" label={t('admin.grApiRate')}><InputNumber size="small" style={{ width: '100%' }} min={1} max={5000} /></Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item name="v1_rate" label={t('admin.grV1Rate')}><InputNumber size="small" style={{ width: '100%' }} min={1} max={5000} /></Form.Item>
+          </Col>
+        </Row>
+        <Form.Item name="conn_limit" label={t('admin.grConnLimit')}>
+          <InputNumber size="small" style={{ width: 200 }} min={1} max={10000} />
+        </Form.Item>
+      </Form>
+      <div style={{ color: '#999', fontSize: 12, marginTop: -4 }}>{t('admin.grHint')}</div>
     </Card>
   )
 }

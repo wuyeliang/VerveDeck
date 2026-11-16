@@ -189,6 +189,10 @@ services:
     network_mode: host
     volumes:
       - ./tls:/etc/nginx/tls:ro
+      # 网关限流动态配置（平台页面可配：系统管理→设置→网关限流）。backend 经
+      # docker exec 写容器内该文件（= 落宿主此文件，web 重建不丢）；deploy.sh
+      # 首启生成默认值——必须先于 compose up 存在，否则 docker 会建出空目录
+      - ./nginx/00-zones.conf:/etc/nginx/conf.d/00-zones.conf
     depends_on:
       - backend
 

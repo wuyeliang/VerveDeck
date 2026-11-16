@@ -14,11 +14,12 @@ from ..database import get_db
 from ..security import get_current_user, require_role, hash_password, new_api_key, can_access_project
 from ..models import (Tenant, User, Project, ProjectMember, ApiKey, GuardRule,
                       AuditLog, Dataset, AlertRule, AlertEvent, UpgradeTask,
-                      LoginSecurityConfig, TimeConfig)
+                      LoginSecurityConfig, TimeConfig, GatewayRateConfig)
 from ..services import alert_service
 from ..services import prom_service
 from ..services import upgrade_service
 from ..services import time_service
+from ..services import gateway_service
 
 
 def _resync_rules():
@@ -685,3 +686,52 @@ def probe_time_config(req: TimeConfigReq, user=Depends(require_role("super_admin
     if not servers:
         raise HTTPException(400, "请至少填写一个 NTP 服务器")
     return {"results": time_service.probe_ntp(servers)}
+
+
+# ---------- 网关限流（nginx 三档速率 + 单 IP 并发，页面可配、热生效） ----------
+
+class GatewayRateReq(BaseModel):
+    login_rate: int = 5     # 登录接口 r/s（防暴破第一道闸）
+    api_rate: int = 30      # /api/ r/s
+    v1_rate: int = 60       # /v1/（OpenAI 兼容）r/s
+    conn_limit: int = 50    # 单 IP 并发连接
+
+
+@router.get("/gateway-rate")
+def get_gateway_rate(db=Depends(get_db), user=Depends(require_role("super_admin"))):
+    row = db.get(GatewayRateConfig, 1)
+    if row is None:
+        return {"login_rate": 5, "api_rate": 30, "v1_rate": 60, "conn_limit": 50,
+                "source": "default", "updated_at": ""}
+    return {"login_rate": row.login_rate, "api_rate": row.api_rate,
+            "v1_rate": row.v1_rate, "conn_limit": row.conn_limit,
+            "source": "db", "updated_at": str(row.updated_at) if row.updated_at else ""}
+
+
+@router.put("/gateway-rate")
+def save_gateway_rate(req: GatewayRateReq, db=Depends(get_db),
+                      user=Depends(require_role("super_admin"))):
+    """保存限流参数并热加载 nginx（写 00-zones.conf → nginx -t → reload，失败回滚）。
+    无 docker/容器不可达时仅落库并如实报告（backend 启动自愈会补应用）。"""
+    if not (1 <= req.login_rate <= 1000):
+        raise HTTPException(400, "登录接口限流需为 1-1000 r/s")
+    if not (1 <= req.api_rate <= 5000):
+        raise HTTPException(400, "API 接口限流需为 1-5000 r/s")
+    if not (1 <= req.v1_rate <= 5000):
+        raise HTTPException(400, "OpenAI 兼容接口限流需为 1-5000 r/s")
+    if not (1 <= req.conn_limit <= 10000):
+        raise HTTPException(400, "单 IP 并发连接需为 1-10000")
+    content = gateway_service.render_zones(req.login_rate, req.api_rate,
+                                           req.v1_rate, req.conn_limit)
+    applied = gateway_service.apply_zones(content)
+    row = db.get(GatewayRateConfig, 1)
+    if row is None:
+        row = GatewayRateConfig(id=1)
+        db.add(row)
+    row.login_rate = req.login_rate
+    row.api_rate = req.api_rate
+    row.v1_rate = req.v1_rate
+    row.conn_limit = req.conn_limit
+    db.commit()
+    return {"ok": applied["ok"], "applied": applied,
+            "config": get_gateway_rate(db=db, user=user)}

@@ -50,6 +50,20 @@ mkdir -p /data/models/hub /data/datasets /data/jobs /data/evals /data/uploads \
 # opensearch 容器以 UID 1000 运行，bind 挂载的数据目录必须可写（否则节点启动即 AccessDenied 崩溃）
 chown -R 1000:0 /data/opensearch 2>/dev/null || true
 
+# 网关限流默认配置（web 容器绑定挂载；必须在 compose up 前存在，否则 docker 建出空目录致 nginx 起不来）。
+# 平台页面（系统管理→设置→网关限流）保存后会覆盖本文件并热加载，此处仅首启默认值
+mkdir -p nginx
+if [ ! -f nginx/00-zones.conf ]; then
+  cat > nginx/00-zones.conf <<'ZONES'
+# VerveDeck 网关限流 —— 首启默认值（平台 系统管理→设置→网关限流 可改，保存即热生效）
+limit_req_zone $binary_remote_addr zone=login_limit:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=v1_limit:10m rate=60r/s;
+limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+limit_conn conn_limit 50;     # 单 IP 并发连接上限
+ZONES
+fi
+
 # 自签 TLS 证书（Web 强制 HTTPS 443；已有则跳过，生产可替换为正式证书）
 mkdir -p tls
 if [ ! -f tls/vervedeck.crt ]; then

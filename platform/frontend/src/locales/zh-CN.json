@@ -272,7 +272,7 @@
     "upNeedVer": "请选择目标版本", "upTasks": "升级任务", "upTarget": "组件",
     "upVersion": "版本变迁", "upSuccess": "成功", "upFailed": "失败",
     "upStarted": "升级任务已创建",
-    "tcTitle": "时间与 NTP", "tcNow": "宿主当前时间", "tcTz": "集群时区", "tcNtp": "NTP 服务器", "tcNtpPh": "如 ntp.aliyun.com、10.0.0.5:123，空格/逗号分隔，留空=恢复系统默认", "tcNtpHint": "保存后写入宿主时钟同步守护进程配置（chrony/ntpd/systemd-timesyncd）；留空=恢复系统默认（含 DHCP 下发）", "tcProbe": "测试连通性", "tcProbeOk": "可达", "tcProbeFail": "不可达", "tcSave": "保存并应用", "tcTzFail": "时区应用失败", "tcNtpFail": "NTP 配置写入失败", "tcRestart": "需宿主执行以下命令重启服务后生效", "tcImpl": "时钟同步实现", "tcCfgServers": "当前配置服务器", "tcHostTz": "宿主时区", "tcStatus": "当前状态"
+    "tcTitle": "时间与 NTP", "tcNow": "宿主当前时间", "tcTz": "集群时区", "tcNtp": "NTP 服务器", "tcNtpPh": "如 ntp.aliyun.com、10.0.0.5:123，空格/逗号分隔，留空=恢复系统默认", "tcNtpHint": "保存后写入宿主时钟同步守护进程配置（chrony/ntpd/systemd-timesyncd）；留空=恢复系统默认（含 DHCP 下发）", "tcProbe": "测试连通性", "tcProbeOk": "可达", "tcProbeFail": "不可达", "tcSave": "保存并应用", "tcTzFail": "时区应用失败", "tcNtpFail": "NTP 配置写入失败", "tcRestart": "需宿主执行以下命令重启服务后生效", "tcImpl": "时钟同步实现", "tcCfgServers": "当前配置服务器", "tcHostTz": "宿主时区", "tcStatus": "当前状态", "grTitle": "网关限流", "grLoginRate": "登录接口（r/s）", "grApiRate": "API 接口（r/s）", "grV1Rate": "OpenAI 兼容接口（r/s）", "grConnLimit": "单 IP 并发连接", "grHint": "保存即热生效：重新渲染 nginx 限流配置并 reload（存量连接不中断）；校验失败自动回滚原配置。burst 缓冲固定（登录 5 / API 60 / v1 120），短时突发可小幅超出", "grApplied": "限流配置已热生效"
   },
   "quant": {
     "title": "模型压缩",

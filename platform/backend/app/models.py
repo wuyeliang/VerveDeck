@@ -329,6 +329,20 @@ class TimeConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
+class GatewayRateConfig(Base):
+    """网关限流配置（单行表 id=1）：nginx 三档速率限流 + 单 IP 并发上限。
+    UI 可配置（系统管理→设置→网关限流）；未配置时用内置默认（登录 5 / API 30 /
+    OpenAI 兼容 60 r/s，并发 50）。保存后由 gateway_service 重新渲染
+    00-zones.conf 并热加载 web 容器 nginx（nginx -t 校验 + reload，失败回滚）。"""
+    __tablename__ = "gateway_rate_config"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    login_rate: Mapped[int] = mapped_column(Integer, default=5)     # 登录接口 r/s（最严，防暴破第一道闸）
+    api_rate: Mapped[int] = mapped_column(Integer, default=30)      # /api/ r/s
+    v1_rate: Mapped[int] = mapped_column(Integer, default=60)       # /v1/（OpenAI 兼容）r/s
+    conn_limit: Mapped[int] = mapped_column(Integer, default=50)    # 单 IP 并发连接上限
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
 class GuardRule(Base):
     __tablename__ = "guard_rules"
     id: Mapped[int] = mapped_column(primary_key=True)

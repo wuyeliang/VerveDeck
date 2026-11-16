@@ -272,7 +272,7 @@
     "upNeedVer": "対象バージョンを選択してください", "upTasks": "アップグレードタスク", "upTarget": "コンポーネント",
     "upVersion": "バージョン変更", "upSuccess": "成功", "upFailed": "失敗",
     "upStarted": "アップグレードタスクを作成しました",
-    "tcTitle": "時刻と NTP", "tcNow": "ホスト現在時刻", "tcTz": "クラスタタイムゾーン", "tcNtp": "NTP サーバー", "tcNtpPh": "例: ntp.aliyun.com、10.0.0.5:123（スペース/カンマ区切り、空欄=システムデフォルト）", "tcNtpHint": "保存するとホストの時刻同期デーモン設定に書き込み（chrony/ntpd/systemd-timesyncd）；空欄=システムデフォルトへ復元（DHCP 配布を含む）", "tcProbe": "接続テスト", "tcProbeOk": "到達可能", "tcProbeFail": "到達不能", "tcSave": "保存して適用", "tcTzFail": "タイムゾーン適用失敗", "tcNtpFail": "NTP 設定の書き込み失敗", "tcRestart": "宿主で以下のコマンドを実行しサービスを再起動すると有効", "tcImpl": "時刻同期実装", "tcCfgServers": "現在設定サーバー", "tcHostTz": "ホストタイムゾーン", "tcStatus": "現在の状態"
+    "tcTitle": "時刻と NTP", "tcNow": "ホスト現在時刻", "tcTz": "クラスタタイムゾーン", "tcNtp": "NTP サーバー", "tcNtpPh": "例: ntp.aliyun.com、10.0.0.5:123（スペース/カンマ区切り、空欄=システムデフォルト）", "tcNtpHint": "保存するとホストの時刻同期デーモン設定に書き込み（chrony/ntpd/systemd-timesyncd）；空欄=システムデフォルトへ復元（DHCP 配布を含む）", "tcProbe": "接続テスト", "tcProbeOk": "到達可能", "tcProbeFail": "到達不能", "tcSave": "保存して適用", "tcTzFail": "タイムゾーン適用失敗", "tcNtpFail": "NTP 設定の書き込み失敗", "tcRestart": "宿主で以下のコマンドを実行しサービスを再起動すると有効", "tcImpl": "時刻同期実装", "tcCfgServers": "現在設定サーバー", "tcHostTz": "ホストタイムゾーン", "tcStatus": "現在の状態", "grTitle": "ゲートウェイレート制限", "grLoginRate": "ログイン（r/s）", "grApiRate": "API（r/s）", "grV1Rate": "OpenAI 互換 /v1（r/s）", "grConnLimit": "IP あたりの同時接続数", "grHint": "保存時に即時適用：nginx のレート制限設定を再レンダリングし reload（既存接続は遮断されません）。検証失敗時は元の設定に自動ロールバック。バーストバッファは固定（ログイン 5 / API 60 / v1 120）のため、短時間の突発はわずかに超過し得ます", "grApplied": "レート制限を適用しました（nginx reload）"
   },
   "quant": {
     "title": "モデル量子化",
