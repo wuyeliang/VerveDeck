@@ -196,6 +196,26 @@ def delete_job(jid: int, db=Depends(get_db), user=Depends(get_current_user)):
     return {"ok": True}
 
 
+class BatchDeleteReq(BaseModel):
+    ids: list[int]
+
+
+@router.post("/jobs/batch-delete")
+def batch_delete_jobs(req: BatchDeleteReq, db=Depends(get_db), user=Depends(get_current_user)):
+    """批量删除：逐个执行单删逻辑（排队/运行中需先取消、已产出模型资产、被续训依赖的任务
+    跳过并报错），返回部分结果 {deleted, failed}"""
+    deleted: list[int] = []
+    failed: list[dict] = []
+    for jid in req.ids:
+        try:
+            delete_job(jid, db=db, user=user)
+            deleted.append(jid)
+        except HTTPException as e:
+            db.rollback()
+            failed.append({"id": jid, "error": str(e.detail)})
+    return {"deleted": deleted, "failed": failed}
+
+
 class ResumeReq(BaseModel):
     checkpoint: str = ""  # 空=取最新
 

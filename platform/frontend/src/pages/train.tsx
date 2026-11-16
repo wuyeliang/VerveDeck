@@ -7,6 +7,7 @@ import { PlusOutlined, StopOutlined, CaretRightOutlined, MergeCellsOutlined, Del
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useBatchDelete } from '../batch'
 
 const ST: Record<string, string> = { queued: 'default', running: 'processing', succeeded: 'success', failed: 'error', cancelled: 'warning' }
 
@@ -42,6 +43,7 @@ export default function TrainCenter() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
+  const [sel, setSel] = useState<number[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
   const [models, setModels] = useState<any[]>([])
@@ -89,6 +91,7 @@ export default function TrainCenter() {
     api.get('/api/training/jobs', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId])
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [load])
+  const batchDel = useBatchDelete('/api/training/jobs/batch-delete', () => { setSel([]); load() })
 
   // 参数分组显隐：LoRA/Freeze 跟随微调方式，DPO/导出跟随阶段
   const groupVisible = (g: any) => {
@@ -205,9 +208,14 @@ export default function TrainCenter() {
     <div>
       <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
         <h3 style={{ margin: 0 }}>{t('train.title')}</h3>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('train.newJob')}</Button>
+        <Space>
+          {sel.length > 0 && <Button danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
+          <Button type="primary" icon={<PlusOutlined />} onClick={openWizard}>{t('train.newJob')}</Button>
+        </Space>
       </Space>
       <Table rowKey="id" size="small" dataSource={list} pagination={{ pageSize: 12 }}
+        rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k),
+          getCheckboxProps: (r: any) => ({ disabled: ['queued', 'running'].includes(r.status) }) }}
         columns={[
           { title: t('common.id'), dataIndex: 'id', width: 55 },
           { title: t('common.name'), dataIndex: 'name' },
