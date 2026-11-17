@@ -121,8 +121,14 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
 - Time-range switch (1h/6h/24h/7d)
 - Dashboard selector (Grafana dashboards, embedded via the platform iframe, read-only anonymous Viewer)
 
-**Alerts**
-- Alert event stream with filters (level/target/ack state); single & bulk acknowledge (ack, with acker/time) and delete; rule management lives under System Management
+**Alert Rules**
+- Notification channels: WeCom (group bot webhook) / email (SMTP), test send supported
+- Threshold/event rules: custom category (capacity 5000, server-side pagination + category/type/state/name filters), metric/event type, threshold, severity, cooldown, active channels
+- Bulk import: CSV, one rule per line
+
+**Alert Events**
+- Alert event stream (auto-refresh every 10s) with filters (level/target/ack state)
+- Single & bulk acknowledge (ack, with acker/time), un-acknowledge, delete (confirmed)
 
 **Log Center**
 - Pick a container service to tail live logs (line count adjustable)
@@ -152,7 +158,6 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
 |---|---|
 | Users & Roles | User CRUD, role management |
 | Guard Rules | Content-safety rules (regex/keyword, input/output interception, scope); batch delete |
-| Alert Rules | Threshold/event rules, custom category (capacity 5000, paginated + category/type/state/name filters), severity, cooldown, notification channels (WeCom/email, test send), bulk import (CSV, one rule per line) |
 | Login Security | IP whitelist, failure lockout threshold/duration |
 | Cluster Upgrade | Per-component current/available versions (Docker Hub) / one-click upgrade; engine kinds only update the pin (new jobs pick it up), self-built images (evalscope evaluation / MinerU parsing) are rebuilt (evalscope only affects new jobs; MinerU container blue-green recreated), agent/platform kinds blue-green recreate containers (impact shown in the UI) |
 | Theme & Appearance | Light/dark theme, 6 languages |

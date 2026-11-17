@@ -331,7 +331,7 @@ function MonitorView({ queue, util, alerts, t }: { queue: any; util: any; alerts
         </Col>
         <Col span={12}>
           <Card size="small" title={t('cluster.recentAlerts')}
-            extra={<Button type="link" size="small" onClick={() => nav('/cluster/alerts')}>{t('cluster.viewAll')}</Button>}>
+            extra={<Button type="link" size="small" onClick={() => nav('/cluster/alert-events')}>{t('cluster.viewAll')}</Button>}>
             {alerts.length === 0 ? (
               <span style={{ color: '#999' }}>{t('cluster.noAlerts')}</span>
             ) : (
