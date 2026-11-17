@@ -53,7 +53,7 @@ COMPONENTS: dict[str, dict] = {
     # hub 为完整 registry 地址（ACR）→ check_latest 走 registry v2 匿名 token 流程
     "evalscope": {"label": "evalscope 评测引擎", "kind": "pull",
                   "hub": "modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/modelscope",
-                  "tag_re": r"^ubuntu\d+\.\d+-(cuda[\d.]+-)?py\d+\.\d+-.+$",
+                  "tag_re": r"^ubuntu\d+\.\d+-(cuda[\d.]+-)?py\d{3}-.+$",
                   "impact": "engine",
                   "hint": "官方开源 ModelScope 镜像（内置 evalscope）；拉取完成后新评测任务使用新 tag，运行中的评测任务不受影响"},
     "mineru": {"label": "MinerU 文档解析", "kind": "build", "ctx": "images/mineru",
