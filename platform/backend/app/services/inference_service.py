@@ -36,7 +36,13 @@ def _next_rr(deployment_id: int, replicas: int) -> int:
 
 
 def deployment_container_name(dep: Deployment, replica: int = 0) -> str:
-    return f"ft-infer-{dep.id}" if dep.replicas <= 1 else f"ft-infer-{dep.id}-r{replica}"
+    # 副本容器名必须是"稳定标识"，不能随 dep.replicas 变化而漂移：
+    #   副本 0 恒为 ft-infer-{id}（与 scheduler._reconcile_deployments 的兜底口径一致），
+    #   其余副本恒为 ft-infer-{id}-r{i}。
+    # 旧实现 `dep.replicas <= 1` 使副本 0 的名字在 ft-infer-{id}（1 副本）与
+    # ft-infer-{id}-r0（≥2 副本）之间切换：扩容瞬间旧容器被孤儿化、GPU 显存泄漏，
+    # 调度器又按新名字重建 r0/r1，多容器抢占卡 → 模型加载超时 → 整个部署误判 failed。
+    return f"ft-infer-{dep.id}" if replica == 0 else f"ft-infer-{dep.id}-r{replica}"
 
 
 def _adv(dep: Deployment) -> dict:
