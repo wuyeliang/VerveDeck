@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""VerveDeck 评测运行器（在 evalscope 容器内执行）
-输入: 一个 JSON 任务文件 /workspace/task.json
+"""VerveDeck 评测运行器（在评测容器内执行，由 backend 启动任务时投递）
+
+运行器随镜像内不存在：backend 把本文件拷到 /data/evals/<id>/（挂载进容器），
+task.json 与之同目录。兼容官方开源 ModelScope 镜像（内置 evalscope/openai/
+jieba/rouge-chinese）与自构 fintune/evalscope:1.0（离线兜底）。
+输入: 与本脚本同目录的 task.json
   {
     "mode": "rule" | "judge" | "both" | "benchmark",
     "target_url": "http://ip:8000/v1",          # OpenAI 兼容端点
@@ -76,38 +80,52 @@ def judge_score(judge_url, judge_model, prompt, ref, pred):
 def run_benchmark(task):
     import os
     env = dict(os.environ)
+    # 不同大版本 evalscope CLI 的 API 模式参数不同（0.15.x: service；1.x: openai_api，
+    # 实测确认；输出根目录参数两版均为 --work-dir）
+    try:
+        import evalscope
+        major = int(str(evalscope.__version__).split(".")[0])
+    except Exception:
+        major = 1
     cmd = ["evalscope", "eval",
            "--model", task["target_model"],
-           "--eval-type", "openai",
+           "--eval-type", "openai_api" if major >= 1 else "service",
            "--api-url", task["target_url"],
+           "--api-key", "EMPTY",
            "--datasets", task["benchmark"]]
     if task.get("limit"):
         cmd += ["--limit", str(task["limit"])]
     out_dir = task["out_dir"]
-    cmd += ["--workspace", out_dir]
+    cmd += ["--work-dir", out_dir]
     print("RUN:", " ".join(cmd), flush=True)
     p = subprocess.run(cmd, capture_output=True, text=True, env=env)
     print(p.stdout[-4000:], flush=True)
     if p.stderr:
         print(p.stderr[-4000:], flush=True)
-    # 收集 evalscope 输出下的 summary
-    summary = None
+    # 收集报告：0.x/1.x 均落 <work-dir>/<时间戳>/reports/<model>/<dataset>.json；
+    # 兜底兼容旧版按文件名含 "summary" 匹配
+    reports = {}
     for root, _, files in os.walk(out_dir):
         for f in files:
-            if f.endswith(".json") and "summary" in f:
-                try:
-                    with open(os.path.join(root, f)) as fp:
-                        summary = json.load(fp)
-                except Exception:
-                    pass
+            if not f.endswith(".json"):
+                continue
+            if os.path.basename(root) != "reports" and "summary" not in f:
+                continue
+            try:
+                with open(os.path.join(root, f)) as fp:
+                    reports[f] = json.load(fp)
+            except Exception:
+                pass
     result = {"mode": "benchmark", "benchmark": task["benchmark"],
-              "exit_code": p.returncode, "summary": summary}
+              "exit_code": p.returncode, "summary": reports or None}
     with open(os.path.join(out_dir, "result.json"), "w") as fp:
         json.dump(result, fp, ensure_ascii=False, indent=1)
     return result
 
 def main():
-    with open("/workspace/task.json") as f:
+    # task.json 与 runner.py 同目录（backend 投递到 /data/evals/<id>/，旧自构镜像为 /workspace/）
+    task_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "task.json")
+    with open(task_file) as f:
         task = json.load(f)
     out_dir = task["out_dir"]
     os.makedirs(out_dir, exist_ok=True)

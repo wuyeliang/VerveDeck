@@ -133,6 +133,101 @@ def test_check_latest_build_component_empty(pin_dir):
     assert us.check_latest("nope") == []
 
 
+@pytest.mark.parametrize("tag,key", [
+    ("ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM", (1, 26, 0)),
+    ("ubuntu22.04-py310-torch2.1.2-tf2.14.0-1.12.0", (1, 12, 0)),
+    ("ubuntu22.04-cuda12.8.1-py311-torch2.8.0-vllm0.11.0-modelscope1.31.0-swift3.9.1", (3, 9, 1)),
+    ("v0.33.0", (0, 33, 0)),
+    ("latest", None),
+])
+def test_tag_version_key(tag, key):
+    assert us._tag_version_key(tag) == key
+
+
+class _FakeChallengeResp:
+    """GET /v2/ 的 401 挑战头"""
+    status_code = 401
+    headers = {"WWW-Authenticate":
+               'Bearer realm="https://dockerauth.cn-hangzhou.aliyuncs.com/auth",'
+               'service="registry.aliyuncs.com:cn-hangzhou:china:cri-xxx"'}
+
+
+class _FakeTokenResp:
+    def __init__(self, token="tok-123"):
+        self._token = token
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"token": self._token}
+
+
+def test_check_latest_acr_registry_flow(pin_dir, monkeypatch):
+    """ACR 完整地址 hub：挑战头 → 匿名 token → tags/list（分页）→ tag_re 过滤 + 版本近似排序"""
+    calls = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append((url, params, (headers or {}).get("Authorization", "")))
+        if url.endswith("/v2/"):
+            return _FakeChallengeResp()
+        if "dockerauth" in url:
+            assert (params or {}).get("scope") == "repository:modelscope-repo/modelscope:pull"
+            return _FakeTokenResp()
+        if url.endswith("/tags/list"):
+            # 两页：第一页满 500（触发翻页；rocm/dev 类 tag 被 tag_re 过滤），第二页结束
+            if not (params or {}).get("last"):
+                return _FakeListResp([f"rocm-dev-{i:03d}" for i in range(500)])
+            return _FakeListResp(["ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM",
+                                  "ubuntu22.04-py310-torch2.1.2-tf2.14.0-1.12.0"])
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr("requests.get", fake_get)
+    out = us.check_latest("evalscope")
+    # 镜像型 tag 按最后 semver 段排序：1.26.0 在前、1.12.0 在后；500 个无版本 tag 被丢弃
+    assert out == ["ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM",
+                   "ubuntu22.04-py310-torch2.1.2-tf2.14.0-1.12.0"]
+    urls = [c[0] for c in calls]
+    assert urls[0].endswith("/v2/")                       # 先取挑战头
+    assert any("dockerauth" in u for u in urls)           # 再换匿名 token
+    assert sum(1 for c in calls if c[0].endswith("/tags/list")) == 2  # 分页两次
+    # token 请求之后的 tags/list 必须带 Bearer
+    first_list = next(c for c in calls if c[0].endswith("/tags/list"))
+    assert first_list[2] == "Bearer tok-123"
+
+
+class _FakeListResp:
+    def __init__(self, tags):
+        self._tags = tags
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"name": "modelscope-repo/modelscope", "tags": self._tags}
+
+
+def test_registry_tags_challenge_missing_plain_try(pin_dir, monkeypatch):
+    """无 WWW-Authenticate 挑战头（匿名放行 registry）：裸试 tags/list 不报错"""
+    calls = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        if url.endswith("/v2/"):
+            return _FakePlain401()
+        if url.endswith("/tags/list"):
+            return _FakeListResp(["ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM"])
+        raise AssertionError(f"unexpected url: {url}")
+
+    class _FakePlain401:
+        status_code = 401
+        headers = {}
+
+    monkeypatch.setattr("requests.get", fake_get)
+    out = us.check_latest("evalscope", force=True)
+    assert out == ["ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM"]
+
+
 # ---------------- 蓝绿参数推导 ----------------
 
 def _attrs():
@@ -275,7 +370,7 @@ def test_service_aliases(pin_dir):
 @pytest.mark.parametrize("target,hint", [
     ("vllm", "拉取完成后新任务/新部署使用新镜像"),
     ("gpu_agent", "GPU 监控 Agent 将以新镜像重建"),
-    ("evalscope", "重建完成后新评测任务使用新镜像"),
+    ("evalscope", "官方开源 ModelScope 镜像"),
     ("mineru", "MinerU 文档解析容器将以新镜像重建"),
     ("backend", "该服务将以新镜像重建"),
     ("nope", ""),

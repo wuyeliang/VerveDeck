@@ -18,8 +18,11 @@ build() {
   docker build -t "$img" "$ctx"
 }
 
-# 评测引擎（evalscope + 平台 runner）
-build images/evalscope    fintune/evalscope:1.0
+# 评测引擎：已切官方开源 ModelScope 镜像（内置 evalscope/openai/jieba/rouge-chinese，
+# 免本地编译；平台 runner.py 运行时由 backend 投递进容器；tag 见 compose IMAGES_EVAL，
+# 首次评测任务时由 backend 懒加载拉取）；images/evalscope 保留为离线/气隔环境自构兜底——
+# 需要时恢复下面一行的 build 并把 compose 的 IMAGES_EVAL 覆盖为 fintune/evalscope:1.0
+# build images/evalscope    fintune/evalscope:1.0
 # 数据标注：已切官方镜像 argilla/argilla-server:v2.8.0（部署时确保已拉取）；
 # images/argilla 保留为离线/气隔环境自构兜底——需要时恢复下面两行并去掉 compose 里的官方 image
 # build images/argilla      fintune/argilla:1.0

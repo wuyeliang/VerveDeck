@@ -4,8 +4,10 @@
 - vllm / sglang / llamafactory：官方镜像，docker pull 目标 tag → 写运行时 pin
   （/data/upgrade/image_pins.json），新任务/部署使用新镜像，运行中的不受影响
 - gpu_agent：DCGM Agent（nvidia/dcgm），pull + 蓝绿重建容器（监控中断数秒）
-- evalscope：评测引擎自构镜像（fintune/evalscope:1.0，evalscope + 平台 runner），
-  以宿主源码树 /repo 重建同 tag，仅新评测任务生效（运行中评测容器不受影响）
+- evalscope：评测引擎官方开源 ModelScope 镜像（ACR，内置 evalscope/openai/
+  jieba/rouge-chinese），pull 目标 tag → 写运行时 pin；平台 runner.py 由 backend
+  运行时投递进容器（非 compose 服务），仅新评测任务生效（运行中评测容器不受影响）；
+  离线/气隔环境可把 IMAGES_EVAL 指回 fintune/evalscope:1.0 走 /repo 自构兜底
 - mineru：文档解析常驻容器（fintune/mineru:1.0），重建同 tag + 蓝绿重建
   容器（解析服务中断数秒）
 - backend / web：自构镜像（fintune/*:1.0），以宿主源码树 /repo 重建同 tag +
@@ -48,9 +50,12 @@ COMPONENTS: dict[str, dict] = {
     "gpu_agent": {"label": "GPU 监控 Agent (DCGM)", "kind": "pull", "hub": "nvidia/dcgm",
                   "tag_re": r"^\d+\.\d+\.\d+-ubuntu24\.04$", "impact": "agent",
                   "container": "fintune-gpu-agent-1"},
-    "evalscope": {"label": "evalscope 评测引擎", "kind": "build", "ctx": "images/evalscope",
-                  "image": "fintune/evalscope:1.0", "impact": "engine",
-                  "hint": "重建完成后新评测任务使用新镜像（evalscope 为最新版）；运行中的评测任务不受影响"},
+    # hub 为完整 registry 地址（ACR）→ check_latest 走 registry v2 匿名 token 流程
+    "evalscope": {"label": "evalscope 评测引擎", "kind": "pull",
+                  "hub": "modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/modelscope",
+                  "tag_re": r"^ubuntu\d+\.\d+-(cuda[\d.]+-)?py\d+\.\d+-.+$",
+                  "impact": "engine",
+                  "hint": "官方开源 ModelScope 镜像（内置 evalscope）；拉取完成后新评测任务使用新 tag，运行中的评测任务不受影响"},
     "mineru": {"label": "MinerU 文档解析", "kind": "build", "ctx": "images/mineru",
                "image": "fintune/mineru:1.0", "impact": "agent",
                "container": "fintune-mineru-1",
@@ -129,8 +134,70 @@ def _semver_key(tag: str) -> tuple | None:
     return tuple(int(x) for x in m.groups()) if m else None
 
 
+def _hub_tags(hub: str) -> list[str]:
+    """Docker Hub 组件（hub 为纯仓库名）：hub.docker.com tags API 首页 100 条"""
+    import requests
+    r = requests.get(f"{HUB}/{hub}/tags?page_size=100", timeout=30)
+    r.raise_for_status()
+    return [item.get("name", "") for item in r.json().get("results", [])]
+
+
+def _registry_tags(hub: str) -> list[str]:
+    """通用 registry（hub 为完整 域名/命名空间/仓库，如 ACR）：
+    v2 挑战头（WWW-Authenticate）→ 匿名 token → tags/list 分页拉取。
+    挑战头缺失/解析失败时裸试（部分 registry 匿名直接放行）；401 等错误向上抛"""
+    import requests
+    host, _, repo = hub.partition("/")
+    base = f"https://{host}"
+    headers = {}
+    try:
+        ch = requests.get(f"{base}/v2/", timeout=30).headers.get("WWW-Authenticate", "")
+        m = re.match(r'Bearer realm="([^"]+)",\s*service="([^"]+)"', ch)
+        if m:
+            tr = requests.get(m.group(1),
+                              params={"service": m.group(2), "scope": f"repository:{repo}:pull"},
+                              timeout=30)
+            body = tr.json() or {}
+            tok = body.get("token") or body.get("access_token")
+            if tok:
+                headers["Authorization"] = f"Bearer {tok}"
+    except Exception:
+        pass
+    tags: list[str] = []
+    last = ""
+    for _ in range(4):  # 每页 500，最多 4 页（2000 tag 足够）
+        params = {"n": 500}
+        if last:
+            params["last"] = last
+        r = requests.get(f"{base}/v2/{repo}/tags/list", params=params,
+                         headers=headers, timeout=30)
+        r.raise_for_status()
+        batch = r.json().get("tags") or []
+        tags.extend(batch)
+        if len(batch) < 500:
+            break
+        last = batch[-1]
+    return tags
+
+
+def _tag_version_key(tag: str):
+    """tag → 排序键：纯 semver tag 直接匹配（Docker Hub 组件）；
+    镜像型 tag（如 ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM）取 tag 内
+    最后一个 semver 数段落作版本近似（modelscope 官方镜像的镜像版本）"""
+    k = _semver_key(tag)
+    if k:
+        return k
+    vers = re.findall(r"(\d+\.\d+(?:\.\d+)?)", tag)
+    if vers:
+        parts = [int(x) for x in vers[-1].split(".")]
+        parts += [0] * (3 - len(parts))
+        return tuple(parts[:3])
+    return None
+
+
 def check_latest(key: str, force: bool = False) -> list[str]:
-    """从 Docker Hub 拉取组件可用版本（semver 降序前 10，缓存 10 分钟）。失败抛 RuntimeError"""
+    """拉取组件可用版本（降序前 10，缓存 10 分钟）。失败抛 RuntimeError。
+    hub 为纯仓库名走 Docker Hub API；含域名（如 ACR 完整地址）走 registry v2 流程"""
     c = COMPONENTS.get(key)
     if not c or c["kind"] == "build":
         return []
@@ -138,14 +205,12 @@ def check_latest(key: str, force: bool = False) -> list[str]:
     hit = _latest_cache.get(key)
     if not force and hit and now - hit[0] < _LATEST_TTL:
         return hit[1]
-    import requests
-    r = requests.get(f"{HUB}/{c['hub']}/tags?page_size=100", timeout=30)
-    r.raise_for_status()
+    hub = c["hub"]
+    tags = _registry_tags(hub) if "." in hub.split("/")[0] else _hub_tags(hub)
     found = []
-    for item in r.json().get("results", []):
-        tag = item.get("name", "")
+    for tag in tags:
         if re.match(c["tag_re"], tag):
-            k = _semver_key(tag)
+            k = _tag_version_key(tag)
             if k:
                 found.append((k, tag))
     found.sort(reverse=True)
@@ -169,7 +234,8 @@ def _runtime(key: str) -> str:
     """运行时版本探测：引擎/agent 复用镜像页探测（5min 缓存）；自构组件显示镜像构建信息"""
     from . import taskcontainer
     probe_key = {"vllm": "vllm", "sglang": "sglang",
-                 "llamafactory": "llamafactory", "gpu_agent": "gpu-agent"}.get(key)
+                 "llamafactory": "llamafactory", "gpu_agent": "gpu-agent",
+                 "evalscope": "evalscope"}.get(key)
     if probe_key:
         from ..api import images as images_api
         try:

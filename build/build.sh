@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # VerveDeck 一键编译脚本（幂等，可重复执行）
 #
-# 编译平台全部 4 个本地镜像并做冒烟验证：
+# 编译平台全部 3 个本地镜像并做冒烟验证：
 #   fintune/backend:1.0   FastAPI 后端        (platform/backend)
 #   fintune/web:1.0       React 前端+nginx    (platform/frontend，Dockerfile 内 npm build)
 #   fintune/mineru:1.0    PDF/文档解析        (images/mineru，含平台 API 封装 app.py)
-#   fintune/evalscope:1.0 评测引擎            (images/evalscope，含平台 runner.py)
+# 评测引擎已切官方开源 ModelScope 镜像（内置 evalscope，不在本地编译范围；
+# 首次评测任务时由 backend 懒加载拉取，images/evalscope 保留为离线自构兜底）
 # 数据标注用官方镜像 argilla/argilla-server:v2.8.0（不在本地编译范围，--pull 可预拉取）
 #
 # 用法:
@@ -23,7 +24,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # 项目根目录
 
 COMPOSE=deploy/docker-compose.yaml
-ALL_LOCAL="backend web mineru evalscope"
+ALL_LOCAL="backend web mineru"
 REBUILD=0
 PULL=0
 VERIFY=1
@@ -55,7 +56,6 @@ tag_of() {
     backend)   echo "fintune/backend:1.0" ;;
     web)       echo "fintune/web:1.0" ;;
     mineru)    echo "fintune/mineru:1.0" ;;
-    evalscope) echo "fintune/evalscope:1.0" ;;
   esac
 }
 
@@ -65,24 +65,18 @@ docker compose version >/dev/null 2>&1 || { echo "缺少 docker compose v2"; exi
 AVAIL_KB=$(df -k / | awk 'NR==2{print $4}')
 AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
 if [ "$AVAIL_GB" -lt 30 ]; then
-  echo "    警告: 根分区可用空间仅 ${AVAIL_GB}GB，镜像构建（尤其 mineru/evalscope 含 PyTorch）可能不足"
+  echo "    警告: 根分区可用空间仅 ${AVAIL_GB}GB，镜像构建（尤其 mineru 含 PyTorch）可能不足"
 else
   echo "    docker/compose 就绪，根分区可用 ${AVAIL_GB}GB"
 fi
 
-# 拆分：compose 可构建的服务 vs evalscope（非 compose 服务，单独 docker build）
 COMPOSE_TARGETS=""
-BUILD_EVAL=0
 BUILT=""        # 本次实际构建的镜像（供冒烟验证）
 SKIPPED=""
 
 for s in $SELECTED; do
   img=$(tag_of "$s")
-  if [ "$s" = "evalscope" ]; then
-    BUILD_EVAL=1
-  else
-    COMPOSE_TARGETS="$COMPOSE_TARGETS $s"
-  fi
+  COMPOSE_TARGETS="$COMPOSE_TARGETS $s"
   if docker image inspect "$img" >/dev/null 2>&1 && [ "$REBUILD" != "1" ]; then
     echo "==> 跳过 $img（已存在；--rebuild 可强制重建）"
     SKIPPED="$SKIPPED $img"
@@ -92,15 +86,6 @@ for s in $SELECTED; do
 done
 
 echo "==> [2/4] 编译镜像"
-EVAL_LOG=$(mktemp)
-trap 'rm -f "$EVAL_LOG"' EXIT
-
-# evalscope 后台构建，与 compose 并行（日志合并输出）
-if [ "$BUILD_EVAL" = "1" ] && echo " $BUILT " | grep -q " evalscope "; then
-  ( docker build -t fintune/evalscope:1.0 images/evalscope ) >"$EVAL_LOG" 2>&1 &
-  EVAL_PID=$!
-  echo "    evalscope 构建中（后台，日志见结束汇总）"
-fi
 
 # 只把本次需要构建的 compose 服务传给 compose build（全部已存在则为空、不构建）
 TARGETS_NOW=""
@@ -110,15 +95,6 @@ done
 if [ -n "${TARGETS_NOW// /}" ]; then
   # shellcheck disable=SC2086
   docker compose -f "$COMPOSE" build $TARGETS_NOW
-fi
-
-if [ -n "${EVAL_PID:-}" ]; then
-  if ! wait "$EVAL_PID"; then
-    echo "    evalscope 构建失败，日志："
-    cat "$EVAL_LOG"
-    exit 1
-  fi
-  tail -3 "$EVAL_LOG"
 fi
 
 echo "==> [3/4] 冒烟验证"
@@ -156,7 +132,7 @@ if [ "$PULL" = "1" ]; then
   echo "==> [4/4] 预拉取外部运行时镜像"
   # 从 compose 解析全部镜像引用，排除 5 个本地构建 tag，缺什么拉什么
   for img in $(docker compose -f "$COMPOSE" config --images); do
-    case " fintune/backend:1.0 fintune/web:1.0 fintune/mineru:1.0 fintune/evalscope:1.0 " in
+    case " fintune/backend:1.0 fintune/web:1.0 fintune/mineru:1.0 " in
       *" $img "*) continue ;;
     esac
     if docker image inspect "$img" >/dev/null 2>&1; then
@@ -173,7 +149,7 @@ fi
 echo ""
 echo "================ 编译完成 ================"
 docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" \
-  | grep -E "REPOSITORY|fintune/(backend|web|mineru|evalscope)|argilla/argilla-server" || true
+  | grep -E "REPOSITORY|fintune/(backend|web|mineru)|argilla/argilla-server|modelscope-repo" || true
 echo "=========================================="
 echo "下一步（本机部署/更新）:"
 echo "  新机器:  cd deploy && sudo bash deploy.sh"

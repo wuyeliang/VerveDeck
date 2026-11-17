@@ -16,7 +16,7 @@ bash build/build.sh
 | `fintune/backend:1.0` | `platform/backend` | FastAPI 后端（Python 3.10 + uvicorn，依赖走阿里云 PyPI 源） |
 | `fintune/web:1.0` | `platform/frontend` | React 前端，Dockerfile 内多阶段构建（npm 走 npmmirror 源 → tsc + vite build → nginx:alpine） |
 | `fintune/mineru:1.0` | `images/mineru` | PDF/文档解析（compose 服务，运行占 1 GPU）；**内置平台 API 封装 app.py**（POST /parse 契约），不能直接换官方 opendatalab/mineru（API 契约不同且为 CUDA 大镜像） |
-| `fintune/evalscope:1.0` | `images/evalscope` | 评测引擎（非 compose 服务，backend 按需起容器）；**内置平台评测运行器 runner.py**（rule/judge/benchmark + task.json 协议），官方镜像没有 |
+| ~~`fintune/evalscope:1.0`~~ | `images/evalscope` | 评测引擎自构兜底（**默认不再编译**）；已切官方开源 ModelScope 镜像（内置 evalscope，backend 懒加载拉取；平台 runner.py 运行时投递）。离线/气隔环境恢复：build-images.sh 取消注释 build 行 + IMAGES_EVAL 覆盖回 fintune/evalscope:1.0 |
 
 镜像 tag 固定为 `1.0`，与 `deploy/docker-compose.yaml` 中 `image:` 一一对应，勿手工改 tag。
 

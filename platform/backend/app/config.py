@@ -25,7 +25,11 @@ class Settings(BaseSettings):
     images_train: str = "hiyouga/llamafactory:0.9.5"
     images_vllm: str = "vllm/vllm-openai:v0.33.0"
     images_sglang: str = "lmsysorg/sglang:v0.5.23"
-    images_eval: str = "fintune/evalscope:1.0"
+    # 评测引擎用官方开源 ModelScope 镜像（内置 evalscope/openai/jieba/rouge-chinese，
+    # 免本地编译；平台 runner.py 由 backend 运行时投递，见 eval_service）。
+    # 离线/气隔环境可覆盖为 fintune/evalscope:1.0（/repo 自构兜底，images/evalscope）
+    images_eval: str = ("modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/"
+                        "modelscope:ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM")
     node_name: str = "node-1"
     # 对象存储（rustfs / S3 兼容）：数据集版本文件主存储，本地 /data 为处理缓存
     s3_endpoint: str = ""  # 如 http://rustfs:9000；为空则纯本地存储

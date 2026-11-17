@@ -166,9 +166,9 @@ hard isolation is guaranteed by the nvidia runtime.
 | `hiyouga/llamafactory:0.9.5` | official (hiyouga) | **Task image**: LLaMA-Factory 0.9.5 official prebuilt (CUDA 12.4 + torch); offline fallback self-build in images/llama-factory |
 | `vllm/vllm-openai:v0.33.0` | official | **Task image**: vLLM inference engine (CUDA 13.5 built-in) |
 | `lmsysorg/sglang:v0.5.23` | official | **Task image**: SGLang inference engine (CUDA 13.0 built-in) |
-| `fintune/evalscope:1.0` | images/evalscope | **Task image**: eval engine + runner.py |
+| `modelscope-repo/modelscope:ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM` | official (ModelScope ACR) | **Task image**: eval engine (evalscope built-in); platform runner.py delivered at runtime. Offline fallback `fintune/evalscope:1.0` (self-built, images/evalscope) |
 | `nvidia/dcgm:4.7.1-ubuntu24.04` | official (NVIDIA) | GPU monitoring (open-source image + mounted collect.sh, zero local build) |
 | `rustfs/rustfs:latest` | official | S3 object storage (compose service) |
 
 The task images (llamafactory/vllm/sglang/evalscope) are not compose services;
-they are loaded lazily on demand (official images pulled, evalscope self-built).
+they are loaded lazily on demand (all official open-source images pulled; evalscope falls back to self-build in offline environments).

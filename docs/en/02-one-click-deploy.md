@@ -133,7 +133,7 @@ sudo bash deploy.sh
 | grafana | official grafana/grafana | internal 3000 (embedded via web `/grafana/`) | Monitoring dashboards (anonymous read-only Viewer) |
 
 **Task images** (not compose services; used by backend-created dynamic containers, lazy-loaded on demand):
-`hiyouga/llamafactory:0.9.5` (official prebuilt), `vllm/vllm-openai:v0.33.0`, `lmsysorg/sglang:v0.5.23`, `fintune/evalscope:1.0`
+`hiyouga/llamafactory:0.9.5` (official prebuilt), `vllm/vllm-openai:v0.33.0`, `lmsysorg/sglang:v0.5.23`, `modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/modelscope:ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM` (official ModelScope image with evalscope built in; offline deployments can override `IMAGES_EVAL=fintune/evalscope:1.0` for the self-build fallback)
 
 Dependency order: `postgres(healthy) → backend`; `rustfs(healthy) → backend`;
 `opensearch(healthy) → argilla`.

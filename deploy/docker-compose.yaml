@@ -135,10 +135,13 @@ services:
       # 推理引擎用官方开源镜像（CUDA 随镜像内置，不装宿主机）；
       # llamafactory 用 LLaMA-Factory 官方预构建镜像（hiyouga/llamafactory，免本地编译；
       # 离线/气隔环境可用 images/llama-factory 的自构 Dockerfile 兜底）
+      # 评测引擎用官方开源 ModelScope 镜像（内置 evalscope，免本地编译；
+      # 平台 runner.py 运行时由 backend 投递；离线/气隔环境可覆盖为 fintune/evalscope:1.0
+      # 走 /repo 自构兜底——deploy/build-images.sh 中保留注释掉的构建行）
       IMAGES_TRAIN: hiyouga/llamafactory:0.9.5
       IMAGES_VLLM: vllm/vllm-openai:v0.33.0
       IMAGES_SGLANG: lmsysorg/sglang:v0.5.23
-      IMAGES_EVAL: fintune/evalscope:1.0
+      IMAGES_EVAL: ${IMAGES_EVAL:-modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/modelscope:ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM}
       # 对象存储：数据集版本主存储在 rustfs，/data/datasets 为处理缓存；
       # S3_ENDPOINT 留空则自动降级纯本地存储
       S3_ENDPOINT: ${S3_ENDPOINT:-http://rustfs:9000}

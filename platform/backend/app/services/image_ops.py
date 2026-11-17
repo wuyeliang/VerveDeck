@@ -19,8 +19,12 @@ log = logging.getLogger("image_ops")
 REPO_DIR = os.environ.get("VERVEDECK_REPO", "/repo")  # compose 挂载宿主源码树（只读）
 
 # 官方开源镜像前缀 → 缺失时 docker pull；其余（fintune/*）走 /repo 上下文 build
-# vllm/ lmsysorg/ hiyouga/(LLaMA-Factory 官方预构建) nvidia/(DCGM 等) 均为官方镜像
-OFFICIAL_PREFIXES = ("vllm/", "lmsysorg/", "hiyouga/", "nvidia/")
+# vllm/ lmsysorg/ hiyouga/(LLaMA-Factory 官方预构建) nvidia/(DCGM 等) 均为官方镜像；
+# modelscope-registry.* 为 ModelScope 官方镜像（ACR 完整地址，评测引擎 evalscope）
+OFFICIAL_PREFIXES = ("vllm/", "lmsysorg/", "hiyouga/", "nvidia/",
+                     "modelscope-registry.cn-hangzhou.cr.aliyuncs.com/",
+                     "modelscope-registry.cn-beijing.cr.aliyuncs.com/",
+                     "modelscope-registry.us-west-1.cr.aliyuncs.com/")
 
 PULL_TIMEOUT = 7200  # 大镜像（vllm 35GB）拉取上限 2h
 

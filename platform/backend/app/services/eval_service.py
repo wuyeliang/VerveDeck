@@ -2,9 +2,16 @@
 
 架构：每个评测任务 = 一个独立 pause 占位容器（CPU 即可，通过 API 调目标模型），
 exec 运行 runner.py（规则匹配 / LLM-as-a-Judge / evalscope 榜单）。
+
+引擎镜像用官方开源 ModelScope 镜像（内置 evalscope/openai/jieba/rouge-chinese，
+config.images_eval 可覆盖）。平台 runner.py 不在镜像内——启动时由 backend 投递
+到 /data/evals/<id>/（挂载进容器）随任务一起执行，任务结束随容器删除，
+无需本地编译评测镜像；离线/气隔环境把 IMAGES_EVAL 指回 fintune/evalscope:1.0
+即自动走 /repo 自构镜像兜底。
 """
 import json
 import os
+import shutil
 import time
 
 from ..config import settings
@@ -18,6 +25,17 @@ from .inference_service import deployment_endpoint, ensure_serving
 
 def eval_dir(task_id: int) -> str:
     return os.path.join(settings.data_dir, "evals", str(task_id))
+
+
+def _runner_src() -> str:
+    """平台评测运行器源文件：部署容器挂载的 /repo 源码树优先；
+    本地开发（backend 直接跑源码、无 /repo 挂载）回退代码库相对路径"""
+    from . import image_ops
+    c = os.path.join(image_ops.REPO_DIR, "images", "evalscope", "runner.py")
+    if os.path.isfile(c):
+        return c
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(here, "..", "..", "..", "..", "images", "evalscope", "runner.py"))
 
 
 def build_test_file(task: EvalTask, db) -> str:
@@ -88,6 +106,11 @@ def launch(task: EvalTask) -> None:
     os.makedirs(eval_dir(task_id), exist_ok=True)
     with open(os.path.join(eval_dir(task_id), "task.json"), "w", encoding="utf-8") as f:
         json.dump(task_json, f, ensure_ascii=False)
+    # 官方镜像内无平台 runner.py：启动时从源码树投递到挂载目录，与 task.json 同目录
+    runner_src = _runner_src()
+    if not os.path.isfile(runner_src):
+        raise RuntimeError(f"评测运行器缺失: {runner_src}")
+    shutil.copy(runner_src, os.path.join(eval_dir(task_id), "runner.py"))
 
     name = f"ft-eval-{task_id}"
     tc.remove_container(name, force=True)
@@ -95,11 +118,10 @@ def launch(task: EvalTask) -> None:
         name=name, image=upgrade_service.current_image("evalscope"), gpus=0, cpus=4, mem_gb=8,
         labels={"fintune.job": str(task_id), "fintune.type": "eval"},
     )
-    # task.json 由 backend 写到宿主机 /data/evals/<id>/（容器经挂载可见）；
-    # 镜像只内置 /workspace/runner.py，需把 task.json 拷到 runner 的读取位置
+    # runner.py 与 task.json 均在挂载目录 /data/evals/<id>/（容器可见）；
+    # 直接以该目录运行，result.json 落回宿主机同一目录
     cmd = ["bash", "-lc",
-           f"cp /data/evals/{task_id}/task.json /workspace/task.json && "
-           f"python /workspace/runner.py 2>&1"]
+           f"python /data/evals/{task_id}/runner.py 2>&1"]
     tc.start_task(f"eval-{task_id}", cid, cmd, os.path.join(eval_dir(task_id), "run.log"))
     db = SessionLocal()
     try:

@@ -36,6 +36,11 @@ PLATFORM = [
      # dcgmi 非 TTY 下不输出版本，改查 dpkg 包版本（内层单引号防 shell 展开 ${Version}）；
      # DCGM 4.x 包拆分为 nv-hostengine/dcgmi（3.x 为 datacenter-gpu-manager），双查兜底
      "dpkg-query -W -f 'DCGM ${Version}' nv-hostengine 2>/dev/null || dpkg-query -W -f 'DCGM ${Version}' datacenter-gpu-manager 2>/dev/null"),
+    # 官方开源 ModelScope 镜像（内置 evalscope）；查包元数据即可（importlib.metadata
+    # 不触发 torch 重导入，探测秒级返回；勿 import evalscope 本体，首启可达数十秒）
+    ("evalscope", lambda: upgrade_service.current_image("evalscope"), "evalscope 评测引擎",
+     "规则匹配 / LLM-as-a-Judge / 榜单评测（ModelScope 官方镜像，runner.py 运行时投递）",
+     'python3 -c "import importlib.metadata as m;print(m.version(\'evalscope\'))"'),
 ]
 
 _probe_cache: dict[str, tuple[float, str]] = {}
@@ -135,7 +140,8 @@ def list_images(user=Depends(_admin)):
     for key, img_fn, comp, desc, cmd in PLATFORM:
         image = img_fn()
         info = _image_info(image)
-        source = "official" if image.split("/")[0] in ("vllm", "lmsysorg", "hiyouga", "nvidia") else "selfbuilt"
+        # 自构镜像统一 fintune/* 前缀；其余（Docker Hub 或 ACR 完整地址）均为官方开源
+        source = "selfbuilt" if image.startswith("fintune/") else "official"
         items.append({
             "key": key, "image": image, "component": comp, "desc": desc,
             "source": source, "exists": info["exists"], "size": info["size"],
