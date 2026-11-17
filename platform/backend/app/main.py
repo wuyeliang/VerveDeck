@@ -73,6 +73,13 @@ def _migrate_columns():
             ],
             "audit_logs": [("action", "VARCHAR(64) NOT NULL DEFAULT ''")],
             "api_keys": [("model_ids", f"{json_type} NOT NULL DEFAULT '[]'")],
+            # 告警规则分类 + 事件人工确认（存量库补列；新库由 create_all 建出）
+            "alert_rules": [("category", "VARCHAR(64) NOT NULL DEFAULT ''")],
+            "alert_events": [
+                ("acked", "BOOLEAN NOT NULL DEFAULT 'false'"),
+                ("acked_by", "VARCHAR(64) NOT NULL DEFAULT ''"),
+                ("acked_at", "TIMESTAMP"),
+            ],
             "training_jobs": [
                 # 多机多卡/单机多卡分布式训练（#60）：节点数 × 每节点卡数 + NCCL 通信环境
                 ("node_count", "INTEGER NOT NULL DEFAULT 1"),
@@ -117,6 +124,19 @@ DEFAULT_ALERT_RULES = [
 ]
 
 
+def _seed_category(kind: str, metric: str, event: str) -> str:
+    """默认规则的分类（与前端分类预设同词表）；自定义规则由用户填写"""
+    if kind == "event":
+        return {"train_failed": "task", "eval_failed": "task", "quant_failed": "task",
+                "node_offline": "system", "node_online": "system",
+                "login_locked": "security", "infer_down": "inference"}.get(event, "other")
+    if metric.startswith("gpu_"):
+        return "GPU"
+    if metric.startswith(("kv_cache", "infer_")):
+        return "inference"
+    return "system"  # host_* / system_up 等宿主与监控自身指标
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     _drop_legacy_metric_tables()
@@ -157,14 +177,16 @@ def init_db():
         if not db.query(AlertRule).first():
             for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
                 db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
-                                 threshold=thr, event=event, severity=sev, cooldown=cd))
+                                 threshold=thr, event=event, severity=sev, cooldown=cd,
+                                 category=_seed_category(kind, metric, event)))
         # 存量库幂等补事件规则（新代码新增的事件码，老库没有对应规则则补建）
         for event in ("login_locked",):
             if not db.query(AlertRule).filter(
                     AlertRule.event == event, AlertRule.kind == "event").first():
                 db.add(AlertRule(name="登录锁定（疑似暴力破解）", kind="event",
                                  metric="", op="", threshold=0, event=event,
-                                 severity="warning", cooldown=300))
+                                 severity="warning", cooldown=300,
+                                 category=_seed_category("event", "", event)))
         # 存量库幂等补默认阈值规则（2026-11 新增存储 IO 监控：老库没有对应规则则补建，
         # 用户已自建同指标+操作+阈值规则时不重复补）
         for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
@@ -174,7 +196,15 @@ def init_db():
                     AlertRule.kind == "threshold", AlertRule.metric == metric,
                     AlertRule.op == op, AlertRule.threshold == thr).first():
                 db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
-                                 threshold=thr, event=event, severity=sev, cooldown=cd))
+                                 threshold=thr, event=event, severity=sev, cooldown=cd,
+                                 category=_seed_category(kind, metric, event)))
+        # 存量库幂等补默认规则分类（2026-11 新增分类功能；仅补名称与默认集一致且未分类的行，
+        # 用户自定义规则不受影响；已补过的行 category 非空自动跳过）
+        _default_cats = {n: _seed_category(k, m, e)
+                         for n, k, m, _o, _th, _s, _c, e in DEFAULT_ALERT_RULES}
+        for r in db.query(AlertRule).filter(AlertRule.category == "").all():
+            if r.name in _default_cats:
+                r.category = _default_cats[r.name]
         # 数据目录
         for d in ("models/hub", "datasets", "jobs", "evals", "infer", "gpu",
                   "uploads", "dvc-remote", "hf-cache", "argilla"):

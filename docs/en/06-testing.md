@@ -23,7 +23,7 @@ Files and coverage:
 | test_unit_core.py | Pure functions / ORM / config building (incl. full build_config with all 94 params, compute_type derivation, extra_args pass-through, internal-key anti-override, guardrails, password hashing) |
 | test_unit_dataset.py | Dataset service pure functions (cleaning/dedup/masking/synthesis boundaries) |
 | test_unit_alert_channel.py | Alert channels (WeCom/email) construction & dispatch |
-| test_unit_prom_service.py | Prometheus queries / PROMQL / snapshot reconciliation |
+| test_unit_prom_service.py | Prometheus queries / PROMQL / snapshot reconciliation / category rule-group rendering |
 | test_unit_distributed.py | Multi-node multi-GPU: torchrun orchestration / NCCL env / rank convergence / FSDP |
 | test_unit_inference_cmd.py | Inference command building (vLLM/SGLang advanced params) |
 | test_unit_upgrade.py | Upgrade service state machine / impact surface |
@@ -42,6 +42,7 @@ Files and coverage:
 | test_api_storage.py | **Object storage S3 integration** (health field/roundtrip fetch/version sync/delete cleanup; whole group skipped when S3 absent) |
 | test_api_quantize.py | **Quantize (model compression) center, 33 cases**: method metadata / full creation-validation matrix / tenant isolation / detail & logs / delete rules / batch delete (mixed + cross-tenant) / scheduler state machine (real scheduler reconciles lost context → failed + alert; success → artifact registered as merged asset with lineage) / build_config all 4 methods / artifact name dedup |
 | test_api_notify.py | Notify channel config/validation/per-channel test/RBAC |
+| test_api_alert_ext.py | **Alert ext (category + 2000 capacity + event ack/delete)**: rule category CRUD/filter/pagination/bulk import/quota constant + event ack/unack/delete/batch + authz |
 | test_api_upgrade.py | Cluster upgrade status/check/execute validation branches |
 | test_api_batch_delete.py | **Unified batch-delete contract across 9 endpoints (#97/#98)**: datasets/models/evals/images-custom/api-keys/guard-rules/alert-rules/deployments/storage-objects — partial results + reference protection + RBAC |
 | test_api_login_security.py | **Login security config (#76)**: IP whitelist normalization/validation/threshold boundaries/RBAC/config restore |

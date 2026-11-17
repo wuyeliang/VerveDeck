@@ -265,7 +265,7 @@
     "srcDb": "数据库", "srcEnv": "环境变量", "srcNone": "未配置",
     "smtpHostPh": "SMTP 服务器（如 smtp.exmail.qq.com）", "smtpSsl": "SSL/TLS 加密", "smtpUserPh": "发件账号",
     "smtpPwPh": "授权码（留空=不变）", "smtpFromPh": "发件人地址", "smtpToPh": "收件人，逗号分隔",
-    "evSearchPh": "搜索目标", "sevInfo": "信息", "upImage": "镜像",
+    "evSearchPh": "搜索目标", "sevInfo": "信息", "ruleTotal": "共", "colCategory": "分类", "ruleCategory": "分类", "ruleCategoryPh": "输入或选择分类（空=未分类；用于分组筛选与 Prometheus 规则分组）", "ruleCategoryAll": "全部分类", "bulkImport": "批量导入", "bulkImportTitle": "批量导入告警规则", "bulkImportFmt": "每行一条（CSV）：名称,分类,类型,指标或事件,操作,阈值,级别,冷却(秒)；类型为 threshold 或 event；event 行操作/阈值留空；单次最多 1000 条（超出自动分批）", "bulkImportBtn": "导入", "bulkImportEmpty": "没有可导入的规则", "bulkImportNoName": "名称必填", "bulkImportBadRow": "行非法（需指标+操作）", "bulkImportDone": "批量导入完成", "bulkImportFail": "失败", "ack": "确认", "unack": "取消确认", "acked": "已确认", "unacked": "未确认", "ackedBy": "确认人", "batchAck": "批量确认", "batchUnack": "批量取消确认", "unackConfirm": "确认取消所选事件的确认状态？", "upImage": "镜像",
     "upLocal": "本地", "upPresent": "已就绪", "upMissing": "未拉取",
     "upRunning": "升级中", "upIdle": "空闲", "upImpact": "升级影响",
     "upUpgrade": "升级", "upRebuild": "重建", "upRebuildHint": "将以最新源码重建镜像并蓝绿切换容器，期间服务短暂不可用（约 1 分钟）",

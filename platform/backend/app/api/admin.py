@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 import re
 import threading
 import time
+from datetime import datetime
 from typing import Union
 
 from ..database import get_db
@@ -286,6 +287,11 @@ def batch_delete_rules(req: BatchDeleteReq, db=Depends(get_db), user=Depends(req
 
 # ---------- 告警规则与事件 ----------
 
+# 规则数量上限：需求 ≥2000，取 5000 留余量。2000+ 规则的性能支撑：
+# ① 列表接口分页（前端按页拉取）② Prometheus 渲染按分类拆 rule group（同组串行、跨组并行）
+MAX_ALERT_RULES = 5000
+
+
 class AlertRuleReq(BaseModel):
     name: str
     kind: str = "threshold"  # threshold/event
@@ -297,6 +303,7 @@ class AlertRuleReq(BaseModel):
     cooldown: int = 300
     channels: list = []  # ["wecom","email"]，空=全部已配置通道
     enabled: bool = True
+    category: str = ""  # 分类（自定义短文本，空=未分类）；用于筛选与 Prometheus group 拆分
 
 
 def _validate_alert(req: AlertRuleReq):
@@ -317,32 +324,100 @@ def _validate_alert(req: AlertRuleReq):
     bad = [c for c in (req.channels or []) if c not in ("wecom", "email")]
     if bad:
         raise HTTPException(400, f"channels 含非法值: {bad}")
+    if len((req.category or "").strip()) > 64:
+        raise HTTPException(400, "分类长度需 ≤64 字符")
 
 
 def _rule_dict(r: AlertRule) -> dict:
     return {"id": r.id, "name": r.name, "kind": r.kind, "metric": r.metric, "op": r.op,
             "threshold": r.threshold, "event": r.event, "severity": r.severity,
             "cooldown": r.cooldown, "channels": r.channels or [], "enabled": r.enabled,
-            "created_at": str(r.created_at)}
+            "category": r.category or "", "created_at": str(r.created_at)}
+
+
+def _rule_query(db, category: str = "", kind: str = "", enabled: str = "", q: str = ""):
+    """规则列表公共筛选：分类精确 / 类型 / 启用状态(1|0) / 名称模糊"""
+    query = db.query(AlertRule)
+    if category:
+        query = query.filter(AlertRule.category == category)
+    if kind in ("threshold", "event"):
+        query = query.filter(AlertRule.kind == kind)
+    if enabled in ("1", "0"):
+        query = query.filter(AlertRule.enabled == (enabled == "1"))
+    if q:
+        query = query.filter(AlertRule.name.like(f"%{q}%"))
+    return query
 
 
 @router.get("/alerts/rules")
-def list_alert_rules(db=Depends(get_db), user=Depends(get_current_user)):
-    return [_rule_dict(r) for r in db.query(AlertRule).order_by(AlertRule.id.asc()).all()]
+def list_alert_rules(category: str = "", kind: str = "", enabled: str = "", q: str = "",
+                     limit: int = 200, offset: int = 0,
+                     db=Depends(get_db), user=Depends(get_current_user)):
+    """规则列表（分页 + 筛选）。响应 {total, items}；limit 上限 1000。"""
+    query = _rule_query(db, category, kind, enabled, q)
+    total = query.count()
+    rows = (query.order_by(AlertRule.id.asc())
+            .offset(max(0, offset)).limit(min(max(1, limit), 1000)).all())
+    return {"total": total, "items": [_rule_dict(r) for r in rows]}
+
+
+@router.get("/alerts/rules/categories")
+def list_alert_rule_categories(db=Depends(get_db), user=Depends(get_current_user)):
+    """现有分类去重列表（筛选下拉与新建表单的联想建议）"""
+    rows = db.query(AlertRule.category).filter(AlertRule.category != "") \
+        .distinct().order_by(AlertRule.category.asc()).all()
+    return {"categories": [r[0] for r in rows]}
 
 
 @router.post("/alerts/rules")
 def create_alert_rule(req: AlertRuleReq, db=Depends(get_db),
                       user=Depends(require_role("super_admin", "tenant_admin"))):
     _validate_alert(req)
+    if db.query(AlertRule).count() >= MAX_ALERT_RULES:
+        raise HTTPException(400, f"规则数量已达上限（{MAX_ALERT_RULES}），请先删除无用规则")
     r = AlertRule(name=req.name.strip()[:128], kind=req.kind, metric=req.metric, op=req.op,
                   threshold=req.threshold, event=req.event, severity=req.severity,
                   cooldown=max(0, int(req.cooldown)), channels=req.channels or [],
-                  enabled=req.enabled)
+                  enabled=req.enabled, category=(req.category or "").strip()[:64])
     db.add(r)
     db.commit()
     _resync_rules()
     return {"id": r.id}
+
+
+@router.post("/alerts/rules/batch")
+def batch_create_alert_rules(req: dict, db=Depends(get_db),
+                             user=Depends(require_role("super_admin", "tenant_admin"))):
+    """批量创建规则（导入用，单次 ≤1000 条；逐条校验、部分成功，一次提交 + 一次规则重渲染）"""
+    items = req.get("rules")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(400, "rules 需为非空数组")
+    if len(items) > 1000:
+        raise HTTPException(400, "单次批量创建上限 1000 条")
+    room = MAX_ALERT_RULES - db.query(AlertRule).count()
+    created, failed = [], []
+    for i, raw in enumerate(items):
+        try:
+            item = AlertRuleReq(**(raw if isinstance(raw, dict) else {}))
+            _validate_alert(item)
+        except Exception as e:  # noqa: BLE001 —— 逐条收集错误（含 Pydantic/HTTP 校验）
+            failed.append({"index": i, "error": str(getattr(e, "detail", e))[:200]})
+            continue
+        if len(created) >= room:
+            failed.append({"index": i, "error": f"超出规则数量上限（{MAX_ALERT_RULES}）"})
+            continue
+        r = AlertRule(name=item.name.strip()[:128], kind=item.kind, metric=item.metric,
+                      op=item.op, threshold=item.threshold, event=item.event,
+                      severity=item.severity, cooldown=max(0, int(item.cooldown)),
+                      channels=item.channels or [], enabled=item.enabled,
+                      category=(item.category or "").strip()[:64])
+        db.add(r)
+        db.flush()  # 取 id；整批单次 commit
+        created.append(r.id)
+    if created:
+        db.commit()
+        _resync_rules()
+    return {"created": created, "failed": failed}
 
 
 @router.put("/alerts/rules/{rid}")
@@ -362,6 +437,7 @@ def update_alert_rule(rid: int, req: AlertRuleReq, db=Depends(get_db),
     r.cooldown = max(0, int(req.cooldown))
     r.channels = req.channels or []
     r.enabled = req.enabled
+    r.category = (req.category or "").strip()[:64]
     db.commit()
     _resync_rules()
     return {"ok": True}
@@ -502,18 +578,63 @@ def save_login_config(req: LoginConfigReq, db=Depends(get_db),
 
 @router.get("/alerts/events")
 def list_alert_events(limit: int = 100, offset: int = 0, level: str = "", target: str = "",
+                      acked: str = "",
                       db=Depends(get_db), user=Depends(get_current_user)):
+    """事件列表；acked 筛选：1=已确认 0=未确认 空=全部"""
     q = db.query(AlertEvent)
     if level:
         q = q.filter(AlertEvent.level == level)
     if target:
         q = q.filter(AlertEvent.target.like(f"%{target}%"))
+    if acked in ("1", "0"):
+        q = q.filter(AlertEvent.acked == (acked == "1"))
     total = q.count()
     rows = q.order_by(AlertEvent.id.desc()).offset(offset).limit(min(limit, 500)).all()
     return {"total": total, "items": [
         {"id": e.id, "ts": e.ts, "rule_id": e.rule_id, "level": e.level,
-         "target": e.target, "title": e.title, "detail": e.detail, "notified": e.notified}
+         "target": e.target, "title": e.title, "detail": e.detail, "notified": e.notified,
+         "acked": e.acked, "acked_by": e.acked_by or "",
+         "acked_at": str(e.acked_at) if e.acked_at else ""}
         for e in rows]}
+
+
+def _set_event_ack(db, ids: list[int], ack: bool, username: str) -> list[int]:
+    """批量置事件确认状态；返回实际变更的 id 列表"""
+    rows = db.query(AlertEvent).filter(AlertEvent.id.in_(ids)).all()
+    now = datetime.now()
+    hit = []
+    for e in rows:
+        if e.acked == ack:
+            continue
+        e.acked = ack
+        e.acked_by = username if ack else ""
+        e.acked_at = now if ack else None
+        hit.append(e.id)
+    db.commit()
+    return hit
+
+
+@router.post("/alerts/events/ack")
+def ack_alert_events(req: dict, db=Depends(get_db),
+                     user=Depends(require_role("super_admin", "tenant_admin"))):
+    """批量确认/取消确认告警事件：{ids, ack:true|false}（单次 ≤1000）"""
+    ids = req.get("ids")
+    if not isinstance(ids, list) or not ids or len(ids) > 1000:
+        raise HTTPException(400, "ids 需为 1-1000 个整数")
+    hit = _set_event_ack(db, [int(i) for i in ids], bool(req.get("ack", True)), user.username)
+    return {"acked": hit if req.get("ack", True) else [], "unacked": [] if req.get("ack", True) else hit}
+
+
+@router.post("/alerts/events/batch-delete")
+def batch_delete_alert_events(req: BatchDeleteReq, db=Depends(get_db),
+                              user=Depends(require_role("super_admin", "tenant_admin"))):
+    """批量删除告警事件（单次 ≤1000）"""
+    if len(req.ids) > 1000:
+        raise HTTPException(400, "单次批量删除上限 1000 条")
+    hit = [e.id for e in db.query(AlertEvent).filter(AlertEvent.id.in_(req.ids)).all()]
+    db.query(AlertEvent).filter(AlertEvent.id.in_(req.ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": hit, "failed": []}
 
 
 # ---------- 审计日志 ----------

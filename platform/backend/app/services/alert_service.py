@@ -213,13 +213,32 @@ def test_channel(db, channel: str) -> dict:
         return {"ok": False, "channel": channel, "error": str(e)[:300]}
 
 
+def _ev_snap(ev) -> tuple:
+    """事件标量快照 (id, level, title, target, detail)——供后台线程通知使用"""
+    return (ev.id, ev.level, ev.title, ev.target, ev.detail)
+
+
+class _RuleSnap:
+    """规则通知字段快照（可跨会话/线程传递；ORM 实例不能进后台线程）"""
+    __slots__ = ("channels",)
+
+    def __init__(self, channels):
+        self.channels = list(channels or [])
+
+
 def _do_notify(rule, ev) -> bool:
-    """同步发送（测试接口用）；生产走 _notify 线程包装。返回是否任一通道成功"""
+    """同步发送（测试接口与生产后台线程共用）。
+
+    rule：带 .channels 的对象（ORM 规则或 _RuleSnap）；
+    ev：标量元组 (id, level, title, target, detail)——必须是快照而非 ORM 实例
+        （线程运行时会话可能已关闭，访问 ORM 属性会抛 DetachedInstanceError）。
+    返回是否任一通道成功"""
+    ev_id, level, title, target, detail = ev
     cfg = channel_config()
-    title = f"VerveDeck 告警 [{ev.level}] {ev.title}"
-    body = (f"目标: {ev.target}\n"
+    title = f"VerveDeck 告警 [{level}] {title}"
+    body = (f"目标: {target}\n"
             f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            + (ev.detail or ""))
+            + (detail or ""))
     sent = False
     for ch in _channels(rule, cfg):
         try:
@@ -229,7 +248,7 @@ def _do_notify(rule, ev) -> bool:
             log.warning("alert notify %s failed: %s", ch, e)
     db = SessionLocal()
     try:
-        e2 = db.get(AlertEvent, ev.id)
+        e2 = db.get(AlertEvent, ev_id)
         if e2:
             e2.notified = sent
             db.commit()
@@ -241,7 +260,12 @@ def _do_notify(rule, ev) -> bool:
 
 
 def _notify(rule, ev):
-    threading.Thread(target=_do_notify, args=(rule, ev), daemon=True).start()
+    """生产异步通知：先取标量快照再交后台线程。
+
+    fire() 的 commit 会使 ORM 属性过期，请求会话随后关闭——若直接把
+    rule/ev 实例传进线程，线程内访问属性即抛 DetachedInstanceError。"""
+    threading.Thread(target=_do_notify,
+                     args=(_RuleSnap(rule.channels), _ev_snap(ev)), daemon=True).start()
 
 
 # ---------- 触发 ----------
@@ -297,5 +321,5 @@ def test_notify(db, rule_id: int) -> dict:
     db.add(ev)
     db.commit()
     db.refresh(ev)
-    ok = _do_notify(rule, ev)
+    ok = _do_notify(rule, _ev_snap(ev))
     return {"ok": ok, "channels": chs, "notified": ok}

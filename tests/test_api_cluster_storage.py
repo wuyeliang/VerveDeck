@@ -50,9 +50,10 @@ def test_storage_unauth_401():
 
 def test_storage_default_alert_rules(admin_tok):
     """存储 IO 两条默认告警规则必须存在（存量库由 init_db 幂等补建）"""
-    r = requests.get(f"{BASE}/api/admin/alerts/rules", headers=H(admin_tok), timeout=30)
+    r = requests.get(f"{BASE}/api/admin/alerts/rules", headers=H(admin_tok), timeout=30,
+                     params={"limit": 1000})
     assert r.status_code == 200, r.text
-    by_metric = {x["metric"]: x for x in r.json() if x["kind"] == "threshold"}
+    by_metric = {x["metric"]: x for x in r.json()["items"] if x["kind"] == "threshold"}
     assert "host_disk_io_ms" in by_metric, "缺默认规则：磁盘 IO 延时过高"
     assert "host_disk_util" in by_metric, "缺默认规则：磁盘 IO 利用率过高"
     assert by_metric["host_disk_io_ms"]["op"] == ">"

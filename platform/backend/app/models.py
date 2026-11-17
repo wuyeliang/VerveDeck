@@ -268,11 +268,12 @@ class AlertRule(Base):
     cooldown: Mapped[int] = mapped_column(Integer, default=300)  # 同目标重复告警冷却（秒）
     channels: Mapped[list] = mapped_column(JSON, default=list)  # ["wecom","email"]，空=全部已配置通道
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    category: Mapped[str] = mapped_column(String(64), default="")  # 分类（自定义，空=未分类）；大量规则时用于分组/筛选/Prometheus rule group 拆分
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class AlertEvent(Base):
-    """告警事件（触发即记录；notified=是否成功发出通知）"""
+    """告警事件（触发即记录；notified=是否成功发出通知；acked=人工确认状态）"""
     __tablename__ = "alert_events"
     id: Mapped[int] = mapped_column(primary_key=True)
     ts: Mapped[int] = mapped_column(Integer, index=True)  # unix ts
@@ -282,6 +283,9 @@ class AlertEvent(Base):
     title: Mapped[str] = mapped_column(String(255), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
     notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    acked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)  # 人工确认（ack）
+    acked_by: Mapped[str] = mapped_column(String(64), default="")  # 确认人用户名
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 确认时间
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 

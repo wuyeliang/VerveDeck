@@ -49,7 +49,7 @@ def test_render_rules_yaml_basic():
     assert rs[0]["expr"] == "DCGM_FI_DEV_GPU_TEMP > 85"
     assert rs[0]["for"] == "60s"
     assert rs[0]["labels"] == {"severity": "critical", "source": "vervedeck",
-                               "metric": "gpu_temp"}
+                               "metric": "gpu_temp", "category": "default"}
     # description 保留 Prometheus 模板变量
     assert "{{ $value }}" in rs[0]["annotations"]["description"]
     assert rs[2]["expr"] == 'up{job="inference"} < 1'
@@ -67,7 +67,33 @@ def test_render_rules_yaml_dedup_and_skip_unknown():
 
 def test_render_rules_yaml_empty():
     doc = yaml.safe_load(ps.render_rules_yaml([]))
-    assert doc["groups"][0]["rules"] == []
+    assert doc["groups"] == []  # 空规则 → 空 groups（Prometheus 合法，无告警评估）
+
+
+def test_render_rules_yaml_category_groups():
+    """分类拆 group：ASCII 分类用 slug、中文分类用短 hash、未分类保持旧组名（2000+ 规则性能）"""
+    rules = [_Rule(1, "A", "gpu_temp", ">", 85, "critical"),
+             _Rule(2, "B", "gpu_temp", ">", 90, "warning"),
+             _Rule(3, "C", "host_cpu", ">", 90, "warning"),
+             _Rule(4, "D", "kv_cache", ">", 90, "warning")]
+    # 给替身补分类（render 经 getattr 读，缺省 ""）
+    rules[0].category = "GPU"
+    rules[1].category = "GPU"
+    rules[2].category = "系统"
+    # rules[3] 无分类
+    doc = yaml.safe_load(ps.render_rules_yaml(rules))
+    by_name = {g["name"]: g["rules"] for g in doc["groups"]}
+    assert len(doc["groups"]) == 3
+    assert len(by_name["vervedeck-alerts-gpu"]) == 2  # 同分类同组
+    assert by_name["vervedeck-alerts-gpu"][0]["labels"]["category"] == "GPU"
+    assert "vervedeck-alerts" in by_name  # 未分类保持旧组名
+    assert by_name["vervedeck-alerts"][0]["labels"]["category"] == "default"
+    # 中文分类 → hash 片段（稳定唯一，非 ASCII）
+    zh_group = [n for n in by_name if n.startswith("vervedeck-alerts-c")]
+    assert len(zh_group) == 1 and by_name[zh_group[0]][0]["labels"]["category"] == "系统"
+    # alertname 跨组仍唯一
+    all_names = [r["alert"] for g in doc["groups"] for r in g["rules"]]
+    assert len(all_names) == len(set(all_names)) == 4
 
 
 # ---------------- Alertmanager 渲染 ----------------

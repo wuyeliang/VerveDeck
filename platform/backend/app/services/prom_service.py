@@ -133,6 +133,16 @@ def _f(v, default=0.0):
         return default
 
 
+def gpu_mem_used_map() -> dict[int, float]:
+    """各卡当前显存占用 {gpu_index: MiB}（DCGM 即时查询；Prometheus 不可用时抛异常由调用方兜底）"""
+    out: dict[int, float] = {}
+    for r in prom_instant("DCGM_FI_DEV_FB_USED"):
+        g = r["metric"].get("gpu")
+        if g is not None:
+            out[int(g)] = _f(r["value"][1])
+    return out
+
+
 def gpu_snapshot(node=None):
     """各 GPU 最新快照（设备表用）：DCGM 即时查询组装，口径与旧 GpuMetric 行一致。
 
@@ -258,8 +268,23 @@ def host_snapshot(instance: str | None = None) -> dict:
 
 # ---------- 规则渲染（UI 阈值规则 → Prometheus 规则文件） ----------
 
+def _cat_slug(category: str) -> str:
+    """分类 → Prometheus group 名片段：ASCII 用原词（小写连字符），非 ASCII 取短 hash 保证稳定唯一"""
+    c = (category or "").strip()
+    if not c:
+        return ""
+    ascii = re.sub(r"[^a-z0-9]+", "-", c.lower()).strip("-")
+    if ascii:
+        return ascii[:32]
+    import hashlib
+    return "c" + hashlib.md5(c.encode("utf-8")).hexdigest()[:8]
+
+
 def render_rules_yaml(rules) -> str:
-    items = []
+    """按分类拆 rule group：同组规则串行评估、跨组并行，2000+ 规则时避免单组长尾；
+    未分类规则保持旧 group 名 vervedeck-alerts（存量告警路由/面板不感知变化）。"""
+    groups: dict[str, list] = {}
+    order: list[str] = []
     used = set()
     for r in rules:
         expr = PROMQL.get(r.metric or "")
@@ -274,18 +299,28 @@ def render_rules_yaml(rules) -> str:
         used.add(name)
         sev = r.severity if r.severity in ("warning", "critical") else "warning"
         mname = METRIC_NAMES.get(r.metric, r.metric)
-        items.append({
+        cat = (getattr(r, "category", "") or "").strip()
+        item = {
             "alert": name,
             "expr": f"{expr} {op} {thr:g}",
             "for": "60s",
-            "labels": {"severity": sev, "source": "vervedeck", "metric": r.metric},
+            "labels": {"severity": sev, "source": "vervedeck", "metric": r.metric,
+                       "category": cat or "default"},
             "annotations": {
                 "summary": f"{r.name}：{mname} {op} {thr:g}",
                 "description": f"{r.name}：{mname} 当前值 {{{{ $value }}}}, 条件 {op} {thr:g}",
             },
-        })
-    return yaml.safe_dump({"groups": [{"name": "vervedeck-alerts", "rules": items}]},
-                          allow_unicode=True, sort_keys=False)
+        }
+        key = _cat_slug(cat)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+    out = []
+    for key in order:  # 保持首现顺序（稳定 reload diff）
+        gname = "vervedeck-alerts" if not key else f"vervedeck-alerts-{key}"
+        out.append({"name": gname, "rules": groups[key]})
+    return yaml.safe_dump({"groups": out}, allow_unicode=True, sort_keys=False)
 
 
 # ---------- Alertmanager 渲染（通知通道 DB 配置 → AM YAML） ----------

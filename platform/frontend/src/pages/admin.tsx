@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import {
   Tabs, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Card,
-  Switch, Row, Col, Tooltip,
+  Switch, Row, Col, Tooltip, AutoComplete, Typography,
 } from 'antd'
+const { Text } = Typography
 import { PlusOutlined, CopyOutlined, SendOutlined, ClockCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
@@ -250,18 +251,32 @@ const METRICS = ['host_cpu', 'host_mem', 'host_disk', 'gpu_util', 'gpu_temp', 'g
   'gpu_mem_temp', 'gpu_power', 'gpu_xid', 'gpu_ecc_dbe', 'kv_cache', 'infer_waiting',
   'infer_latency_p95', 'infer_down', 'system_up']
 const EVENTS = ['node_offline', 'node_online', 'train_failed', 'eval_failed', 'quant_failed', 'infer_down']
+const RULE_PAGE = 50  // 规则表每页条数（服务端分页，支撑 2000+ 规则）
 
 function AlertsTab() {
   const { t, i18n: ti18n } = useTranslation()
   const [rules, setRules] = useState<any[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [sel, setSel] = useState<number[]>([])
+  const [cats, setCats] = useState<string[]>([])
   const [events, setEvents] = useState<any[]>([])
   const [evLevel, setEvLevel] = useState('')
   const [evTarget, setEvTarget] = useState('')
+  const [evAcked, setEvAcked] = useState('')
+  const [evSel, setEvSel] = useState<number[]>([])
   const [open, setOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importing, setImporting] = useState(false)
   const [form] = Form.useForm()
   const kind = Form.useWatch('kind', form)
+  // 规则筛选（服务端）
+  const [fCat, setFCat] = useState('')
+  const [fKind, setFKind] = useState('')
+  const [fEnabled, setFEnabled] = useState('')
+  const [fQ, setFQ] = useState('')
   const mLabel = (m: string) => ({
     host_cpu: t('admin.mHostCpu'), host_mem: t('admin.mHostMem'), host_disk: t('admin.mHostDisk'),
     gpu_util: t('admin.mGpuUtil'), gpu_temp: t('admin.mGpuTemp'), gpu_mem: t('admin.mGpuMem'),
@@ -277,17 +292,54 @@ function AlertsTab() {
     quant_failed: t('admin.evQuantFailed'), infer_down: t('admin.evInferDown'),
   }[e] || e)
 
-  const load = () => {
-    api.get('/api/admin/alerts/rules').then((r) => setRules(r.data)).catch(() => {})
-    api.get('/api/admin/alerts/events?limit=100').then((r) => setEvents(r.data.items || [])).catch(() => {})
+  const fetchRules = (p = page, c = fCat, k = fKind, en = fEnabled, q = fQ) =>
+    api.get('/api/admin/alerts/rules', {
+      params: { limit: RULE_PAGE, offset: (p - 1) * RULE_PAGE,
+        category: c || undefined, kind: k || undefined, enabled: en || undefined, q: q || undefined },
+    }).then((r) => { setRules(r.data.items || []); setTotal(r.data.total || 0) }).catch(() => {})
+
+  const fetchEvents = (lv = evLevel, tg = evTarget, ak = evAcked) =>
+    api.get('/api/admin/alerts/events', {
+      params: { limit: 200, level: lv || undefined, target: tg || undefined, acked: ak || undefined },
+    }).then((r) => setEvents(r.data.items || [])).catch(() => {})
+
+  const fetchCats = () =>
+    api.get('/api/admin/alerts/rules/categories').then((r) => setCats(r.data.categories || [])).catch(() => {})
+
+  // 筛选/翻页变化即重取；10s 轮询经 ref 取最新参数（当前页 + 当前筛选）
+  useEffect(() => { fetchRules() }, [page, fCat, fKind, fEnabled, fQ])
+  useEffect(() => { fetchEvents() }, [evLevel, evTarget, evAcked])
+  const pollRef = React.useRef<any>({})
+  pollRef.current = { fetchRules, fetchEvents, fetchCats }
+  useEffect(() => {
+    fetchCats()
+    const x = setInterval(() => {
+      pollRef.current.fetchRules(); pollRef.current.fetchEvents(); pollRef.current.fetchCats()
+    }, 10000)
+    return () => clearInterval(x)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const batchDel = useBatchDelete('/api/admin/alerts/rules/batch-delete', () => { setSel([]); fetchRules(); fetchCats() })
+  const batchDelEv = useBatchDelete('/api/admin/alerts/events/batch-delete', () => { setEvSel([]); fetchEvents() })
+
+  const ackEvents = (ids: number[], ack: boolean) => {
+    if (!ids.length) return
+    const doIt = async () => {
+      try {
+        await api.post('/api/admin/alerts/events/ack', { ids, ack })
+        setEvSel([])
+        fetchEvents()
+      } catch (e: any) { message.error(e?.response?.data?.detail || e?.message) }
+    }
+    if (ack) doIt()
+    else Modal.confirm({ title: t('admin.unackConfirm'), okText: t('admin.unack'), onOk: doIt })
   }
-  useEffect(() => { load(); const x = setInterval(load, 10000); return () => clearInterval(x) }, [])
-  const batchDel = useBatchDelete('/api/admin/alerts/rules/batch-delete', () => { setSel([]); load() })
 
   const openModal = (r?: any) => {
     form.resetFields()
     if (r) { setEditId(r.id); form.setFieldsValue(r) }
-    else { setEditId(null); form.setFieldsValue({ kind: 'threshold', op: '>', threshold: 0, cooldown: 300, severity: 'warning', channels: [], enabled: true }) }
+    else { setEditId(null); form.setFieldsValue({ kind: 'threshold', op: '>', threshold: 0, cooldown: 300, severity: 'warning', channels: [], enabled: true, category: '' }) }
     setOpen(true)
   }
 
@@ -295,22 +347,80 @@ function AlertsTab() {
     const v = await form.validateFields()
     if (editId) await api.put(`/api/admin/alerts/rules/${editId}`, v)
     else await api.post('/api/admin/alerts/rules', v)
-    message.success(t('admin.created')); setOpen(false); load()
+    message.success(t('admin.created')); setOpen(false); fetchRules(); fetchCats()
+  }
+
+  // 批量导入：CSV 行 → 分批（每批 ≤1000）POST /alerts/rules/batch
+  const doImport = async () => {
+    const lines = importText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (!lines.length) { message.warning(t('admin.bulkImportEmpty')); return }
+    const arr: any[] = []
+    const errs: string[] = []
+    lines.forEach((line, i) => {
+      const cols = line.split(',').map((c) => c.trim())
+      const [name, category, kindVal, mOrE, op, thr, sev, cd] = cols
+      if (!name) { errs.push(`${i + 1}:${t('admin.bulkImportNoName')}`); return }
+      if (kindVal === 'event') {
+        arr.push({ name, category, kind: 'event', event: mOrE || '', severity: sev || 'warning', cooldown: Number(cd) || 300, enabled: true })
+      } else {
+        if (!mOrE || !op) { errs.push(`${i + 1}:${t('admin.bulkImportBadRow')}`); return }
+        arr.push({ name, category, kind: 'threshold', metric: mOrE, op, threshold: Number(thr) || 0,
+          severity: sev || 'warning', cooldown: Number(cd) || 300, enabled: true })
+      }
+    })
+    if (!arr.length) { message.warning(errs.join('; ') || t('admin.bulkImportEmpty')); return }
+    setImporting(true)
+    try {
+      let ok = 0, fail = 0
+      for (let i = 0; i < arr.length; i += 1000) {
+        const r = await api.post('/api/admin/alerts/rules/batch', { rules: arr.slice(i, i + 1000) })
+        ok += (r.data.created || []).length
+        fail += (r.data.failed || []).length
+      }
+      message.success(`${t('admin.bulkImportDone')}：${ok}/${arr.length}`)
+      if (fail) message.warning(`${t('admin.bulkImportDone')}：${t('admin.bulkImportFail')} ${fail}`)
+      if (errs.length) message.warning(errs.join('; '))
+      setImportOpen(false); setImportText('')
+      setPage(1); fetchRules(); fetchCats()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message)
+    } finally { setImporting(false) }
   }
 
   const sevTag = (v: string) => v === 'critical' ? <Tag color="error">{t('admin.sevCritical')}</Tag> : <Tag color="warning">{t('admin.sevWarning')}</Tag>
+  const ackTag = (e: any) => e.acked
+    ? <Tooltip title={`${t('admin.ackedBy')}: ${e.acked_by || '-'}${e.acked_at ? ` · ${e.acked_at}` : ''}`}>
+        <Tag color="success">{t('admin.acked')}</Tag>
+      </Tooltip>
+    : <Tag>{t('admin.unacked')}</Tag>
 
   return (
     <div>
-      <Card size="small" title={t('admin.alertRules')} style={{ marginBottom: 16 }}
+      <Card size="small" title={<Space size={8}>{t('admin.alertRules')}<Text type="secondary" style={{ fontSize: 12 }}>{t('admin.ruleTotal')} {total}</Text></Space>} style={{ marginBottom: 16 }}
         extra={<Space size={8}>
           {sel.length > 0 && <Button size="small" danger onClick={() => batchDel(sel)}>{t('common.batchDelete')}（{sel.length}）</Button>}
+          <Button size="small" onClick={() => { setImportText(''); setImportOpen(true) }}>{t('admin.bulkImport')}</Button>
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => openModal()}>{t('admin.newRule')}</Button>
         </Space>}>
-        <Table size="small" rowKey="id" dataSource={rules} pagination={false}
-          rowSelection={{ selectedRowKeys: sel, onChange: (k: any) => setSel(k) }}
+        <Space size={6} style={{ marginBottom: 8 }} wrap>
+          <Select size="small" allowClear placeholder={t('admin.ruleCategoryAll')} style={{ width: 140 }}
+            value={fCat || undefined} onChange={(v) => { setFCat(v || ''); setPage(1) }}
+            options={cats.map((c) => ({ value: c, label: c }))} />
+          <Select size="small" allowClear placeholder={t('admin.colKind')} style={{ width: 110 }}
+            value={fKind || undefined} onChange={(v) => { setFKind(v || ''); setPage(1) }}
+            options={[{ value: 'threshold', label: t('admin.kindThreshold') }, { value: 'event', label: t('admin.kindEvent') }]} />
+          <Select size="small" allowClear placeholder={t('common.status')} style={{ width: 110 }}
+            value={fEnabled || undefined} onChange={(v) => { setFEnabled(v || ''); setPage(1) }}
+            options={[{ value: '1', label: t('common.enabled') }, { value: '0', label: t('common.disabled') }]} />
+          <Input size="small" allowClear placeholder={t('admin.ruleName')} style={{ width: 180 }}
+            value={fQ} onChange={(e) => { setFQ(e.target.value); setPage(1) }} />
+        </Space>
+        <Table size="small" rowKey="id" dataSource={rules}
+          pagination={{ current: page, pageSize: RULE_PAGE, total, showSizeChanger: false, onChange: (p: number) => setPage(p) }}
+          rowSelection={{ selectedRowKeys: sel, preserveSelectedRowKeys: true, onChange: (k: any) => setSel(k) }}
           columns={[
             { title: t('admin.ruleName'), dataIndex: 'name', width: 180, ellipsis: true },
+            { title: t('admin.colCategory'), dataIndex: 'category', width: 100, render: (v: string) => v ? <Tag color="purple">{v}</Tag> : <Text type="secondary">-</Text> },
             { title: t('admin.colKind'), dataIndex: 'kind', width: 80, render: (v: string) => v === 'event' ? <Tag>{t('admin.kindEvent')}</Tag> : <Tag color="blue">{t('admin.kindThreshold')}</Tag> },
             {
               title: t('admin.colMetric'), width: 170, render: (_: any, r: any) =>
@@ -334,7 +444,7 @@ function AlertsTab() {
                     if (res.data.ok) message.success(t('admin.testSent'))
                     else message.error(res.data.error || t('admin.testFail'))
                   }}>{t('admin.testNotify')}</Button>
-                  <Popconfirm title={t('admin.del')} onConfirm={() => api.delete(`/api/admin/alerts/rules/${r.id}`).then(load)}>
+                  <Popconfirm title={t('admin.del')} onConfirm={() => api.delete(`/api/admin/alerts/rules/${r.id}`).then(() => { fetchRules(); fetchCats() })}>
                     <Button size="small" danger>{t('common.delete')}</Button>
                   </Popconfirm>
                 </Space>
@@ -354,11 +464,23 @@ function AlertsTab() {
                 { value: 'warning', label: t('admin.sevWarning') },
                 { value: 'info', label: t('admin.sevInfo') },
               ]} />
+            <Select size="small" allowClear placeholder={t('common.status')} style={{ width: 120 }}
+              value={evAcked || undefined} onChange={(v) => setEvAcked(v || '')}
+              options={[
+                { value: '0', label: t('admin.unacked') },
+                { value: '1', label: t('admin.acked') },
+              ]} />
           </Space>
         }>
-        <Table size="small" rowKey="id" dataSource={events.filter((e) =>
-          (!evLevel || e.level === evLevel) &&
-          (!evTarget || (e.target || '').toLowerCase().includes(evTarget.toLowerCase())))}
+        <Space size={8} style={{ marginBottom: 8 }}>
+          {evSel.length > 0 && <>
+            <Button size="small" type="primary" onClick={() => ackEvents(evSel, true)}>{t('admin.batchAck')}（{evSel.length}）</Button>
+            <Button size="small" onClick={() => ackEvents(evSel, false)}>{t('admin.batchUnack')}（{evSel.length}）</Button>
+            <Button size="small" danger onClick={() => batchDelEv(evSel)}>{t('common.batchDelete')}（{evSel.length}）</Button>
+          </>}
+        </Space>
+        <Table size="small" rowKey="id" dataSource={events}
+          rowSelection={{ selectedRowKeys: evSel, onChange: (k: any) => setEvSel(k) }}
           pagination={false} locale={{ emptyText: '-' }}
           columns={[
             { title: t('admin.colTime'), width: 160, render: (_: any, r: any) => new Date(r.ts * 1000).toLocaleString(ti18n.language) },
@@ -366,11 +488,25 @@ function AlertsTab() {
             { title: t('admin.colTarget'), dataIndex: 'target', width: 110 },
             { title: t('admin.colTitle'), dataIndex: 'title', ellipsis: true },
             { title: t('admin.colNotified'), dataIndex: 'notified', width: 90, render: (v: boolean) => v ? <Tag color="success">{t('common.yes')}</Tag> : <Tag>{t('common.no')}</Tag> },
+            { title: t('common.status'), dataIndex: 'acked', width: 100, render: (_: any, r: any) => ackTag(r) },
+            {
+              title: t('common.actions'), width: 150, render: (_: any, r: any) => (
+                <Space size={4}>
+                  <Button size="small" onClick={() => ackEvents([r.id], !r.acked)}>{r.acked ? t('admin.unack') : t('admin.ack')}</Button>
+                  <Popconfirm title={t('admin.del')} onConfirm={() => api.post('/api/admin/alerts/events/batch-delete', { ids: [r.id] }).then(() => fetchEvents())}>
+                    <Button size="small" danger>{t('common.delete')}</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
           ]} />
       </Card>
       <Modal title={editId ? t('admin.editRule') : t('admin.newRule')} open={open} onCancel={() => setOpen(false)} onOk={submit} width={520}>
         <Form form={form} layout="vertical">
           <Form.Item name="name" label={t('admin.ruleName')} rules={[{ required: true }]}><Input maxLength={128} /></Form.Item>
+          <Form.Item name="category" label={t('admin.ruleCategory')} extra={t('admin.ruleCategoryPh')}>
+            <AutoComplete maxLength={64} options={cats.map((c) => ({ value: c }))} placeholder={t('admin.ruleCategoryPh')} />
+          </Form.Item>
           <Form.Item name="kind" label={t('admin.colKind')}>
             <Select options={[{ value: 'threshold', label: t('admin.kindThreshold') }, { value: 'event', label: t('admin.kindEvent') }]} />
           </Form.Item>
@@ -405,6 +541,12 @@ function AlertsTab() {
             <Select options={[{ value: true, label: t('common.enabled') }, { value: false, label: t('common.disabled') }]} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal title={t('admin.bulkImportTitle')} open={importOpen} onCancel={() => setImportOpen(false)}
+        onOk={doImport} okButtonProps={{ loading: importing }} okText={t('admin.bulkImportBtn')} width={640}>
+        <div style={{ fontSize: 12, color: '#888', marginBottom: 8, whiteSpace: 'pre-wrap' }}>{t('admin.bulkImportFmt')}</div>
+        <Input.TextArea rows={10} value={importText} onChange={(e) => setImportText(e.target.value)}
+          placeholder={'GPU 显存过高,GPU,threshold,gpu_mem,>,95,warning,300\n训练任务失败,task,event,train_failed,,,warning,60'} />
       </Modal>
     </div>
   )

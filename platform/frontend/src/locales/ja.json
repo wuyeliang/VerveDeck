@@ -265,7 +265,7 @@
     "srcDb": "データベース", "srcEnv": "環境変数", "srcNone": "未設定",
     "smtpHostPh": "SMTP サーバー（例: smtp.exmail.qq.com）", "smtpSsl": "SSL/TLS 暗号化", "smtpUserPh": "送信アカウント",
     "smtpPwPh": "認証コード（空欄＝変更なし）", "smtpFromPh": "送信元アドレス", "smtpToPh": "受信者（カンマ区切り）",
-    "evSearchPh": "対象を検索", "sevInfo": "情報", "upImage": "イメージ",
+    "evSearchPh": "対象を検索", "sevInfo": "情報", "ruleTotal": "合計", "colCategory": "カテゴリ", "ruleCategory": "カテゴリ", "ruleCategoryPh": "入力または選択（空=未分類。フィルタと Prometheus ルールグループに使用）", "ruleCategoryAll": "全カテゴリ", "bulkImport": "一括インポート", "bulkImportTitle": "アラートルールを一括インポート", "bulkImportFmt": "1行1件（CSV）：名称,カテゴリ,種別,指標またはイベント,演算子,閾値,レベル,クールダウン(秒)；種別は threshold または event；event 行は演算子/閾値は空欄；1回最大 1000 件（超過時は自動分割）", "bulkImportBtn": "インポート", "bulkImportEmpty": "インポート可能なルールがありません", "bulkImportNoName": "名称は必須", "bulkImportBadRow": "無効な行（指標+演算子が必要）", "bulkImportDone": "一括インポート完了", "bulkImportFail": "失敗", "ack": "確認", "unack": "確認解除", "acked": "確認済み", "unacked": "未確認", "ackedBy": "確認者", "batchAck": "一括確認", "batchUnack": "一括確認解除", "unackConfirm": "選択したイベントの確認状態を解除しますか？", "upImage": "イメージ",
     "upLocal": "ローカル", "upPresent": "準備完了", "upMissing": "未取得",
     "upRunning": "アップグレード中", "upIdle": "待機中", "upImpact": "アップグレード影響",
     "upUpgrade": "アップグレード", "upRebuild": "再ビルド", "upRebuildHint": "最新のソースからイメージを再ビルドし、ブルーグリーン方式でコンテナを切り替えます。一時的にサービスが利用できません（約 1 分）",

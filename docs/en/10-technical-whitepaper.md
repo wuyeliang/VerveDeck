@@ -128,6 +128,8 @@ Three collection layers:
 2. **Workload layer**: native `/metrics` of vLLM/SGLang/LLaMA-Factory scraped directly by Prometheus (serving QPS/latency/KV cache; training loss/eval);
 3. **Alerting layer**: platform-managed Prometheus alert rules (DB-backed, UI CRUD, dry-run), routed by Alertmanager to WeCom/email (channels DB-configurable).
 
+Rule capacity is 5000 (requirement ≥2000): the list API is server-side paginated with category/type/state/name filters; rules carry a free-form category, and the rendered Prometheus rule file is **split into rule groups per category** (serial within a group, parallel across groups) to avoid long-tail evaluation on large rule sets — uncategorized rules keep the legacy group name so existing routing is untouched. Alert events support manual acknowledge (ack, recording acker + time) and deletion, both single and bulk (≤1000 per call).
+
 Grafana is embedded in the platform monitoring dashboard via iframe (`GF_SECURITY_ALLOW_EMBEDDING=true` + `GF_SERVER_ROOT_URL` sub-path, anonymous read-only Viewer); time range and dashboard selection are platform-controlled.
 
 ### 3.8 Cluster Upgrade (Blue-Green)

@@ -57,14 +57,18 @@ Complete REST API route table of the VerveDeck platform backend, one-to-one with
 
 | Method | Path | Description |
 |---|---|---|
-| GET/POST | /api/admin/alerts/rules | List / create alert rule (Prometheus expr, severity, duration) |
-| PUT | /api/admin/alerts/rules/{rid} | Update rule |
+| GET/POST | /api/admin/alerts/rules | List alert rules (paginated + filters `{category,kind,enabled,q,limit,offset}` → `{total,items}`, capacity 5000) / create (with `category`) |
+| PUT | /api/admin/alerts/rules/{rid} | Update rule (incl. category) |
 | DELETE | /api/admin/alerts/rules/{rid} | Delete |
+| POST | /api/admin/alerts/rules/batch | Bulk create (import, ≤1000 per call; per-item validation, partial success `{created,failed}`) |
+| GET | /api/admin/alerts/rules/categories | Distinct existing categories (filter/autocomplete) |
 | POST | /api/admin/alerts/rules/batch-delete | Batch delete `{ids}` |
 | POST | /api/admin/alerts/rules/{rid}/test | Dry-run rule (currently firing or not) |
 | GET/PUT | /api/admin/notify-config | Notification channels (WeCom / email, DB-backed) |
 | POST | /api/admin/notify-config/test | Send test notification |
-| GET | /api/admin/alerts/events | Alert event stream `{limit}` |
+| GET | /api/admin/alerts/events | Alert event stream `{limit,level,target,acked}` (acked=1 acked / 0 pending; includes acked_by/acked_at) |
+| POST | /api/admin/alerts/events/ack | Bulk ack / unack `{ids,ack}` (≤1000) |
+| POST | /api/admin/alerts/events/batch-delete | Batch delete events `{ids}` (≤1000) |
 
 ### Login Security & System Config
 

@@ -57,14 +57,18 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET/POST | /api/admin/alerts/rules | 告警规则列表 / 创建（Prometheus expr、级别、持续时长） |
-| PUT | /api/admin/alerts/rules/{rid} | 更新规则 |
+| GET/POST | /api/admin/alerts/rules | 告警规则列表（分页 + 筛选 `{category,kind,enabled,q,limit,offset}` → `{total,items}`，容量 5000）/ 创建（支持 category 分类） |
+| PUT | /api/admin/alerts/rules/{rid} | 更新规则（含分类） |
 | DELETE | /api/admin/alerts/rules/{rid} | 删除 |
+| POST | /api/admin/alerts/rules/batch | 批量创建（导入，单次 ≤1000；逐条校验、部分成功 `{created,failed}`） |
+| GET | /api/admin/alerts/rules/categories | 现有分类去重列表（筛选/联想） |
 | POST | /api/admin/alerts/rules/batch-delete | 批量删除 `{ids}` |
 | POST | /api/admin/alerts/rules/{rid}/test | 试算规则（当前是否触发） |
 | GET/PUT | /api/admin/notify-config | 通知通道配置（企业微信/邮件，DB 化） |
 | POST | /api/admin/notify-config/test | 发送测试通知 |
-| GET | /api/admin/alerts/events | 告警事件流 `{limit}` |
+| GET | /api/admin/alerts/events | 告警事件流 `{limit,level,target,acked}`（acked=1 已确认/0 未确认；含 acked_by/acked_at） |
+| POST | /api/admin/alerts/events/ack | 批量确认/取消确认 `{ids,ack}`（≤1000） |
+| POST | /api/admin/alerts/events/batch-delete | 批量删除事件 `{ids}`（≤1000） |
 
 ### 登录安全与系统配置
 

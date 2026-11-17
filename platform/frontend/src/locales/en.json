@@ -265,7 +265,7 @@
     "srcDb": "Database", "srcEnv": "Env Vars", "srcNone": "Not Configured",
     "smtpHostPh": "SMTP server (e.g. smtp.exmail.qq.com)", "smtpSsl": "SSL/TLS", "smtpUserPh": "Sender account",
     "smtpPwPh": "Auth code (empty = unchanged)", "smtpFromPh": "From address", "smtpToPh": "Recipients, comma separated",
-    "evSearchPh": "Search target", "sevInfo": "Info", "upImage": "Image",
+    "evSearchPh": "Search target", "sevInfo": "Info", "ruleTotal": "total", "colCategory": "Category", "ruleCategory": "Category", "ruleCategoryPh": "Type or pick a category (empty = uncategorized; used for filtering and Prometheus rule grouping)", "ruleCategoryAll": "All categories", "bulkImport": "Bulk import", "bulkImportTitle": "Bulk import alert rules", "bulkImportFmt": "One rule per line (CSV): name,category,kind,metric_or_event,op,threshold,severity,cooldown_s; kind = threshold or event; leave op/threshold empty for event rows; max 1000 per call (auto-chunked)", "bulkImportBtn": "Import", "bulkImportEmpty": "No rules to import", "bulkImportNoName": "name required", "bulkImportBadRow": "bad row (metric+op required)", "bulkImportDone": "Import finished", "bulkImportFail": "failed", "ack": "Ack", "unack": "Unack", "acked": "Acked", "unacked": "Unacked", "ackedBy": "Acked by", "batchAck": "Bulk ack", "batchUnack": "Bulk unack", "unackConfirm": "Clear ack state of the selected events?", "upImage": "Image",
     "upLocal": "Local", "upPresent": "Ready", "upMissing": "Not Pulled",
     "upRunning": "Upgrading", "upIdle": "Idle", "upImpact": "Upgrade Impact",
     "upUpgrade": "Upgrade", "upRebuild": "Rebuild", "upRebuildHint": "Rebuilds the image from the latest source and blue-greens the containers; service briefly unavailable (~1 min)",

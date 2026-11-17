@@ -130,6 +130,60 @@ def test_channels_selection(env_cfg):
     assert asvc._channels(_rule(["wecom", "email"]), monkey_cfg) == ["wecom"]
 
 
+def test_notify_thread_uses_snap_not_orm(env_cfg, monkeypatch):
+    """回归：异步通知线程用标量快照而非 ORM 实例（DetachedInstanceError 修复）
+
+    生产路径 fire() → commit（属性过期）→ 请求结束后会话关闭 → 后台线程
+    直接访问 rule/ev ORM 实例会抛 DetachedInstanceError（123 环境
+    登录锁定告警曾复现）。此处：会话仍开时取快照并内联执行线程目标，
+    随后关闭会话，用同一快照再跑一遍 _do_notify——旧实现在此处必然抛
+    DetachedInstanceError（读 ev.level/rule.channels），新实现只碰标量。
+    """
+    import time as _time
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    class _FakeThread:
+        def __init__(self, target=None, args=(), **kw):
+            self._target, self._args = target, args
+
+        def start(self):
+            self._target(*self._args)
+
+        def join(self, timeout=None):
+            pass
+
+    eng = create_engine("sqlite://", poolclass=StaticPool,
+                        connect_args={"check_same_thread": False})
+    M.AlertEvent.__table__.create(eng)
+    S = sessionmaker(bind=eng)
+    monkeypatch.setattr(asvc, "SessionLocal", S)
+    monkeypatch.setattr(asvc.threading, "Thread", _FakeThread)
+    calls = []
+    monkeypatch.setattr(asvc, "_send_one", lambda ch, t, b, c: calls.append(ch))
+
+    s = S()
+    ev = M.AlertEvent(ts=int(_time.time()), rule_id=None, level="info",
+                      target="snap", title="[测试] 快照通知", detail="detail-x")
+    s.add(ev)
+    s.commit()
+    s.refresh(ev)
+    ev_snap = asvc._ev_snap(ev)  # 生产时序：会话未关时取快照
+    asvc._notify(_rule(["wecom", "email"]), ev)  # 线程目标内联执行
+    s.expire_all()
+    s.close()  # 模拟请求结束、会话关闭
+    # 关闭后再用快照跑一遍：旧实现在此抛 DetachedInstanceError
+    # （SQLAlchemy 2.0 中 detached 实例连 PK 读取也抛错——即生产线程崩溃点）
+    assert asvc._do_notify(asvc._RuleSnap([]), ev_snap) is True
+    s2 = S()
+    try:
+        assert s2.get(M.AlertEvent, ev_snap[0]).notified is True
+    finally:
+        s2.close()
+    assert calls == ["wecom", "email", "wecom", "email"]
+
+
 # ---------------- 按通道测试 ----------------
 
 def test_test_channel_unknown(sdb):

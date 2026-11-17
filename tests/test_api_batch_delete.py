@@ -282,7 +282,7 @@ def test_bd_alert_rules(admin_tok):
         rids.append(r.json()["id"])
     body = _bd(admin_tok, "/api/admin/alerts/rules/batch-delete", rids).json()
     assert sorted(body["deleted"]) == sorted(rids) and body["failed"] == []
-    rows = requests.get(f"{BASE}/api/admin/alerts/rules", headers=H(admin_tok), timeout=15).json()
+    rows = requests.get(f"{BASE}/api/admin/alerts/rules", headers=H(admin_tok), timeout=15).json()["items"]
     assert all(x["id"] not in rids for x in rows)
 
 
