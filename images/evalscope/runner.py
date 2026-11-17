@@ -102,14 +102,15 @@ def run_benchmark(task):
     print(p.stdout[-4000:], flush=True)
     if p.stderr:
         print(p.stderr[-4000:], flush=True)
-    # 收集报告：0.x/1.x 均落 <work-dir>/<时间戳>/reports/<model>/<dataset>.json；
-    # 兜底兼容旧版按文件名含 "summary" 匹配
+    # 收集报告：0.x/1.x 均落 <work-dir>/<时间戳>/reports/<model>/<dataset>.json
+    # （reports 下还有 model 子目录，按路径段匹配）；兜底兼容旧版按文件名含 "summary"
     reports = {}
     for root, _, files in os.walk(out_dir):
+        segs = os.path.relpath(root, out_dir).split(os.sep)
         for f in files:
             if not f.endswith(".json"):
                 continue
-            if os.path.basename(root) != "reports" and "summary" not in f:
+            if "reports" not in segs and "summary" not in f:
                 continue
             try:
                 with open(os.path.join(root, f)) as fp:
