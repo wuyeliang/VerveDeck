@@ -225,6 +225,10 @@ services:
     restart: unless-stopped
     cap_add: [SYS_ADMIN]
     command: ["--collectors", "/etc/dcgm-exporter/custom/counters.csv"]
+    ports:
+      # 默认仅本机；集群模式 deploy.sh 首启把 SCRAPE_BIND_IP 写入 .env（内网 IP），
+      # 主节点 Prometheus 经内网 scrape 本节点 GPU 指标（不暴露公网，安全组勿开 9400）
+      - "${SCRAPE_BIND_IP:-127.0.0.1}:9400:9400"
     volumes:
       - ./monitoring/dcgm:/etc/dcgm-exporter/custom:ro
     networks: [fintune]
@@ -246,6 +250,9 @@ services:
       - --path.sysfs=/host/sys
       - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|tmp)($$|/)
     pid: host
+    ports:
+      # 同 dcgm-exporter：默认仅本机；集群模式主节点 Prometheus 经内网 scrape 本节点宿主指标
+      - "${SCRAPE_BIND_IP:-127.0.0.1}:9100:9100"
     volumes:
       - /:/host:ro
     networks: [fintune]

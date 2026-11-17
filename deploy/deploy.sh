@@ -42,6 +42,7 @@ if [ ! -f .env ]; then
     echo "API_DOCS_ENABLED=true"
     echo "GRAFANA_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana/"
     echo "GRAFANA_LIGHT_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana-light/"
+    echo "SCRAPE_BIND_IP=${VD_IP}"
   } > .env
   echo "    已生成 .env（强随机密钥，权限 600；admin 初始密码见 .env ADMIN_PASSWORD）"
 else
@@ -51,6 +52,12 @@ else
       echo "    ⚠ 警告: .env 中 ${kv%%=*} 仍是默认弱值，公网部署请立即修改！"
     fi
   done
+  # 补齐 exporter 内网监听 IP（集群模式：主节点 Prometheus 经内网 scrape 本节点 9400/9100）
+  if ! grep -q '^SCRAPE_BIND_IP=' .env; then
+    SB_IP=$(hostname -I 2>/dev/null | awk '{print $1}'); SB_IP=${SB_IP:-127.0.0.1}
+    echo "SCRAPE_BIND_IP=${SB_IP}" >> .env
+    echo "    已补齐 .env SCRAPE_BIND_IP=${SB_IP}（exporter 监听内网 IP，无内网网卡时为 127.0.0.1）"
+  fi
 fi
 mkdir -p /data/models/hub /data/datasets /data/jobs /data/evals /data/uploads \
          /data/gpu /data/argilla /data/postgres /data/redis /data/opensearch \
@@ -78,6 +85,14 @@ limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
 limit_conn conn_limit 50;     # 单 IP 并发连接上限
 ZONES
 fi
+
+# 端口暴露基线：平台指标底座是 Prometheus 栈（dcgm/node-exporter），PCP（pmcd 44321 /
+# pmlogger 4330）默认 0.0.0.0 监听且与平台无关 → 公网部署是信息泄露面，停掉并禁用
+# （无 PCP 安装时全部 no-op）
+systemctl disable --now pmcd.service pcp.service 2>/dev/null || true
+[ -x /etc/init.d/pcp ] && /etc/init.d/pcp stop 2>/dev/null || true
+pkill -x pmcd 2>/dev/null || true
+pkill -x pmlogger 2>/dev/null || true
 
 # 自签 TLS 证书（Web 强制 HTTPS 443；已有则跳过，生产可替换为正式证书）
 mkdir -p tls
@@ -134,6 +149,7 @@ echo "  常用命令:       docker compose -f deploy/docker-compose.yaml ps|logs
 echo ""
 echo "  ---- 公网部署安全加固清单（详见 docs/11-安全加固.md）----"
 echo "  [必做] 防火墙只放 80/443（22 建议限源 IP）: ufw allow from <办公IP> to any port 22; ufw allow 80,443; ufw enable"
+echo "  [必做] 核对端口暴露: ss -tlnp —— 仅 web 入口(80/443)与 22 对外，其余应为 127.0.0.1/内网（矩阵见 docs/11-安全加固.md §2）"
 echo "  [必做] 首登修改 admin 密码（强制）；系统管理→设置 开启登录 IP 白名单（办公出口 CIDR）"
 echo "  [建议] SSH 禁 root 直登+密码登录（PermitRootLogin no / PasswordAuthentication no），装 fail2ban"
 echo "  [建议] 自签证书替换为正式域名证书（deploy/tls/vervedeck.{crt,key}）"
