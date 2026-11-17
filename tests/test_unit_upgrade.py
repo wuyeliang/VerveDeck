@@ -183,7 +183,13 @@ def test_spec_kwargs_mapping(pin_dir):
     assert kw["working_dir"] == "/app"
     assert kw["network_mode"] == "fintune_default"
     assert kw["ipc_mode"] == "host"
-    assert kw["binds"] == ["/data:/data", "/repo:/repo:ro"]
+    # Binds 转 volumes dict（docker-py 7.x containers.run 不接受 binds 关键字，
+    # 曾致 mineru 蓝绿重建 run() unexpected keyword argument 'binds' 失败）
+    assert "binds" not in kw
+    assert kw["volumes"] == {
+        "/data": {"bind": "/data", "mode": "rw"},
+        "/repo": {"bind": "/repo", "mode": "ro"},
+    }
     assert kw["restart_policy"] == {"Name": "unless-stopped"}
     assert kw["cap_add"] == ["NET_ADMIN"]
     assert kw["security_opt"] == ["no-new-privileges:true"]
@@ -197,6 +203,47 @@ def test_spec_kwargs_mapping(pin_dir):
     assert dr.count == -1
     assert dr.driver == "nvidia"
     assert dr.capabilities == [["gpu"]]
+
+
+@pytest.mark.parametrize("binds,expected", [
+    (["/h1:/c1:rw", "/h2:/c2:ro"],
+     {"/h1": {"bind": "/c1", "mode": "rw"}, "/h2": {"bind": "/c2", "mode": "ro"}}),
+    (["/h1:/c1"], {"/h1": {"bind": "/c1", "mode": "rw"}}),   # 无 mode 段默认 rw
+    ([], None),
+    (None, None),
+    (["malformed"], None),                                     # 非法段跳过
+])
+def test_binds_to_volumes(binds, expected):
+    assert us._binds_to_volumes(binds) == expected
+
+
+def test_recreate_run_failure_cleans_temp_container(monkeypatch):
+    """run() 内部 start 阶段失败（如 GPU 驱动缺失致 prestart hook 报错）：
+    容器已 Created 但拿不到引用——必须按临时名清理，旧容器不受影响（真实泄漏场景复现）"""
+    old = _FakeCtr("fintune-mineru-1", "running")
+    old.attrs = _attrs()
+    temp = _FakeCtr("fintune-mineru-1-upgrade", "created")
+
+    class CtrColl:
+        def get(self, name):
+            if name == "fintune-mineru-1":
+                return old
+            if name == "fintune-mineru-1-upgrade":
+                return temp
+            raise Exception("no such container: " + name)
+
+        def run(self, **kwargs):
+            raise RuntimeError("500 Server Error for /containers/x/start（模拟 GPU 驱动缺失）")
+
+    class FakeD:
+        containers = CtrColl()
+
+    monkeypatch.setattr(tc, "docker_client", lambda: FakeD())
+    with pytest.raises(RuntimeError, match="500 Server Error"):
+        us.recreate_container("fintune-mineru-1", "fintune/mineru:1.0")
+    assert temp.removed is True     # 泄漏的临时容器被按名清理
+    assert old.removed is False     # 旧容器未动
+    assert old.renamed_to is None
 
 
 def test_spec_kwargs_minimal_and_device_no_driver(pin_dir):

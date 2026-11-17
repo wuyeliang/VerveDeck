@@ -239,7 +239,8 @@ def _spec_kwargs(attrs: dict, name: str, image: str) -> dict:
         stderr=True,
         network_mode=hc.get("NetworkMode") or "default",
         ipc_mode=hc.get("IpcMode") or None,
-        binds=hc.get("Binds") or None,
+        # Binds 转 volumes dict（docker-py 7.x 的 containers.run 不接受 binds 关键字）
+        volumes=_binds_to_volumes(hc.get("Binds")),
         restart_policy={"Name": (hc.get("RestartPolicy") or {}).get("Name") or "no"},
         cap_add=hc.get("CapAdd") or None,
         security_opt=hc.get("SecurityOpt") or None,
@@ -274,6 +275,20 @@ def _spec_kwargs(attrs: dict, name: str, image: str) -> dict:
     if dreqs:
         kwargs["device_requests"] = dreqs
     return kwargs
+
+
+def _binds_to_volumes(binds: list | None) -> dict | None:
+    """HostConfig.Binds（["/h:/c:rw", ...]）→ run() 的 volumes dict。
+    路径按前两段切（host:container[:mode]），Linux 路径不含冒号。"""
+    vols: dict = {}
+    for b in binds or []:
+        parts = b.split(":", 2)
+        if len(parts) < 2:
+            continue
+        host, cpath = parts[0], parts[1]
+        mode = parts[2] if len(parts) > 2 and parts[2] else "rw"
+        vols[host] = {"bind": cpath, "mode": mode}
+    return vols or None
 
 
 def _net_names(attrs: dict) -> list[str]:
@@ -322,7 +337,16 @@ def recreate_container(name: str, image: str) -> str:
     labels = kwargs.get("labels") or {}
     labels["fintune.upgrade-temp"] = "1"
     kwargs["labels"] = labels
-    new = d.containers.run(**kwargs)
+    try:
+        new = d.containers.run(**kwargs)
+    except Exception:
+        # run() 内部 start 阶段失败（如 GPU 驱动缺失致 prestart hook 报错）时，
+        # 容器已处于 Created 态且拿不到 new 引用——按临时名清理防泄漏
+        try:
+            d.containers.get(name + "-upgrade").remove(force=True)
+        except Exception:
+            pass
+        raise
     try:
         if nets:
             alias_list = _service_aliases(attrs, name)
