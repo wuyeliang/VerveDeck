@@ -48,8 +48,12 @@ def test_nodes_node1_fields(admin_tok):
         assert k in n, f"缺字段 {k}"
 
 
-def test_nodes_gpu_count_1(admin_tok):
-    assert _node1(admin_tok)["gpu_count"] == 1
+def test_nodes_gpu_count_consistent(admin_tok):
+    """gpu_count 来自 gpu-agent 心跳实测，卡数随环境而变（100.100.33.86 单卡 /
+    123.157.144.6 双卡）——断言 ≥1 且与明细列表一致（心跳 reconcile 口径，#75）"""
+    n = _node1(admin_tok)
+    assert n["gpu_count"] >= 1
+    assert len(n["gpus"]) == n["gpu_count"]
 
 
 def test_nodes_online(admin_tok):
@@ -201,7 +205,7 @@ def test_summary_counts_positive(admin_tok):
 def test_summary_gpu(admin_tok):
     s = requests.get(f"{BASE}/api/dashboard/summary", headers=H(admin_tok),
                      timeout=15).json()
-    assert s["gpu"]["count"] == 1
+    assert s["gpu"]["count"] >= 1   # 卡数随环境而变（单卡/双卡服务器都合法）
     assert s["gpu"]["node"] == "node-1"
 
 
