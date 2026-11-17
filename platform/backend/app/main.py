@@ -65,6 +65,15 @@ def _migrate_columns():
                 ("description", "TEXT NOT NULL DEFAULT ''"),
                 # 推理高级参数（#96）：JSON 兜底，留空=引擎默认，存量部署行为不变
                 ("advanced", f"{json_type} NOT NULL DEFAULT '{{}}'"),
+                # 部署拓扑：PD 分离 / 多级多卡 / RDMA（#103）；存量部署默认 off=协同，行为不变
+                ("pd_mode", "VARCHAR(16) NOT NULL DEFAULT 'off'"),
+                ("prefill_replicas", "INTEGER NOT NULL DEFAULT 1"),
+                ("decode_replicas", "INTEGER NOT NULL DEFAULT 1"),
+                ("prefill_tp", "INTEGER NOT NULL DEFAULT 1"),
+                ("decode_tp", "INTEGER NOT NULL DEFAULT 1"),
+                ("kv_connector", "VARCHAR(32) NOT NULL DEFAULT 'nixl'"),
+                ("node_count", "INTEGER NOT NULL DEFAULT 1"),
+                ("nccl_env", f"{json_type} NOT NULL DEFAULT '{{}}'"),
             ],
             "users": [("must_change_password", "BOOLEAN NOT NULL DEFAULT 'false'")],
             "model_assets": [

@@ -46,7 +46,7 @@ def _gpu_in_use(db) -> int:
     for j in db.query(TrainingJob).filter(TrainingJob.status == "running").all():
         used += training_service.job_gpu_need(j)
     for d in db.query(Deployment).filter(Deployment.status.in_(["running", "creating"])).all():
-        used += (d.tensor_parallel or 1) * max(d.replicas, 1)
+        used += inference_service.deployment_gpu_need(d)
     for q in db.query(QuantTask).filter(QuantTask.status == "running").all():
         used += q.gpu_count or 1
     return used

@@ -101,9 +101,16 @@ def _brief(d: Deployment, db: Session) -> dict:
         "model_type": asset.type if asset else "",
         "engine": d.engine, "quantization": d.quantization,
         "tensor_parallel": d.tensor_parallel, "max_model_len": d.max_model_len,
-        "gpu_mem_util": d.gpu_mem_util, "enable_lora": d.enable_lora,
+        "gpu_mem_util": d.gpu_mem_util,         "enable_lora": d.enable_lora,
         "lora_adapters": d.lora_adapters or [], "replicas": d.replicas,
         "advanced": d.advanced or {},
+        # 部署拓扑（#103：PD 分离 / 多级多卡 / RDMA）
+        "pd_mode": d.pd_mode or "off",
+        "prefill_replicas": d.prefill_replicas or 1, "decode_replicas": d.decode_replicas or 1,
+        "prefill_tp": d.prefill_tp or 1, "decode_tp": d.decode_tp or 1,
+        "kv_connector": d.kv_connector or "nixl",
+        "node_count": d.node_count or 1, "nccl_env": d.nccl_env or {},
+        "gpu_need": inf.deployment_gpu_need(d),
         "served_model_name": _served_name(d),
         "endpoint": d.endpoint, "status": d.status, "error": d.error,
         "description": d.description or "",
@@ -128,6 +135,15 @@ class DeployReq(BaseModel):
     replicas: int = 1
     description: str = ""
     advanced: dict = {}  # 引擎高级参数（留空=引擎默认），见 Deployment.advanced
+    # ---------- 部署拓扑：PD 分离 / 多级多卡 / RDMA（#103） ----------
+    pd_mode: str = "off"  # off=协同 / pd=Prefill-Decode 分离
+    prefill_replicas: int = 1  # PD：prefill 实例数
+    decode_replicas: int = 1  # PD：decode 实例数
+    prefill_tp: int = 1  # PD：每 prefill 实例卡数
+    decode_tp: int = 1  # PD：每 decode 实例卡数
+    kv_connector: str = "nixl"  # PD KV 传输：nixl / mooncake
+    node_count: int = 1  # 实例池跨逻辑节点数（放置分组；单实例单机闭环）
+    nccl_env: dict = {}  # NCCL/UCX/NIXL 环境变量覆盖
 
 
 @router.post("/api/inference/deployments")
@@ -140,6 +156,24 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
     asset = db.get(ModelAsset, req.model_asset_id)
     if not asset or asset.status != "ready":
         raise HTTPException(400, "模型资产不存在或未就绪")
+    # 拓扑校验（#103：PD 分离 / 多级多卡）
+    pd_mode = req.pd_mode if req.pd_mode in ("off", "pd") else "off"
+    if pd_mode == "pd" and req.kv_connector not in ("nixl", "mooncake"):
+        raise HTTPException(400, "kv_connector 需为 nixl/mooncake")
+    if pd_mode == "pd":
+        if min(req.prefill_replicas, req.decode_replicas, req.prefill_tp, req.decode_tp) < 1:
+            raise HTTPException(400, "PD 分离：各角色实例数/卡数均需 ≥1")
+        need = max(1, req.prefill_replicas) * max(1, req.prefill_tp) \
+            + max(1, req.decode_replicas) * max(1, req.decode_tp)
+    else:
+        need = max(1, req.tensor_parallel) * max(1, req.replicas)
+    # GPU 准入预检（fail-fast；容器创建时 taskcontainer 再做物理空闲卡分配兜底）
+    from ..models import GpuNode
+    from .. import scheduler
+    node = db.query(GpuNode).filter_by(name=settings.node_name).first()
+    if node and need > (node.gpu_count or 0) - scheduler._gpu_in_use(db):
+        raise HTTPException(400, f"GPU 不足：需要 {need} 卡，可用 "
+                                 f"{max(0, (node.gpu_count or 0) - scheduler._gpu_in_use(db))}")
     d = Deployment(
         project_id=req.project_id, name=req.name, model_asset_id=asset.id,
         engine=req.engine, quantization=req.quantization, tensor_parallel=req.tensor_parallel,
@@ -147,6 +181,13 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         enable_lora=req.enable_lora, lora_adapters=req.lora_adapters,
         replicas=max(1, req.replicas), description=req.description,
         advanced=req.advanced or {}, status="creating", created_by=user.id,
+        # 部署拓扑（PD 分离 / 多级多卡 / RDMA）
+        pd_mode=pd_mode,
+        prefill_replicas=max(1, req.prefill_replicas), decode_replicas=max(1, req.decode_replicas),
+        prefill_tp=max(1, req.prefill_tp), decode_tp=max(1, req.decode_tp),
+        kv_connector=req.kv_connector if req.kv_connector in ("nixl", "mooncake") else "nixl",
+        node_count=max(1, req.node_count),
+        nccl_env={str(k): str(v) for k, v in (req.nccl_env or {}).items()},
     )
     db.add(d)
     db.commit()
@@ -294,11 +335,13 @@ def batch_delete_deploys(req: BatchDeleteReq, db=Depends(get_db), user=Depends(g
 
 @router.post("/api/inference/deployments/{did}/scale")
 def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_current_user)):
-    """弹性扩缩容：调整副本数（需空闲 GPU）"""
+    """弹性扩缩容：调整副本数（需空闲 GPU）。PD 部署请走 /scale-role（按 P/D 角色）。"""
     d = db.get(Deployment, did)
     if not d:
         raise HTTPException(404, "部署不存在")
     _check(db, d.project_id, user)
+    if (d.pd_mode or "off") == "pd":
+        raise HTTPException(400, "PD 部署请用角色级扩缩容（/scale-role，role=prefill|decode）")
     from ..models import GpuNode, TrainingJob
     from .. import scheduler
     node = db.query(GpuNode).filter_by(name=settings.node_name).first()
@@ -339,14 +382,85 @@ def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curre
     return _brief(d, db)
 
 
+def _pd_rebuild_ids(d: Deployment) -> list:
+    """PD container_ids 归整（[p0..pA, d0..dB, (rt 仅 SGLang)]；按当前容器实况重建）"""
+    ids = []
+    for i in range(max(1, d.prefill_replicas or 1)):
+        ids.append(inf.pd_instance_name(d, "prefill", i))
+    for j in range(max(1, d.decode_replicas or 1)):
+        ids.append(inf.pd_instance_name(d, "decode", j))
+    if d.engine == "sglang":
+        ids.append(inf.pd_router_name(d))
+    return ids
+
+
+@router.post("/api/inference/deployments/{did}/scale-role")
+def scale_role_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_current_user)):
+    """PD 部署角色级扩缩容：{role: prefill|decode, replicas: N}（需空闲 GPU）"""
+    d = db.get(Deployment, did)
+    if not d:
+        raise HTTPException(404, "部署不存在")
+    _check(db, d.project_id, user)
+    if (d.pd_mode or "off") != "pd":
+        raise HTTPException(400, "该部署非 PD 模式，请用 /scale")
+    role = str(req.get("role", ""))
+    if role not in ("prefill", "decode"):
+        raise HTTPException(400, "role 需为 prefill/decode")
+    cur = d.prefill_replicas if role == "prefill" else d.decode_replicas
+    want = max(1, int(req.get("replicas", cur)))
+    if want == cur:
+        return _brief(d, db)
+    from ..models import GpuNode
+    from .. import scheduler
+    node = db.query(GpuNode).filter_by(name=settings.node_name).first()
+    used = scheduler._gpu_in_use(db)
+    have = inf.deployment_gpu_need(d)
+    need = have + (want - cur) * (d.prefill_tp if role == "prefill" else d.decode_tp)
+    if node and need > (node.gpu_count or 0) - used + have:
+        raise HTTPException(400, f"GPU 不足：需要 {need} 卡，可用 {max(0, (node.gpu_count or 0) - used + have)}")
+    asset = db.get(ModelAsset, d.model_asset_id)
+    path = _resolve_model_path(asset, db)
+    if want > cur:
+        # 扩容：先建新实例（docker-alive），SGLang router 需感知新 prefill → 重建
+        for i in range(cur, want):
+            inf.start_pd_instance(d, role, i, path)
+        if d.engine == "sglang":
+            inf.start_pd_router(d, path)
+    # 落库（先登记新表再删旧实例，避免 reconcile 竞态——与协同缩容同口径）
+    if role == "prefill":
+        d.prefill_replicas = want
+    else:
+        d.decode_replicas = want
+    d.container_ids = _pd_rebuild_ids(d)
+    db.commit()
+    if want < cur:
+        for i in range(cur - 1, want - 1, -1):
+            tc.remove_container(inf.pd_instance_name(d, role, i), force=True)
+    # 刷新 Prometheus target（全部引擎实例）
+    tgs = [f"{tc.container_ip(c)}:8000" for c in d.container_ids if tc.container_ip(c)]
+    if tgs:
+        prom_service.write_infer_sd(d.id, d.engine, inf.pd_instance_name(d, "prefill", 0), tgs)
+    # vLLM PD 入口=首个 D 实例：D 池变化时同步 endpoint
+    if d.engine == "vllm" and role == "decode":
+        d0 = tc.container_ip(d.container_ids[max(1, d.prefill_replicas or 1)]) \
+            if len(d.container_ids) > max(1, d.prefill_replicas or 1) else ""
+        if d0:
+            d.endpoint = f"{d0}:8000"
+            db.commit()
+    return _brief(d, db)
+
+
 @router.get("/api/inference/deployments/{did}/logs")
-def deploy_logs(did: int, tail: int = 200, replica: int = 0, db=Depends(get_db), user=Depends(get_current_user)):
+def deploy_logs(did: int, tail: int = 200, replica: int = 0, role: str = "r",
+                db=Depends(get_db), user=Depends(get_current_user)):
+    """部署日志。role：r=协同副本 / p=PD prefill / d=PD decode / rt=SGLang router"""
     d = db.get(Deployment, did)
     if not d:
         raise HTTPException(404, "部署不存在")
     _check(db, d.project_id, user)
     import os
-    p = os.path.join(settings.data_dir, "infer", str(did), f"run-r{replica}.log")
+    tag = role if role in ("p", "d", "rt") else "r"
+    p = os.path.join(settings.data_dir, "infer", str(did), f"run-{tag}{replica}.log")
     if not os.path.exists(p):
         return {"logs": ""}
     with open(p, "rb") as f:
@@ -502,6 +616,12 @@ async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends
     except Exception:
         pass
 
+    # PD 分离（vLLM）：两阶段路由内置 backend（P 算 prefill 取 KV 参数 → D 带参生成）；
+    # 非生成类子路径（/models 等）与 SGLang PD（入口=sglang_router 容器）走下方单目标转发
+    if (dep.pd_mode or "off") == "pd" and dep.engine == "vllm" \
+            and (rest.endswith("chat/completions") or rest.endswith("completions")):
+        return await _pd_two_stage(dep, rest, payload, request, db, project_id, deploy_name)
+
     # 对外路径 /v1/<deploy_name>/<rest>，vLLM/SGLang 的 OpenAI 兼容路由统一在 /v1/ 下，转发需补前缀
     target = f"http://{dep.endpoint}/v1/{rest}"
     fwd_headers = {k: v for k, v in request.headers.items()
@@ -513,6 +633,15 @@ async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends
     except Exception as e:
         await client.aclose()
         raise HTTPException(502, f"代理转发失败: {e}")
+    return await _finish_forward(resp, client, db, project_id, deploy_name, rest, payload)
+
+
+# ---------- 转发收尾（协同单目标 与 PD 二阶段共用） ----------
+
+async def _finish_forward(resp, client, db, project_id: int, deploy_name: str,
+                          rest: str, payload: dict):
+    """引擎响应 → 客户端响应：非流式读整段+输出护栏；流式 SSE 透传+后置护栏"""
+    import json as _json
 
     def _guard_log(text: str):
         hit = _check_guard(db, project_id, text, "output")
@@ -570,3 +699,93 @@ async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends
 
     return StreamingResponse(stream_gen(), status_code=resp.status_code,
                              media_type=resp.headers.get("content-type", "application/json"))
+
+
+# ---------- vLLM PD 两阶段路由（官方 disaggregated prefill 协议） ----------
+
+_pd_rr_counter: dict[tuple, int] = {}
+_pd_rr_lock = threading.Lock()
+
+
+def _pd_next(dep_id: int, role: str, n: int) -> int:
+    """PD P/D 池轮询选择（部署×角色独立计数）"""
+    with _pd_rr_lock:
+        key = (dep_id, role)
+        i = _pd_rr_counter.get(key, 0) % max(1, n)
+        _pd_rr_counter[key] = _pd_rr_counter.get(key, 0) + 1
+    return i
+
+
+async def _pd_two_stage(dep: Deployment, rest: str, payload: dict,
+                        request: Request, db, project_id: int, deploy_name: str):
+    """vLLM PD 两阶段路由（vLLM ≥0.30 官方 toy_proxy 协议，v0.33.0 镜像验证）：
+
+    1. P 实例（轮询）：max_tokens=1、stream=false、
+       kv_transfer_params={do_remote_decode:true,...}；P 算完 prefill 持有 KV 块，
+       响应体返回指向 KV 的 kv_transfer_params（min_tokens 类参数 P 不支持，暂移后补回）
+    2. D 实例（轮询）：原始请求 + P 返回的 kv_transfer_params 转发；
+       D 经 NIXL/Mooncake（RDMA 或 TCP）拉取 KV 后开始生成
+
+    鉴权/护栏/模型名归一与协同模式一致（复用 openai_proxy 前置逻辑）。
+    """
+    import json as _json
+    p_ips, d_ips = inf.pd_instance_ips(dep)
+    p_ips = [ip for ip in p_ips if ip]
+    d_ips = [ip for ip in d_ips if ip]
+    if not p_ips or not d_ips:
+        raise HTTPException(503, "PD 实例未就绪（P/D 实例 IP 不可解析）")
+    # vLLM/SGLang 的 OpenAI 兼容路由在 /v1/ 下（对外路径 /v1/<部署名>/<rest>，转发引擎需补 /v1 前缀）
+    api = "/v1/" + rest
+    fwd_headers = {k: v for k, v in request.headers.items()
+                   if k.lower() in ("content-type", "authorization", "x-api-key")}
+    client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=10))
+    # ---- 阶段一：prefill（max_tokens=1 只算 prefill 不生成）----
+    p_body = dict(payload) if isinstance(payload, dict) else {}
+    p_body["stream"] = False
+    p_body["max_tokens"] = 1
+    if "max_completion_tokens" in p_body:
+        p_body["max_completion_tokens"] = 1
+    p_body.pop("stream_options", None)
+    min_tokens = p_body.pop("min_tokens", None)
+    min_completion_tokens = p_body.pop("min_completion_tokens", None)
+    p_body["kv_transfer_params"] = {
+        "do_remote_decode": True, "do_remote_prefill": False,
+        "remote_engine_id": None, "remote_block_ids": None,
+        "remote_host": None, "remote_port": None,
+    }
+    kvt: dict = {}
+    p_err = ""
+    for _ in range(len(p_ips)):
+        p_ip = p_ips[_pd_next(dep.id, "p", len(p_ips))]
+        try:
+            r = await client.post(f"http://{p_ip}:8000{api}",
+                                  content=_json.dumps(p_body).encode(), headers=fwd_headers)
+            if r.status_code >= 400:
+                p_err = f"prefill {p_ip} HTTP {r.status_code}: {r.text[:300]}"
+                continue
+            kvt = (r.json() or {}).get("kv_transfer_params") or {}
+            if kvt:
+                p_err = ""
+                break
+            p_err = f"prefill {p_ip} 未返回 kv_transfer_params"
+        except Exception as e:
+            p_err = f"prefill {p_ip} 请求失败: {e}"
+    if p_err:
+        await client.aclose()
+        raise HTTPException(502, f"PD 分离 prefill 阶段失败: {p_err}")
+    # ---- 阶段二：decode（原始请求 + KV 参数，D 拉取 KV 后生成）----
+    d_body = dict(payload) if isinstance(payload, dict) else {}
+    if min_tokens is not None:
+        d_body["min_tokens"] = min_tokens
+    if min_completion_tokens is not None:
+        d_body["min_completion_tokens"] = min_completion_tokens
+    d_body["kv_transfer_params"] = kvt
+    d_ip = d_ips[_pd_next(dep.id, "d", len(d_ips))]
+    try:
+        areq = client.build_request("POST", f"http://{d_ip}:8000{api}",
+                                    content=_json.dumps(d_body).encode(), headers=fwd_headers)
+        resp = await client.send(areq, stream=True)
+    except Exception as e:
+        await client.aclose()
+        raise HTTPException(502, f"PD 分离 decode 转发失败: {e}")
+    return await _finish_forward(resp, client, db, project_id, deploy_name, rest, payload)

@@ -25,15 +25,17 @@ META_FILE = os.path.join(settings.data_dir, "gpu", "agent.meta")
 
 
 def read_meta() -> dict:
-    """agent.meta：`driver=` / `cuda=` 键值行（gpu-agent 启动时写一次）；读不到按空值兜底"""
-    out = {"driver": "", "cuda": ""}
+    """agent.meta：`driver=` / `cuda=` / `ib_devices=` 键值行（gpu-agent 启动时写一次）；
+    读不到按空值兜底。ib_devices：宿主 IB 设备名逗号分隔（uverbs0,uverbs1,rdma_cm），
+    宿主无 RDMA 时为空（backend 据此回退探测并展示 RDMA 状态）"""
+    out = {"driver": "", "cuda": "", "ib_devices": ""}
     try:
         with open(META_FILE) as f:
             for line in f:
                 line = line.strip()
                 if "=" in line:
                     k, v = line.split("=", 1)
-                    if k.strip() in ("driver", "cuda"):
+                    if k.strip() in ("driver", "cuda", "ib_devices"):
                         out[k.strip()] = v.strip()
     except (FileNotFoundError, OSError):
         pass
@@ -99,6 +101,7 @@ def tick():
                 "names": names if names else cur.get("names", []),
                 "driver": env["driver"] or cur.get("driver", ""),
                 "cuda": env["cuda"] or cur.get("cuda", ""),
+                "ib_devices": env["ib_devices"] or cur.get("ib_devices", ""),
             }
             if new_meta != cur:
                 node.meta = new_meta

@@ -43,24 +43,166 @@ def _volumes(base: dict):
 
 def _rdma_devices() -> list[dict]:
     """宿主 IB/RDMA 字符设备（uverbsN + rdma_cm）；无 RDMA 网卡时返回 []。
-    注入任务容器后 NCCL 可自动发现 HCA 走 IB 通信（多机训练）。"""
+    注入任务容器后 NCCL 可自动发现 HCA 走 IB 通信（多机训练 / PD 分离 KV 传输）。
+
+    backend 自身是容器（见不到宿主 /dev）：优先读自己挂载的 /dev/infiniband
+    （compose 已 ro 挂载），否则回退 gpu-agent 从宿主采集并写入节点 meta 的
+    ib_devices 列表（按名字构造宿主路径）。两路都空 = 宿主无 RDMA。"""
     import glob
+    names = sorted(os.path.basename(p) for p in glob.glob("/dev/infiniband/uverbs*"))
+    if not names:
+        names = _rdma_names_from_meta()
     out = []
-    for d in sorted(glob.glob("/dev/infiniband/uverbs*")):
-        out.append({"PathOnHost": d, "PathInContainer": d, "CgroupPermissions": "rwm"})
-    if os.path.exists("/dev/infiniband/rdma_cm"):
+    for n in names:
+        host = f"/dev/infiniband/{n}"
+        out.append({"PathOnHost": host, "PathInContainer": host, "CgroupPermissions": "rwm"})
+    if os.path.exists("/dev/infiniband/rdma_cm") or "rdma_cm" in _rdma_names_from_meta():
         out.append({"PathOnHost": "/dev/infiniband/rdma_cm",
                     "PathInContainer": "/dev/infiniband/rdma_cm", "CgroupPermissions": "rwm"})
     return out
 
 
+def _rdma_names_from_meta() -> list[str]:
+    """本节点 meta 登记的 IB 设备名（gpu-agent 在宿主侧采集；逗号分隔）"""
+    try:
+        from ..models import GpuNode
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            n = db.query(GpuNode).filter_by(name=settings.node_name).first()
+            raw = (n.meta or {}).get("ib_devices", "") if n else ""
+            return [x.strip() for x in str(raw).split(",") if x.strip()]
+        finally:
+            db.close()
+    except Exception:
+        return []
+
+
+def rdma_info() -> dict:
+    """宿主 RDMA/IB 状态（UI 展示 + 部署表单提示）：{present, devices:[uverbs0,...]}"""
+    import glob
+    devs = sorted(os.path.basename(p) for p in glob.glob("/dev/infiniband/uverbs*"))
+    if not devs:
+        devs = [d for d in _rdma_names_from_meta() if d.startswith("uverbs")]
+    return {"present": bool(devs), "devices": devs}
+
+
+# ---------- GPU 显式分配（多实例/多副本防撞卡） ----------
+# nvidia-container-toolkit 的 `--gpus N` 按索引取前 N 张卡、不避让已占用卡：
+# 两个 TP1 容器会同拿 GPU0 → OOM。平台在创建容器前显式分配物理卡
+# （DeviceIDs + 容器标签预留），引擎看到的仍是 0..N-1 重编号。
+
+class GpuNotEnough(Exception):
+    """空闲 GPU 不足（请求数 > 宿主空闲卡 − 平台已预留）"""
+
+
+_gpu_alloc_lock = threading.Lock()
+_GPU_BUSY_MEM_MIB = 2048  # 显存占用超此值视为被外部进程占用（任务容器未起引擎前仅 ~1MiB）
+
+
+def _host_gpu_mem_used() -> dict[int, float] | None:
+    """各卡当前显存占用 {index: MiB}（DCGM → Prometheus）；不可用返回 None"""
+    try:
+        from . import prom_service
+        return prom_service.gpu_mem_used_map()
+    except Exception:
+        return None
+
+
+def _fintune_reserved_gpus() -> set[int]:
+    """平台任务容器预留的卡（容器标签 fintune.gpus）。
+
+    计入规则（兼顾"防并发双占"与"防残留锁卡"）：
+      - running 容器：一定在占卡，计入。
+      - created 容器：assign→create→start 的窗口内容器还是 created（几秒内
+        转 running）。计入**最近创建（<120s）**的 created 容器以堵住并发双占；
+        更久的 created = 失败/中止部署的残留（从未真正启动，不占显存），不计入——
+        否则残留容器会永久锁死 GPU（实测：失败部署留下 2 个 created 容器占满
+        2 卡，后续部署全部报"空闲 GPU 不足"）。
+      - exited/stopped/paused：已不占卡，不计入。"""
+    try:
+        client = docker_client()
+        now = time.time()
+        reserved: set[int] = set()
+        for ctr in client.containers.list(all=True, filters={"label": "fintune.owner=backend"}):
+            status = (getattr(ctr, "status", "") or "").lower()
+            fresh = False
+            if status == "running":
+                fresh = True
+            elif status == "created":
+                created_ts = None
+                lab = (ctr.labels or {}).get("fintune.created", "")
+                if str(lab).strip().isdigit():
+                    created_ts = float(lab)
+                if created_ts is None:
+                    try:
+                        created_ts = ctr.attrs["Created"][:19].replace("T", " ")
+                        created_ts = time.mktime(time.strptime(created_ts, "%Y-%m-%d %H:%M:%S"))
+                    except Exception:
+                        created_ts = None
+                fresh = created_ts is not None and (now - created_ts) < 120
+            else:
+                fresh = False
+            if not fresh:
+                continue
+            for part in str((ctr.labels or {}).get("fintune.gpus", "")).split(","):
+                if part.strip().isdigit():
+                    reserved.add(int(part.strip()))
+        return reserved
+    except Exception:
+        return set()
+
+
+def _local_gpu_count() -> int:
+    """本节点登记卡数（GpuNode 表）；未知返回 0"""
+    try:
+        from ..models import GpuNode
+        from ..database import SessionLocal
+        db = SessionLocal()
+        try:
+            n = db.query(GpuNode).filter_by(name=settings.node_name).first()
+            return int(n.gpu_count or 0) if n else 0
+        finally:
+            db.close()
+    except Exception:
+        return 0
+
+
+def assign_gpus(n: int) -> list[int]:
+    """分配 n 张空闲 GPU 卡，返回物理索引（升序）。
+
+    空闲 = 宿主显存低于阈值（无外部进程）且未被平台容器预留。全局锁串行化
+    「查询-标记-创建」窗口（start_task 紧随 create，毫秒级），防并发双占。
+    枚举不到卡（DCGM 未就绪/节点未登记）时退回旧行为（按索引取前 N 张），
+    由引擎在真实撞卡时报错。"""
+    with _gpu_alloc_lock:
+        mem = _host_gpu_mem_used()
+        reserved = _fintune_reserved_gpus()
+        total = max(_local_gpu_count(), len(mem) if mem else 0)
+        if total == 0:
+            return list(range(n))
+        free = [i for i in range(total)
+                if i not in reserved and (mem is None or mem.get(i, 0) < _GPU_BUSY_MEM_MIB)]
+        if len(free) < n:
+            ext = [i for i in range(total) if i not in reserved
+                   and mem is not None and mem.get(i, 0) >= _GPU_BUSY_MEM_MIB]
+            raise GpuNotEnough(
+                f"空闲 GPU 不足：需 {n} 张，可用 {len(free)} 张"
+                f"（宿主共 {total} 卡：外部占用 {len(ext)}、平台预留 {len(reserved & set(range(total)))}）")
+        return free[:n]
+
+
 def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = None,
                      mem_gb: float | None = None, env: dict | None = None,
-                     volumes: dict | None = None, labels: dict | None = None) -> str:
+                     volumes: dict | None = None, labels: dict | None = None,
+                     gpu_ids: list[int] | None = None) -> str:
     """创建 pause 占位容器（主进程 sleep infinity），返回容器 id。
 
     镜像懒加载：本地缺失时自动后台拉取/构建并抛 ImageNotReady，
     由调度器/启动线程轮询 ensure_image 就绪后再重试（部署时不预下载）。
+
+    gpu_ids 为 None 且 gpus>0 时自动分配空闲物理卡（assign_gpus），
+    并以 DeviceIDs 显式绑定 + 标签 fintune.gpus 预留（容器删除即释放）。
     """
     from . import image_ops
     st = image_ops.ensure_image(image)
@@ -68,6 +210,14 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
         extra = f": {image_ops.image_status(image).get('error', '')}" if st == "failed" else ""
         raise image_ops.ImageNotReady(f"镜像 {image} 未就绪（{st}）{extra}")
     client = docker_client()
+    # 显式 GPU 分配：默认自动挑空闲物理卡（防多容器撞同一张卡）；调用方可指定
+    if gpus and gpus > 0:
+        if gpu_ids is None:
+            gpu_ids = assign_gpus(gpus)
+        gpu_ids = [int(i) for i in (gpu_ids or [])][:gpus] or list(range(gpus))
+    labels = {**(labels or {}), "fintune.owner": "backend", "fintune.created": str(int(time.time()))}
+    if gpu_ids:
+        labels["fintune.gpus"] = ",".join(str(i) for i in gpu_ids)
     kwargs = dict(
         image=image,
         name=name,
@@ -85,23 +235,27 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
             **(env or {}),
         },
         volumes=_volumes(volumes),
-        labels={**(labels or {}), "fintune.owner": "backend", "fintune.created": str(int(time.time()))},
+        labels=labels,
         stdout=False, stderr=False,
     )
     if gpus and gpus > 0:
-        # docker SDK 7.x: GPUDevice 已移除，用 DeviceRequest + nvidia-container-toolkit 钩子
+        # docker SDK 7.x: GPUDevice 已移除，用 DeviceRequest + nvidia-container-toolkit 钩子。
+        # 显式 device_ids 绑定物理卡（容器内引擎看到 0..N-1 重编号）。
+        # 注意：Docker daemon 禁止 DeviceRequest 同时设 Count 与 DeviceIDs（500:
+        # "cannot set both Count and DeviceIDs"），显式绑卡时只传 device_ids、count 留空。
         kwargs["device_requests"] = [
-            docker.types.DeviceRequest(count=gpus, capabilities=[["gpu"]])
+            docker.types.DeviceRequest(device_ids=[str(i) for i in gpu_ids],
+                                       capabilities=[["gpu"]])
         ]
     rdma = _rdma_devices()
     if rdma:
         # RDMA/IB：注入 HCA 字符设备；ipc=host 供 NCCL 共享内存；
-        # 宿主 libibverbs 只读挂入（引擎镜像默认无 IB 用户态库，缺则 NCCL 发现不了 HCA）
+        # 宿主 libibverbs 只读挂入（引擎镜像默认无 IB 用户态库，缺则 NCCL 发现不了 HCA；
+        # backend 容器见不到宿主 /usr/lib，故按候选路径直接挂——仅宿主真有 IB 才进此分支）
         kwargs["devices"] = rdma
         kwargs["ipc_mode"] = "host"
         for host_lib in ("/usr/lib/x86_64-linux-gnu/libibverbs", "/usr/lib64/libibverbs", "/etc/libibverbs"):
-            if os.path.isdir(host_lib):
-                kwargs["volumes"][host_lib] = {"bind": host_lib, "mode": "ro"}
+            kwargs["volumes"][host_lib] = {"bind": host_lib, "mode": "ro"}
         kwargs["environment"]["NCCL_IB_ENABLE"] = "1"
         log.info("container %s: RDMA devices injected (%s)", name, ", ".join(d["PathOnHost"] for d in rdma))
     if cpus:
@@ -126,8 +280,11 @@ def exec_run(name_or_id: str, cmd, timeout: int = 300) -> tuple[int, str]:
     return info.get("ExitCode", 0), text
 
 
-def start_task(task_key: str, name_or_id: str, cmd, log_path: str) -> None:
-    """在占位容器内后台 exec 拉起真实任务进程，stdout 追加落盘，完成后记录退出码。"""
+def start_task(task_key: str, name_or_id: str, cmd, log_path: str, env: dict | None = None) -> None:
+    """在占位容器内后台 exec 拉起真实任务进程，stdout 追加落盘，完成后记录退出码。
+
+    env：exec 级环境变量（区别于 create_container 的容器级 env）；
+    用于依赖容器创建后才知的值（如 NIXL side-channel 需本容器 IP）。"""
     client = docker_client()
     with _lock:
         if task_key in RUNNERS and not RUNNERS[task_key].get("done", False):
@@ -137,7 +294,8 @@ def start_task(task_key: str, name_or_id: str, cmd, log_path: str) -> None:
     def _run():
         code = -1
         try:
-            exec_id = client.api.exec_create(name_or_id, cmd, stdout=True, stderr=True, tty=False)
+            exec_id = client.api.exec_create(name_or_id, cmd, stdout=True, stderr=True,
+                                             tty=False, environment=env or None)
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             with open(log_path, "ab") as lf:
                 stream = client.api.exec_start(exec_id, detach=False, stream=True)

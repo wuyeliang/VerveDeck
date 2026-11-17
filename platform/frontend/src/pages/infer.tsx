@@ -31,24 +31,39 @@ export default function Inference() {
   const [loraModels, setLoraModels] = useState<any[]>([])
   const [detail, setDetail] = useState<any>(null)
   const [logs, setLogs] = useState('')
+  const [logRole, setLogRole] = useState<'r' | 'p' | 'd' | 'rt'>('r')
+  const [logReplica, setLogReplica] = useState(0)
   const [chat, setChat] = useState<any[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [addAda, setAddAda] = useState<any>(null)
   const [mon, setMon] = useState<any>(null)
   const [nodeName, setNodeName] = useState('')
+  const [rdma, setRdma] = useState<any>({ present: false, devices: [] as string[] })
   const tp = Form.useWatch('tensor_parallel', form) || 1
   const rep = Form.useWatch('replicas', form) || 1
   const eng = Form.useWatch('engine', form) || 'vllm'
+  const pdMode = Form.useWatch('pd_mode', form) || 'off'
+  const prefillReplicas = Form.useWatch('prefill_replicas', form) || 1
+  const prefillTp = Form.useWatch('prefill_tp', form) || 1
+  const decodeReplicas = Form.useWatch('decode_replicas', form) || 1
+  const decodeTp = Form.useWatch('decode_tp', form) || 1
+  // GPU 需求预估：协同 = TP×副本；PD = P实例×P_TP + D实例×D_TP
+  const gpuNeed = pdMode === 'pd' ? prefillReplicas * prefillTp + decodeReplicas * decodeTp : tp * rep
 
   const load = useCallback(() => {
     api.get('/api/inference/deployments', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
   }, [projectId])
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [load])
   const batchDel = useBatchDelete('/api/inference/deployments/batch-delete', () => { setSel([]); load() })
-  // 节点名（当前单节点集群，用于列表「节点」列与部署表单 placement 展示）
+  // 节点名 + RDMA 状态（当前单节点集群，用于列表「节点」列 / 表单 placement 展示 / RDMA 徽标）
   useEffect(() => {
-    api.get('/api/cluster/nodes').then((r) => setNodeName(r.data?.[0]?.name || '')).catch(() => {})
+    api.get('/api/cluster/nodes').then((r) => {
+      const n = r.data?.[0]
+      if (!n) return
+      setNodeName(n.name || '')
+      setRdma(n.rdma || { present: false, devices: [] })
+    }).catch(() => {})
   }, [])
 
   const copy = (text: string) => {
@@ -64,12 +79,16 @@ export default function Inference() {
   }
   useEffect(() => {
     if (!detail) return
+    const fetchLog = () => api.get(`/api/inference/deployments/${detail.id}/logs`,
+      { params: { tail: 80, role: logRole, replica: logReplica } })
+      .then((r) => setLogs(r.data.logs)).catch(() => {})
+    fetchLog()
     const t = setInterval(() => {
-      api.get(`/api/inference/deployments/${detail.id}/logs`, { params: { tail: 80 } }).then((r) => setLogs(r.data.logs)).catch(() => {})
+      fetchLog()
       api.get(`/api/inference/deployments/${detail.id}`).then((r) => setDetail(r.data)).catch(() => {})
     }, 4000)
     return () => clearInterval(t)
-  }, [detail?.id])
+  }, [detail?.id, logRole, logReplica])
 
   // 引擎监控（KV 缓存 / 请求数 / 延迟）：15s 轮询
   useEffect(() => {
@@ -102,7 +121,12 @@ export default function Inference() {
 
   const openWizard = async () => {
     form.resetFields()
-    form.setFieldsValue({ engine: 'vllm', quantization: 'none', tensor_parallel: 1, max_model_len: 8192, gpu_mem_util: 0.85, replicas: 1 })
+    form.setFieldsValue({
+      engine: 'vllm', quantization: 'none', tensor_parallel: 1, max_model_len: 8192,
+      gpu_mem_util: 0.85, replicas: 1,
+      pd_mode: 'off', prefill_replicas: 1, prefill_tp: 1, decode_replicas: 1, decode_tp: 1,
+      kv_connector: 'nixl', node_count: 1,
+    })
     try {
       const m = await api.get('/api/models', { params: { project_id: projectId } })
       const all = m.data || []
@@ -157,7 +181,12 @@ console.log(resp.choices[0].message.content)`
         columns={[
           { title: t('common.name'), dataIndex: 'name', width: 165, ellipsis: true, fixed: 'left' },
           { title: t('infer.colModel'), dataIndex: 'model', width: 150, ellipsis: true },
-          { title: t('infer.colEngine'), dataIndex: 'engine', width: 78, render: (v: string) => <Tag color={v === 'vllm' ? 'blue' : 'cyan'}>{v}</Tag> },
+          { title: t('infer.colEngine'), dataIndex: 'engine', width: 100, render: (v: string, r: any) => (
+            <Space size={4} wrap>
+              <Tag color={v === 'vllm' ? 'blue' : 'cyan'}>{v}</Tag>
+              {r.pd_mode === 'pd' && <Tag color="volcano">PD</Tag>}
+            </Space>
+          ) },
           { title: t('infer.colImage'), dataIndex: 'engine', key: 'image', width: 180, ellipsis: true,
             render: (v: string) => <code style={{ fontSize: 11 }}>{ENGINE_IMAGES[v] || v}</code> },
           { title: t('infer.colNode'), width: 105, render: () => (nodeName ? <Tag>{nodeName}</Tag> : <span style={{ color: '#bbb' }}>-</span>) },
@@ -214,12 +243,27 @@ console.log(resp.choices[0].message.content)`
             if (v.adv_disable_cuda_graph) adv.disable_cuda_graph = true
           }
           if (v.adv_extra_args?.trim()) adv.extra_args = v.adv_extra_args.trim()
+          // NCCL/UCX/NIXL 环境变量覆盖（可选 JSON 对象；空=引擎默认）
+          let ncclEnv: Record<string, string> = {}
+          if (v.adv_nccl_env?.trim()) {
+            try {
+              const o = JSON.parse(v.adv_nccl_env)
+              if (o && typeof o === 'object' && !Array.isArray(o)) {
+                ncclEnv = Object.fromEntries(Object.entries(o).map(([k, val]) => [k, String(val)]))
+              }
+            } catch { message.error(t('infer.ncclEnvInvalid')); return }
+          }
           await api.post('/api/inference/deployments', {
             project_id: projectId, name: v.name, model_asset_id: v.model_asset_id,
             engine: v.engine, quantization: v.quantization, tensor_parallel: v.tensor_parallel,
             max_model_len: v.max_model_len, gpu_mem_util: v.gpu_mem_util,
             enable_lora: adapters.length > 0, lora_adapters: adapters, replicas: v.replicas,
             description: v.description || '', advanced: adv,
+            pd_mode: v.pd_mode || 'off',
+            prefill_replicas: v.prefill_replicas || 1, prefill_tp: v.prefill_tp || 1,
+            decode_replicas: v.decode_replicas || 1, decode_tp: v.decode_tp || 1,
+            kv_connector: v.kv_connector || 'nixl', node_count: v.node_count || 1,
+            nccl_env: ncclEnv,
           })
           message.success(t('infer.created'))
           setOpen(false); load()
@@ -257,8 +301,53 @@ console.log(resp.choices[0].message.content)`
               </Form.Item>
             </Space>
             <div style={{ color: '#888', fontSize: 12, marginTop: -4 }}>
-              <ThunderboltOutlined /> {t('infer.gpuNeed', { n: tp * rep, tp, r: rep })}
+              <ThunderboltOutlined />{' '}
+              {pdMode === 'pd'
+                ? t('infer.gpuNeedPd', { p: prefillReplicas, pt: prefillTp, d: decodeReplicas, dt: decodeTp, n: gpuNeed })
+                : t('infer.gpuNeed', { n: gpuNeed, tp, r: rep })}
             </div>
+          </InferSection>
+          <InferSection title={t('infer.secTopology')}>
+            <Space wrap align="start">
+              <Form.Item name="pd_mode" label={t('infer.pdMode')} tooltip={t('infer.pdModeHint')}>
+                <Select style={{ width: 200 }} options={[
+                  { value: 'off', label: t('infer.pdOff') },
+                  { value: 'pd', label: t('infer.pdOn') },
+                ]} />
+              </Form.Item>
+              <Form.Item label={t('infer.rdmaStatus')} tooltip={t('infer.rdmaStatusHint')}>
+                <span>
+                  {rdma.present
+                    ? <Tag color="green">{t('infer.rdmaOn', { d: rdma.devices.join(', ') })}</Tag>
+                    : <Tag>{t('infer.rdmaOff')}</Tag>}
+                </span>
+              </Form.Item>
+            </Space>
+            {pdMode === 'pd' && (
+              <>
+                <Space wrap align="start">
+                  <Form.Item name="prefill_replicas" label={t('infer.prefillReplicas')} tooltip={t('infer.prefillReplicasHint')}><InputNumber min={1} max={8} /></Form.Item>
+                  <Form.Item name="prefill_tp" label={t('infer.prefillTp')}><InputNumber min={1} max={8} /></Form.Item>
+                  <Form.Item name="decode_replicas" label={t('infer.decodeReplicas')} tooltip={t('infer.decodeReplicasHint')}><InputNumber min={1} max={8} /></Form.Item>
+                  <Form.Item name="decode_tp" label={t('infer.decodeTp')}><InputNumber min={1} max={8} /></Form.Item>
+                  <Form.Item name="kv_connector" label={t('infer.kvConnector')} tooltip={t('infer.kvConnectorHint')}>
+                    <Select style={{ width: 140 }} options={[
+                      { value: 'nixl', label: 'NIXL' }, { value: 'mooncake', label: 'Mooncake' },
+                    ]} />
+                  </Form.Item>
+                </Space>
+                <div style={{ color: '#888', fontSize: 12, marginTop: -4 }}>
+                  <ThunderboltOutlined /> {t('infer.gpuNeedPd', { p: prefillReplicas, pt: prefillTp, d: decodeReplicas, dt: decodeTp, n: gpuNeed })}
+                </div>
+              </>
+            )}
+            <Space wrap align="start" style={{ marginTop: pdMode === 'pd' ? 8 : 0 }}>
+              <Form.Item name="node_count" label={t('infer.nodeCount')} tooltip={t('infer.nodeCountHint')}><InputNumber min={1} max={8} /></Form.Item>
+              <Form.Item name="adv_nccl_env" label={t('infer.ncclEnv')} tooltip={t('infer.ncclEnvHint')}
+                style={{ flex: 1, minWidth: 240, marginBottom: 0 }}>
+                <Input.TextArea placeholder={'{"NCCL_IB_DISABLE": "0"}'} autoSize={{ minRows: 1, maxRows: 2 }} style={{ width: '100%' }} />
+              </Form.Item>
+            </Space>
           </InferSection>
           <InferSection title={t('infer.secParams')}>
             <Space wrap>
@@ -338,6 +427,20 @@ console.log(resp.choices[0].message.content)`
                       { key: 1, label: t('common.status'), children: <Tag color={ST[detail.status]}>{detail.status}</Tag> },
                       { key: 2, label: t('common.desc'), children: detail.description || '-' },
                       { key: 3, label: t('infer.dEngine'), children: `${detail.engine} / ${detail.quantization} / TP ${detail.tensor_parallel} × ${detail.replicas}` },
+                      {
+                        key: 'topo', label: t('infer.topoDetail'),
+                        children: detail.pd_mode === 'pd'
+                          ? (
+                            <Space size={4} wrap>
+                              <Tag color="volcano">{t('infer.pdOn')}</Tag>
+                              <Tag>P×{detail.prefill_replicas}·TP{detail.prefill_tp}</Tag>
+                              <Tag>D×{detail.decode_replicas}·TP{detail.decode_tp}</Tag>
+                              <Tag color="blue">{detail.kv_connector}</Tag>
+                              <Tag>{t('infer.gpuNeedShort', { n: detail.gpu_need })}</Tag>
+                            </Space>
+                          )
+                          : <Space size={4}><Tag>{t('infer.pdOff')}</Tag><Tag>{t('infer.gpuNeedShort', { n: detail.gpu_need })}</Tag></Space>,
+                      },
                       { key: 'img', label: t('infer.dImage'), children: <code style={{ fontSize: 12 }}>{ENGINE_IMAGES[detail.engine] || detail.engine}</code> },
                       { key: 'node', label: t('infer.colNode'), children: nodeName || '-' },
                       { key: 4, label: t('infer.colModel'), children: detail.model },
@@ -424,16 +527,57 @@ console.log(resp.choices[0].message.content)`
             },
             {
               key: 'logs', label: t('infer.tabLogs'), children: (
-                <pre style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, maxHeight: 480, overflow: 'auto', fontSize: 12 }}>{logs || t('infer.noLogs')}</pre>
+                <div>
+                  {detail.pd_mode === 'pd' ? (
+                    <Space style={{ marginBottom: 8 }} wrap>
+                      <Select size="small" value={logRole} style={{ width: 200 }}
+                        onChange={(v) => { setLogRole(v); setLogReplica(0) }}
+                        options={(
+                          [
+                            { value: 'p', label: t('infer.logPrefill', { n: detail.prefill_replicas }) },
+                            { value: 'd', label: t('infer.logDecode', { n: detail.decode_replicas }) },
+                            ...(detail.engine === 'sglang' ? [{ value: 'rt', label: t('infer.logRouter') }] : []),
+                          ] as any[]
+                        )} />
+                      {logRole !== 'rt' && (
+                        <InputNumber size="small" min={0} max={Math.max(0, (logRole === 'p' ? detail.prefill_replicas : detail.decode_replicas) - 1)}
+                          value={logReplica} onChange={(v) => setLogReplica(v ?? 0)} style={{ width: 90 }}
+                          prefix={t('infer.logReplica')} />
+                      )}
+                    </Space>
+                  ) : null}
+                  <pre style={{ background: '#f6f8fa', padding: 12, borderRadius: 6, maxHeight: 460, overflow: 'auto', fontSize: 12 }}>{logs || t('infer.noLogs')}</pre>
+                </div>
               ),
             },
             {
               key: 'scale', label: t('infer.tabScale'), children: (
-                <Space>
-                  <span>{t('infer.curReplicas', { n: detail.replicas })}</span>
-                  <Button onClick={() => api.post(`/api/inference/deployments/${detail.id}/scale`, { replicas: detail.replicas + 1 }).then(() => message.success(t('infer.scaledUp')))}>{t('infer.scaleUp')}</Button>
-                  <Button disabled={detail.replicas <= 1} onClick={() => api.post(`/api/inference/deployments/${detail.id}/scale`, { replicas: detail.replicas - 1 }).then(() => message.success(t('infer.scaledDown')))}>{t('infer.scaleDown')}</Button>
-                </Space>
+                detail.pd_mode === 'pd' ? (
+                  <div>
+                    <p style={{ color: '#888', fontSize: 12, marginTop: 0 }}>{t('infer.pdScaleHint')}</p>
+                    {(['prefill', 'decode'] as const).map((role) => {
+                      const cur = role === 'prefill' ? (detail.prefill_replicas || 1) : (detail.decode_replicas || 1)
+                      const tpR = role === 'prefill' ? (detail.prefill_tp || 1) : (detail.decode_tp || 1)
+                      const call = (replicas: number) => api.post(`/api/inference/deployments/${detail.id}/scale-role`, { role, replicas })
+                        .then(() => message.success(t('infer.scaledRole')))
+                        .catch((e) => message.error(e.response?.data?.detail || e.message))
+                      return (
+                        <Space key={role} style={{ marginBottom: 10 }}>
+                          <Tag color={role === 'prefill' ? 'orange' : 'green'}>{role}</Tag>
+                          <span>{t('infer.curRoleReplicas', { n: cur, tp: tpR })}</span>
+                          <Button size="small" onClick={() => call(cur + 1)}>{t('infer.scaleUp')}</Button>
+                          <Button size="small" disabled={cur <= 1} onClick={() => call(cur - 1)}>{t('infer.scaleDown')}</Button>
+                        </Space>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <Space>
+                    <span>{t('infer.curReplicas', { n: detail.replicas })}</span>
+                    <Button onClick={() => api.post(`/api/inference/deployments/${detail.id}/scale`, { replicas: detail.replicas + 1 }).then(() => message.success(t('infer.scaledUp')))}>{t('infer.scaleUp')}</Button>
+                    <Button disabled={detail.replicas <= 1} onClick={() => api.post(`/api/inference/deployments/${detail.id}/scale`, { replicas: detail.replicas - 1 }).then(() => message.success(t('infer.scaledDown')))}>{t('infer.scaleDown')}</Button>
+                  </Space>
+                )
               ),
             },
           ]} />

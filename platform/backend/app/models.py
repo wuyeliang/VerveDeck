@@ -212,6 +212,24 @@ class Deployment(Base):
     #       served_model_name / api_key / extra_args（原始命令行透传）
     # SGLang: mem_fraction_static / disable_cuda_graph / extra_args
     advanced: Mapped[dict] = mapped_column(JSON, default=dict)
+    # ---------- 部署拓扑：PD 分离 / 多级多卡 / RDMA 通信（#103） ----------
+    # pd_mode: off=协同（每副本 = 完整 prefill+decode 实例）；pd=Prefill/Decode 分离
+    #   （prefill 实例池 + decode 实例池 + 路由；vLLM 路由内置于 backend 两阶段代理，
+    #    SGLang 用镜像自带 sglang_router 容器）
+    pd_mode: Mapped[str] = mapped_column(String(16), default="off")  # off/pd
+    prefill_replicas: Mapped[int] = mapped_column(Integer, default=1)  # PD：prefill 实例数
+    decode_replicas: Mapped[int] = mapped_column(Integer, default=1)  # PD：decode 实例数
+    prefill_tp: Mapped[int] = mapped_column(Integer, default=1)  # PD：每 prefill 实例卡数
+    decode_tp: Mapped[int] = mapped_column(Integer, default=1)  # PD：每 decode 实例卡数
+    # PD KV 传输连接器：nixl（NIXL/UCX，RDMA 或 TCP 均可）/ mooncake（Mooncake，TCP/RDMA）
+    kv_connector: Mapped[str] = mapped_column(String(32), default="nixl")  # nixl/mooncake
+    # 实例池跨的逻辑节点数（每实例单机闭环 TP；>1 = 实例分布到多个逻辑节点，
+    # 跨节点通信宿主有 RDMA 时走 IB，否则走容器桥——与训练 #60 多机同语义，
+    # 放置层为真实多节点预留扩展点；不额外乘算卡数）
+    node_count: Mapped[int] = mapped_column(Integer, default=1)
+    # NCCL/UCX/NIXL 通信环境变量覆盖（TrainingJob.nccl_env 同机制；
+    # 如 NCCL_IB_HCA / NCCL_SOCKET_IFNAME / UCX_NET_DEVICES / VLLM_NIXL_SIDE_CHANNEL_HOST）
+    nccl_env: Mapped[dict] = mapped_column(JSON, default=dict)
     port: Mapped[int] = mapped_column(Integer, default=0)  # 容器内端口(固定8000), host 端口池位
     endpoint: Mapped[str] = mapped_column(String(128), default="")  # ip:port
     replicas: Mapped[int] = mapped_column(Integer, default=1)

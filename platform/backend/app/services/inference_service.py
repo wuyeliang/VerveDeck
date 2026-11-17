@@ -45,6 +45,143 @@ def deployment_container_name(dep: Deployment, replica: int = 0) -> str:
     return f"ft-infer-{dep.id}" if replica == 0 else f"ft-infer-{dep.id}-r{replica}"
 
 
+# ---------- PD 分离 / 多级多卡拓扑（#103） ----------
+
+def _is_pd(dep: Deployment) -> bool:
+    return (getattr(dep, "pd_mode", None) or "off") == "pd"
+
+
+def _vllm_connector(dep: Deployment) -> str:
+    """KV connector 归一：nixl（默认，NIXL/UCX，RDMA 或 TCP 均可）/ mooncake"""
+    c = str(getattr(dep, "kv_connector", "") or "").strip().lower()
+    return c if c in ("nixl", "mooncake") else "nixl"
+
+
+def _sglang_backend(dep: Deployment) -> str:
+    """SGLang PD 传输后端（与 vLLM kv_connector 同名口径：nixl/mooncake）"""
+    return _vllm_connector(dep)
+
+
+def pd_instance_name(dep: Deployment, role: str, idx: int) -> str:
+    """PD 实例容器名：prefill→ft-infer-{id}-p{idx}，decode→ft-infer-{id}-d{idx}"""
+    return f"ft-infer-{dep.id}-{'p' if role == 'prefill' else 'd'}{idx}"
+
+
+def pd_router_name(dep: Deployment) -> str:
+    """SGLang PD router 容器名（vLLM PD 路由内置于 backend 代理，无独立容器）"""
+    return f"ft-infer-{dep.id}-rt"
+
+
+def pd_side_port(dep: Deployment, role: str, idx: int) -> int:
+    """vLLM NIXL side-channel 端口（同宿主每 worker 必须唯一；按部署 id 错开防冲突）"""
+    off = (dep.id * 17) % 1000
+    return 5600 + off + (0 if role == "prefill" else 250) + idx
+
+
+def pd_bootstrap_port(dep: Deployment, idx: int) -> int:
+    """SGLang prefill 侧 bootstrap 端口（router/decode 经它获取 KV 传输参数）"""
+    return 8900 + (dep.id * 7) % 100 + idx
+
+
+def deployment_gpu_need(dep: Deployment) -> int:
+    """部署占用 GPU 总数（调度准入 / 扩缩容复检 / GPU 看板）。
+
+    协同：replicas × tensor_parallel；PD：prefill 池 + decode 池
+    （router 容器 CPU-only 不计卡；node_count 是放置分组维度，不乘算）"""
+    if _is_pd(dep):
+        return (max(1, dep.prefill_replicas or 1) * max(1, dep.prefill_tp or 1)
+                + max(1, dep.decode_replicas or 1) * max(1, dep.decode_tp or 1))
+    return (dep.tensor_parallel or 1) * max(dep.replicas, 1)
+
+
+def pd_instance_ips(dep: Deployment) -> tuple[list[str], list[str]]:
+    """(prefill 实例 ip 列表, decode 实例 ip 列表)——backend 两阶段代理按此寻址。
+    container_ids 布局 [p0..pA, d0..dB, (rt 仅 SGLang)]；IP 每次实时解析
+    （容器重建后 IP 变化），查不到返回空串由调用方过滤。"""
+    n_p = max(1, dep.prefill_replicas or 1)
+    n_d = max(1, dep.decode_replicas or 1)
+    ids = list(dep.container_ids or [])
+    p_ids = ids[:n_p]
+    d_ids = ids[n_p:n_p + n_d]
+    return ([tc.container_ip(c) for c in p_ids],
+            [tc.container_ip(c) for c in d_ids])
+
+
+def start_pd_instance(dep: Deployment, role: str, idx: int, model_path: str) -> str:
+    """创建并启动一个 PD 角色实例（prefill/decode），返回容器 id。
+
+    通信 env：
+    - 容器级：基础 env + dep.nccl_env（用户 NCCL/UCX/NIXL 覆盖，
+      如 NCCL_IB_HCA / NCCL_SOCKET_IFNAME / UCX_NET_DEVICES）
+    - exec 级：VLLM_NIXL_SIDE_CHANNEL_PORT（每 worker 唯一）+ prefill 侧
+      VLLM_NIXL_SIDE_CHANNEL_HOST=本容器 IP（decode 跨容器拉 KV 的握手地址）
+    RDMA：宿主有 IB 时 taskcontainer 自动注入 uverbs/rdma_cm + ipc=host，
+    NIXL/NCCL 自动走 RDMA；无 IB 时走容器桥（UCX TCP 传输），功能一致。
+    """
+    name = pd_instance_name(dep, role, idx)
+    tc.remove_container(name, force=True)
+    tp = dep.prefill_tp if role == "prefill" else dep.decode_tp
+    cid = tc.create_container(
+        name=name,
+        image=upgrade_service.current_image("vllm") if dep.engine == "vllm"
+        else upgrade_service.current_image("sglang"),
+        gpus=max(tp, 1),
+        cpus=8, mem_gb=20,
+        env={"VLLM_LOGGING_LEVEL": "warning",
+             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1",
+             **(dep.nccl_env or {})},
+        labels={"fintune.deployment": str(dep.id), "fintune.type": "inference",
+                "fintune.engine": dep.engine, "fintune.pd_role": role},
+    )
+    cmd = build_cmd(dep, model_path, role=role, idx=idx)
+    exec_env: dict[str, str] = {}
+    if dep.engine == "vllm":
+        exec_env["VLLM_NIXL_SIDE_CHANNEL_PORT"] = str(pd_side_port(dep, role, idx))
+        if role == "prefill":
+            ip = tc.container_ip(cid)
+            if ip:
+                exec_env["VLLM_NIXL_SIDE_CHANNEL_HOST"] = ip
+    log_path = os.path.join(settings.data_dir, "infer", str(dep.id),
+                            f"run-{role[0]}{idx}.log")
+    tc.start_task(f"infer-{dep.id}-{role[0]}{idx}", cid, cmd, log_path, env=exec_env)
+    return cid
+
+
+def start_pd_router(dep: Deployment, model_path: str) -> str:
+    """SGLang PD router 容器（镜像自带 sglang_router，CPU-only）。
+
+    vLLM PD 不走此路：路由内置于 backend 代理（两阶段调用，见 api/inference.py），
+    免额外镜像，鉴权/护栏/模型名归一与协同模式完全一致。
+    依赖 container_ids 已按 [p0..pA, d0..dB] 布局（launch 先建实例后建 router）。
+    """
+    name = pd_router_name(dep)
+    tc.remove_container(name, force=True)
+    n_p = max(1, dep.prefill_replicas or 1)
+    n_d = max(1, dep.decode_replicas or 1)
+    ids = list(dep.container_ids or [])
+    p_ips = [tc.container_ip(c) for c in ids[:n_p]]
+    d_ips = [tc.container_ip(c) for c in ids[n_p:n_p + n_d]]
+    args = ["python3", "-m", "sglang_router.launch_router",
+            "--host", "0.0.0.0", "--port", "8000", "--pd-disaggregation"]
+    for i, ip in enumerate(p_ips):
+        if ip:
+            args += ["--prefill", f"http://{ip}:8000", str(pd_bootstrap_port(dep, i))]
+    for ip in d_ips:
+        if ip:
+            args += ["--decode", f"http://{ip}:8000"]
+    cid = tc.create_container(
+        name=name,
+        image=upgrade_service.current_image("sglang"),
+        gpus=0, cpus=4, mem_gb=4,
+        env={**(dep.nccl_env or {})},
+        labels={"fintune.deployment": str(dep.id), "fintune.type": "inference",
+                "fintune.engine": dep.engine, "fintune.pd_role": "router"},
+    )
+    tc.start_task(f"infer-{dep.id}-rt", cid, args,
+                  os.path.join(settings.data_dir, "infer", str(dep.id), "run-rt.log"))
+    return cid
+
+
 def _adv(dep: Deployment) -> dict:
     """高级参数（Deployment.advanced）；非 dict 视为空（留空=引擎默认，存量部署行为不变）"""
     a = getattr(dep, "advanced", None) or {}
@@ -80,9 +217,25 @@ def _extra_argv(raw) -> list[str]:
         return raw.split()
 
 
-def build_cmd(dep: Deployment, model_path: str) -> list[str]:
+def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: int = 0) -> list[str]:
+    """拼引擎启动命令。role：PD 分离实例角色（prefill/decode）；None=协同实例。
+
+    PD 分离（vLLM ≥0.30 / SGLang ≥0.4.9 参数面，按镜像 v0.33.0 / v0.5.23 核实）：
+    - vLLM:  --kv-transfer-config '{"kv_connector": "NixlConnector"|"MooncakeConnector",
+                    "kv_role": "kv_producer"|"kv_consumer"}'
+             配合 exec 级 env VLLM_NIXL_SIDE_CHANNEL_PORT（每 worker 唯一）+
+             VLLM_NIXL_SIDE_CHANNEL_HOST（prefill 侧，decode 据此拉取 KV）
+    - SGLang: --disaggregation-mode prefill|decode
+                    --disaggregation-transfer-backend nixl|mooncake
+                    --disaggregation-bootstrap-port <port>（仅 prefill 侧）
+    """
     adv = _adv(dep)
     served = _served_name(dep)
+    pd = (dep.pd_mode or "off") == "pd" and role in ("prefill", "decode")
+    # PD 模式下每角色实例独立 TP（协同模式沿用 dep.tensor_parallel）
+    tp = dep.tensor_parallel
+    if pd:
+        tp = dep.prefill_tp if role == "prefill" else dep.decode_tp
     if dep.engine == "sglang":
         # 官方 sglang 镜像内只有 python3（无 python 别名）
         cmd = ["python3", "-m", "sglang.launch_server",
@@ -95,8 +248,13 @@ def build_cmd(dep: Deployment, model_path: str) -> list[str]:
         cmd += ["--mem-fraction-static", str(mf if mf not in (None, "") else min(dep.gpu_mem_util, 0.9))]
         if dep.quantization and dep.quantization != "none":
             cmd += ["--quantization", dep.quantization]
-        if dep.tensor_parallel > 1:
-            cmd += ["--tp", str(dep.tensor_parallel)]
+        if tp > 1:
+            cmd += ["--tp", str(tp)]
+        if pd:
+            cmd += ["--disaggregation-mode", role,
+                    "--disaggregation-transfer-backend", _sglang_backend(dep)]
+            if role == "prefill":
+                cmd += ["--disaggregation-bootstrap-port", str(pd_bootstrap_port(dep, idx))]
         if dep.enable_lora:
             cmd.append("--enable-lora")
         for a in (dep.lora_adapters or []):
@@ -113,8 +271,14 @@ def build_cmd(dep: Deployment, model_path: str) -> list[str]:
              f"--gpu-memory-utilization {dep.gpu_mem_util}"]
     if dep.quantization and dep.quantization != "none":
         parts.append(f"--quantization {dep.quantization}")
-    if dep.tensor_parallel > 1:
-        parts.append(f"--tensor-parallel-size {dep.tensor_parallel}")
+    if tp > 1:
+        parts.append(f"--tensor-parallel-size {tp}")
+    if pd:
+        # JSON 含空格/引号，shlex.quote 防 bash -lc 解析破坏
+        kvt = {"kv_connector": "NixlConnector" if _vllm_connector(dep) == "nixl"
+               else "MooncakeConnector",
+               "kv_role": "kv_producer" if role == "prefill" else "kv_consumer"}
+        parts.append(f"--kv-transfer-config {shlex.quote(json.dumps(kvt))}")
     # ---- 高级参数（留空=引擎默认）----
     mns = adv.get("max_num_seqs")
     if mns not in (None, ""):
@@ -159,7 +323,8 @@ def start_replica(dep: Deployment, replica: int, model_path: str) -> str:
         # （POST /v1/load_lora_adapter、/v1/unload_lora_adapter）默认关闭（官方标注
         # "仅本地开发使用"），平台需要它实现 LoRA 热加载，故显式开启。
         env={"VLLM_LOGGING_LEVEL": "warning",
-             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1"},
+             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1",
+             **(dep.nccl_env or {})},  # NCCL/UCX/NIXL 覆盖（多机 TP / RDMA 调优）
         labels={"fintune.deployment": str(dep.id), "fintune.type": "inference",
                 "fintune.engine": dep.engine},
     )
@@ -177,36 +342,71 @@ def _ep_url(dep, path: str = "") -> str:
     return ep + path
 
 
+def _probe_engine(base_url: str, engine: str) -> bool:
+    """引擎存活探测（vLLM /v1/models；SGLang /get_server_info）"""
+    try:
+        path = "/v1/models" if engine == "vllm" else "/get_server_info"
+        r = requests.get(base_url + path, timeout=5)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def wait_ready(dep: Deployment, timeout: int = 600) -> bool:
     t0 = time.time()
     while time.time() - t0 < timeout:
-        if dep.endpoint:
-            try:
-                r = requests.get(_ep_url(dep, "/v1/models"), timeout=5)
-                if r.status_code == 200:
-                    return True
-            except Exception:
-                pass
+        if _is_pd(dep):
+            if _pd_all_ready(dep):
+                return True
+        elif dep.endpoint:
+            if _probe_engine(_ep_url(dep, ""), dep.engine):
+                return True
         time.sleep(5)
     return False
+
+
+def _pd_all_ready(dep: Deployment) -> bool:
+    """PD 全实例就绪：所有 P/D 实例引擎可探测（SGLang 另要求 router 可探测）"""
+    p_ips, d_ips = pd_instance_ips(dep)
+    for ip in list(p_ips) + list(d_ips):
+        if not ip or not _probe_engine(f"http://{ip}:8000", dep.engine):
+            return False
+    if dep.engine == "sglang" and dep.endpoint:
+        if not _probe_engine(_ep_url(dep, ""), "sglang"):
+            return False
+    return True
 
 
 def launch(dep: Deployment, model_path: str) -> None:
     from . import prom_service
     ids = []
-    for i in range(dep.replicas):
-        ids.append(start_replica(dep, i, model_path))
-    # 等待首副本就绪后登记 endpoint（IP 在创建后即可取）
-    targets = []
-    for i in range(dep.replicas):
-        ip = tc.container_ip(ids[i])
-        if ip:
-            targets.append(f"{ip}:8000")
-            if i == 0:
-                dep.endpoint = targets[0]
-    dep.container_ids = ids
-    # 登记 Prometheus file_sd target（/metrics 与 OpenAI API 同端口 8000）
-    prom_service.write_infer_sd(dep.id, dep.engine, deployment_container_name(dep, 0), targets)
+    if _is_pd(dep):
+        # PD 拓扑：P 池 → D 池（container_ids 布局 [p0..pA, d0..dB]，代理寻址依赖此序）
+        for i in range(max(1, dep.prefill_replicas or 1)):
+            ids.append(start_pd_instance(dep, "prefill", i, model_path))
+        for j in range(max(1, dep.decode_replicas or 1)):
+            ids.append(start_pd_instance(dep, "decode", j, model_path))
+        dep.container_ids = ids  # start_pd_router 按此布局解析 P/D 容器 IP
+        # SGLang：router 容器统一入口；vLLM：路由内置 backend 代理，入口=首个 D 实例
+        if dep.engine == "sglang":
+            ids.append(start_pd_router(dep, model_path))
+            rt_ip = tc.container_ip(ids[-1])
+            dep.endpoint = f"{rt_ip}:8000" if rt_ip else ""
+        else:
+            d0 = tc.container_ip(ids[max(1, dep.prefill_replicas or 1)])
+            dep.endpoint = f"{d0}:8000" if d0 else ""
+    else:
+        for i in range(dep.replicas):
+            ids.append(start_replica(dep, i, model_path))
+        # 等待首副本就绪后登记 endpoint（IP 在创建后即可取）
+        for i in range(dep.replicas):
+            ip = tc.container_ip(ids[i])
+            if ip and not dep.endpoint:
+                dep.endpoint = f"{ip}:8000"
+    # 登记 Prometheus file_sd target（所有引擎实例 /metrics，与 OpenAI API 同端口 8000）
+    targets = [f"{tc.container_ip(c)}:8000" for c in ids if tc.container_ip(c)]
+    first = deployment_container_name(dep, 0) if not _is_pd(dep) else pd_instance_name(dep, "prefill", 0)
+    prom_service.write_infer_sd(dep.id, dep.engine, first, targets)
     db = SessionLocal()
     try:
         d = db.get(Deployment, dep.id)
@@ -218,10 +418,23 @@ def launch(dep: Deployment, model_path: str) -> None:
         db.close()
 
 
+def _pd_container_names(dep: Deployment) -> list[str]:
+    """PD 部署全部容器名（含 SGLang router；命名兜底，container_ids 缺失也能清干净）"""
+    names = [pd_instance_name(dep, "prefill", i) for i in range(max(1, dep.prefill_replicas or 1))]
+    names += [pd_instance_name(dep, "decode", j) for j in range(max(1, dep.decode_replicas or 1))]
+    if dep.engine == "sglang":
+        names.append(pd_router_name(dep))
+    return names
+
+
 def stop(dep: Deployment) -> None:
     from . import prom_service
-    for i in range(max(dep.replicas, 1)):
-        tc.remove_container(deployment_container_name(dep, i), force=True)
+    if _is_pd(dep):
+        targets = set(dep.container_ids or []) | set(_pd_container_names(dep))
+    else:
+        targets = {deployment_container_name(dep, i) for i in range(max(dep.replicas, 1))}
+    for t in targets:
+        tc.remove_container(t, force=True)
     prom_service.drop_infer_sd(dep.id)  # 摘除 Prometheus target
     dep.container_ids = []
     dep.endpoint = ""
@@ -236,42 +449,75 @@ def stop(dep: Deployment) -> None:
         db.close()
 
 
+def _lora_targets(dep: Deployment):
+    """LoRA 热加载目标 base_url 列表；异常返回 {"error": ...}；未运行返回 None。
+
+    PD 部署（vLLM）：KV 传输要求 P/D 两侧模型一致，热加载必须批量下发到
+    全部 P/D 实例；PD（SGLang）引擎无运行期 LoRA API，直接拒绝。
+    """
+    if not dep.endpoint:
+        return None
+    if _is_pd(dep):
+        if dep.engine == "sglang":
+            return {"error": "SGLang PD 部署暂不支持运行期 LoRA 热加载"}
+        p_ips, d_ips = pd_instance_ips(dep)
+        targets = [f"http://{ip}:8000" for ip in list(p_ips) + list(d_ips) if ip]
+        return targets or [_ep_url(dep)]
+    return [_ep_url(dep)]
+
+
 def hot_add_lora(dep: Deployment, name: str, path: str) -> dict:
-    """vLLM 运行期热加载 LoRA（无需重启）
+    """vLLM 运行期热加载 LoRA（无需重启；PD 部署批量下发全部 P/D 实例）
 
     vLLM >=0.15: POST /v1/load_lora_adapter {lora_name, lora_path}
     中间版本:    PUT /v1/loras/{name} {model_path}
     （0.8.5/0.9.x/0.10-0.14 均无运行期 LoRA API，需 vLLM>=0.15 或 <=0.14 的对应形态）
     """
-    if not dep.endpoint:
+    targets = _lora_targets(dep)
+    if targets is None:
         return {"ok": False, "error": "deployment not running"}
-    base = _ep_url(dep)
-    try:
-        r = requests.post(f"{base}/v1/load_lora_adapter",
-                          json={"lora_name": name, "lora_path": path}, timeout=180)
-        if r.status_code < 400:
-            return {"ok": True, "status": r.status_code, "body": r.text[:500]}
-        r2 = requests.put(f"{base}/v1/loras/{name}", json={"model_path": path}, timeout=180)
-        if r2.status_code < 400:
-            return {"ok": True, "status": r2.status_code, "body": r2.text[:500]}
-        return {"ok": False, "status": r.status_code, "body": r.text[:500]}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    if isinstance(targets, dict):
+        return {"ok": False, "error": targets["error"]}
+    fails = []
+    for base in targets:
+        try:
+            r = requests.post(f"{base}/v1/load_lora_adapter",
+                              json={"lora_name": name, "lora_path": path}, timeout=180)
+            if r.status_code < 400:
+                continue
+            r2 = requests.put(f"{base}/v1/loras/{name}", json={"model_path": path}, timeout=180)
+            if r2.status_code < 400:
+                continue
+            fails.append(f"{base}: HTTP {r.status_code} {r.text[:200]}")
+        except Exception as e:
+            fails.append(f"{base}: {e}")
+    if fails:
+        return {"ok": False, "error": "LoRA 热加载部分失败（P/D 两侧需一致，请重试）: " + " | ".join(fails)[:2000]}
+    return {"ok": True, "targets": len(targets)}
 
 
 def hot_remove_lora(dep: Deployment, name: str) -> dict:
-    if not dep.endpoint:
+    targets = _lora_targets(dep)
+    if targets is None:
         return {"ok": False, "error": "deployment not running"}
-    base = _ep_url(dep)
-    try:
-        r = requests.post(f"{base}/v1/unload_lora_adapter",
-                          json={"lora_name": name}, timeout=60)
-        if r.status_code < 400:
-            return {"ok": True, "status": r.status_code}
-        r2 = requests.delete(f"{base}/v1/loras/{name}", timeout=60)
-        return {"ok": r2.status_code < 400, "status": r2.status_code}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    if isinstance(targets, dict):
+        return {"ok": False, "error": targets["error"]}
+    fails = []
+    for base in targets:
+        try:
+            r = requests.post(f"{base}/v1/unload_lora_adapter",
+                              json={"lora_name": name}, timeout=60)
+            if r.status_code < 400:
+                continue
+            r2 = requests.delete(f"{base}/v1/loras/{name}", timeout=60)
+            if r2.status_code < 400:
+                continue
+            fails.append(f"{base}: HTTP {r.status_code}")
+        except Exception as e:
+            fails.append(f"{base}: {e}")
+    if fails:
+        return {"ok": False, "error": "LoRA 卸载部分失败: " + " | ".join(fails)[:1000]}
+    return {"ok": True, "status": 200}
 
 
 def ensure_serving(asset: ModelAsset, db) -> tuple[str, str]:
