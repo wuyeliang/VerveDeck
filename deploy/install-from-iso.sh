@@ -85,7 +85,8 @@ else
     warn "NVIDIA 驱动已可用：$(nvidia-smi --query-gpu-driver-version --format=csv,noheader | head -1)"
   else
     log "安装 NVIDIA 驱动（自动选择 apt 源中最高 5xx 版本）"
-    VER=$(apt-cache search -n 'nvidia-driver-5[0-9][0-9]' | awk '{print $1}' | sed 's/^nvidia-driver-//' | sort -n | tail -1)
+    # 锚定正则排除 -open/-server 变体，版本号取 '-' 分隔第 3 段（nvidia|driver|5xx）
+    VER=$(apt-cache search -n 'nvidia-driver' | grep -E '^nvidia-driver-5[0-9][0-9]$' | awk -F'-' '{print $3}' | sort -n | tail -1)
     [ -n "$VER" ] || die "apt 源中未找到 nvidia-driver-5xx 包"
     apt-get install -y "nvidia-driver-$VER" || die "NVIDIA 驱动安装失败"
     warn "驱动已安装。若 nvidia-smi 仍不可用，请 reboot 后重新运行本脚本（已装组件会自动跳过）"
@@ -104,6 +105,16 @@ if ! nvidia-ctk version >/dev/null 2>&1; then
   apt-get install -y nvidia-container-toolkit || die "nvidia-container-toolkit 安装失败"
 fi
 nvidia-ctk runtime configure --runtime=docker
+# Docker 29 默认 storage-driver 为 overlayfs：实测 pull 在 unpack 阶段会挂死，固定为 overlay2
+python3 -c "
+import json
+p='/etc/docker/daemon.json'
+try: cfg=json.load(open(p))
+except Exception: cfg={}
+cfg['storage-driver']='overlay2'
+json.dump(cfg,open(p,'w'),indent=2)
+print('storage-driver pinned to overlay2')
+"
 systemctl restart docker
 
 # RDMA/IB 用户态（机器带 IB HCA 时装；训练容器会自动注入 /dev/infiniband 设备）

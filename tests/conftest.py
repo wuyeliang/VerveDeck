@@ -90,8 +90,11 @@ def _discover_env() -> tuple[int, int, int]:
     if not deps:
         raise RuntimeError("默认项目缺少推理部署，请先创建常驻部署"
                            f"（POST /api/inference/deployments，name={DEPLOY_NAME}）")
-    dep = next((d["id"] for d in deps if d["name"] == DEPLOY_NAME), deps[0]["id"])
-    return dp, asset, dep
+    row = next((d for d in deps if d["name"] == DEPLOY_NAME), deps[0])
+    if not row.get("enable_lora"):
+        raise RuntimeError(f"常驻部署 {DEPLOY_NAME} 缺少 enable_lora=true"
+                           "（LoRA 热加载用例依赖 vLLM --enable-lora），请重建常驻部署时带上该参数")
+    return dp, asset, row["id"]
 
 
 DEFAULT_PROJECT, BASE_MODEL_ASSET_ID, DEPLOY_ID = _discover_env()

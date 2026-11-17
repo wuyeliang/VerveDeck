@@ -18,32 +18,37 @@ echo "==> [2/5] 准备配置与环境"
 rand_alnum() { openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | cut -c1-"${1:-12}"; }
 if [ ! -f .env ]; then
   # 首启自动生成强随机密钥（公网部署防默认弱口令被秒破）；.env 权限 600
-  umask 077
+  # 注意：umask 077 只在生成 .env 的子 shell 内生效——若泄漏到脚本后续逻辑，
+  # 会把 /data/* 目录全建成 700（prometheus/alertmanager 以 nobody 运行将
+  # permission denied 崩溃：rules/sd 目录不可遍历、am-data 不可写、alertmanager.yml 不可读）
   # Grafana 大屏 root_url 需含外部访问 host（含非 443 端口），否则其生成的绝对链接指向错地址；
   # 按服务器 IP + nginx 实际监听端口自动生成（git 默认 443 → 不带端口后缀）
-  VD_IP=$(hostname -I 2>/dev/null | awk '{print $1}'); VD_IP=${VD_IP:-127.0.0.1}
-  VD_PORT=$(grep -oE 'listen [0-9]+ ssl' ../platform/frontend/nginx.conf 2>/dev/null | grep -oE '[0-9]+' | head -1)
-  if [ -n "$VD_PORT" ] && [ "$VD_PORT" != "443" ]; then VD_SUFFIX=":$VD_PORT"; else VD_SUFFIX=""; fi
-  {
-    echo "# VerveDeck 环境变量 —— deploy.sh 自动生成于 $(date '+%F %T')（请妥善保管本文件）"
-    echo "ADMIN_PASSWORD=$(rand_alnum 12)"
-    echo "JWT_SECRET=$(openssl rand -hex 32)"
-    echo "POSTGRES_PASSWORD=$(openssl rand -hex 12)"
-    echo "RUSTFS_ACCESS_KEY=vervedeck"
-    echo "RUSTFS_SECRET_KEY=$(openssl rand -hex 16)"
-    echo "S3_ENDPOINT=http://rustfs:9000"
-    echo "S3_BUCKET=vervedeck-datasets"
-    echo "HF_ENDPOINT=https://hf-mirror.com"
-    echo "ARGILLA_API_KEY=$(openssl rand -hex 16)"
-    echo "GRAFANA_PASSWORD=$(rand_alnum 12)"
-    echo "AM_WEBHOOK_TOKEN=$(openssl rand -hex 16)"
-    echo "GRAFANA_ANONYMOUS=true"
-    echo "CORS_ORIGINS=*"
-    echo "API_DOCS_ENABLED=true"
-    echo "GRAFANA_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana/"
-    echo "GRAFANA_LIGHT_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana-light/"
-    echo "SCRAPE_BIND_IP=${VD_IP}"
-  } > .env
+  (
+    umask 077   # 仅本子 shell 内生效（.env 含密钥，600 落盘）
+    VD_IP=$(hostname -I 2>/dev/null | awk '{print $1}'); VD_IP=${VD_IP:-127.0.0.1}
+    VD_PORT=$(grep -oE 'listen [0-9]+ ssl' ../platform/frontend/nginx.conf 2>/dev/null | grep -oE '[0-9]+' | head -1)
+    if [ -n "$VD_PORT" ] && [ "$VD_PORT" != "443" ]; then VD_SUFFIX=":$VD_PORT"; else VD_SUFFIX=""; fi
+    {
+      echo "# VerveDeck 环境变量 —— deploy.sh 自动生成于 $(date '+%F %T')（请妥善保管本文件）"
+      echo "ADMIN_PASSWORD=$(rand_alnum 12)"
+      echo "JWT_SECRET=$(openssl rand -hex 32)"
+      echo "POSTGRES_PASSWORD=$(openssl rand -hex 12)"
+      echo "RUSTFS_ACCESS_KEY=vervedeck"
+      echo "RUSTFS_SECRET_KEY=$(openssl rand -hex 16)"
+      echo "S3_ENDPOINT=http://rustfs:9000"
+      echo "S3_BUCKET=vervedeck-datasets"
+      echo "HF_ENDPOINT=https://hf-mirror.com"
+      echo "ARGILLA_API_KEY=$(openssl rand -hex 16)"
+      echo "GRAFANA_PASSWORD=$(rand_alnum 12)"
+      echo "AM_WEBHOOK_TOKEN=$(openssl rand -hex 16)"
+      echo "GRAFANA_ANONYMOUS=true"
+      echo "CORS_ORIGINS=*"
+      echo "API_DOCS_ENABLED=true"
+      echo "GRAFANA_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana/"
+      echo "GRAFANA_LIGHT_ROOT_URL=https://${VD_IP}${VD_SUFFIX}/grafana-light/"
+      echo "SCRAPE_BIND_IP=${VD_IP}"
+    } > .env
+  )
   echo "    已生成 .env（强随机密钥，权限 600；admin 初始密码见 .env ADMIN_PASSWORD）"
 else
   # 已有 .env：检查高危默认值是否仍未修改
@@ -64,13 +69,19 @@ mkdir -p /data/models/hub /data/datasets /data/jobs /data/evals /data/uploads \
          /data/grafana /data/grafana-light /data/prometheus \
          /data/monitoring/rules /data/monitoring/sd /data/monitoring/am-data
 # 数据目录属主必须匹配容器运行用户，否则首启 AccessDenied 崩溃（postgres/redis 由镜像
-# entrypoint 以 root 自 chown 无需处理；opensearch/argilla/grafana/prometheus 需在此显式 chown）：
+# entrypoint 以 root 自 chown 无需处理；opensearch/argilla/grafana/prometheus/alertmanager
+# 需在此显式 chown——alertmanager 以 nobody(65534) 运行，数据目录 /am 写不了会无限重启）：
 chown -R 1000:0      /data/opensearch 2>/dev/null || true      # opensearch
 chown -R 1000:1000   /data/argilla    2>/dev/null || true      # argilla-server（uid=1000）
 chown -R 472:472     /data/grafana /data/grafana-light 2>/dev/null || true   # grafana（uid=472）
 chown -R 65534:65534 /data/prometheus 2>/dev/null || true      # prometheus（nobody=65534）
+chown -R 65534:65534 /data/monitoring/am-data 2>/dev/null || true   # alertmanager（nobody=65534）
+# 显式 chmod 兜底：旧版脚本 umask 077 泄漏会把目录建成 700/文件 600，重跑 deploy 也要能自愈
+# （rules/sd 挂进 prometheus、alertmanager.yml 挂进 alertmanager，均为 nobody 只读消费）
+chmod 755 /data/monitoring /data/monitoring/rules /data/monitoring/sd 2>/dev/null || true
 # alertmanager 配置为单文件挂载：首启必须存在（否则 docker 建成目录致"目录挂到文件"挂载失败）
 [ -f /data/monitoring/alertmanager.yml ] || cp monitoring/alertmanager/alertmanager.yml /data/monitoring/alertmanager.yml
+chmod 644 /data/monitoring/alertmanager.yml 2>/dev/null || true
 
 # 网关限流默认配置（web 容器绑定挂载；必须在 compose up 前存在，否则 docker 建出空目录致 nginx 起不来）。
 # 平台页面（系统管理→设置→网关限流）保存后会覆盖本文件并热加载，此处仅首启默认值

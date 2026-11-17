@@ -49,17 +49,23 @@ def test_storage_unauth_401():
 
 
 def test_storage_default_alert_rules(admin_tok):
-    """存储 IO 两条默认告警规则必须存在（存量库由 init_db 幂等补建）"""
+    """存储 IO 默认告警规则必须存在（存量库由 init_db 幂等补建）。
+    2865125 起所有指标均为两档阈值（warning+critical），按 (阈值→规则) 映射断言。"""
     r = requests.get(f"{BASE}/api/admin/alerts/rules", headers=H(admin_tok), timeout=30,
                      params={"limit": 1000})
     assert r.status_code == 200, r.text
-    by_metric = {x["metric"]: x for x in r.json()["items"] if x["kind"] == "threshold"}
-    assert "host_disk_io_ms" in by_metric, "缺默认规则：磁盘 IO 延时过高"
-    assert "host_disk_util" in by_metric, "缺默认规则：磁盘 IO 利用率过高"
-    assert by_metric["host_disk_io_ms"]["op"] == ">"
-    assert by_metric["host_disk_io_ms"]["threshold"] == 200
-    assert by_metric["host_disk_util"]["op"] == ">"
-    assert by_metric["host_disk_util"]["threshold"] == 90
+    by_metric: dict[str, list[dict]] = {}
+    for x in r.json()["items"]:
+        if x["kind"] == "threshold":
+            by_metric.setdefault(x["metric"], []).append(x)
+    assert "host_disk_io_ms" in by_metric, "缺默认规则：磁盘 IO 延时"
+    assert "host_disk_util" in by_metric, "缺默认规则：磁盘 IO 利用率"
+    io = {x["threshold"]: x for x in by_metric["host_disk_io_ms"]}
+    assert io[200]["op"] == ">" and io[200]["severity"] == "warning", io
+    assert io[400]["op"] == ">" and io[400]["severity"] == "critical", io
+    util = {x["threshold"]: x for x in by_metric["host_disk_util"]}
+    assert util[90]["op"] == ">" and util[90]["severity"] == "warning", util
+    assert util[95]["op"] == ">" and util[95]["severity"] == "critical", util
 
 
 def test_storage_rule_metric_accepted(admin_tok):

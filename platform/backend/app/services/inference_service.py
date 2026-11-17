@@ -492,7 +492,13 @@ def hot_add_lora(dep: Deployment, name: str, path: str) -> dict:
         except Exception as e:
             fails.append(f"{base}: {e}")
     if fails:
-        return {"ok": False, "error": "LoRA 热加载部分失败（P/D 两侧需一致，请重试）: " + " | ".join(fails)[:2000]}
+        msg = " | ".join(fails)[:2000]
+        # 部署未带 --enable-lora 启动时重试无解，给出明确处置（旧文案"请重试"误导）
+        if "LoRA is not enabled" in msg:
+            return {"ok": False, "error":
+                    "部署未启用 LoRA（enable_lora），无法热加载：请以 enable_lora=true "
+                    "重建/更新部署后重试。详情: " + msg}
+        return {"ok": False, "error": "LoRA 热加载部分失败（P/D 两侧需一致，请重试）: " + msg}
     return {"ok": True, "targets": len(targets)}
 
 

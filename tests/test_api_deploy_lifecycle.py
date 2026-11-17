@@ -150,10 +150,20 @@ def _get2(admin_tok, lc):
 
 
 def test_scale_up_no_gpu_then_stop_delete(admin_tok, lc):
-    """单卡节点 → 扩容 2 副本被拒；随后停止并删除部署 2"""
+    """扩容超出本机 GPU 容量应被拒（400）；随后停止并删除部署 2。
+    按节点实际卡数自适应：部署 2 占 1 卡（fixture 已停部署 1），扩到
+    gpu_count+1 副本必超出本机容量。（旧版写死"单卡节点→扩 2 副本"，
+    双卡机上扩容物理可行 → 200 误报。）"""
+    r = requests.get(f"{BASE}/api/cluster/nodes", headers=H(admin_tok), timeout=15)
+    assert r.status_code == 200, r.text
+    online = [n for n in r.json() if n.get("status") == "online"]
+    local = next((n for n in online if n["name"] == "node-1"),
+                 (max(online, key=lambda n: n.get("gpu_count") or 0) if online
+                  else {"gpu_count": 1}))
+    n_gpu = local.get("gpu_count") or 1
     r = requests.post(f"{BASE}/api/inference/deployments/{lc['dep2_id']}/scale",
-                      headers=H(admin_tok), timeout=60, json={"replicas": 2})
-    assert r.status_code == 400, f"GPU 不足应 400: {r.status_code} {r.text[:200]}"
+                      headers=H(admin_tok), timeout=60, json={"replicas": n_gpu + 1})
+    assert r.status_code == 400, f"超出 GPU 容量扩容应 400: {r.status_code} {r.text[:200]}"
     # 停止
     r = requests.post(f"{BASE}/api/inference/deployments/{lc['dep2_id']}/stop",
                       headers=H(admin_tok), timeout=120)

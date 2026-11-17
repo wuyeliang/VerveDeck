@@ -454,6 +454,13 @@ def _atomic_write(path: str, content: str):
         f.write(content)
         f.flush()
         os.fsync(f.fileno())
+    # 消费方（prometheus/alertmanager）以 nobody 运行：必须 644 可读。
+    # 原地写保留旧文件 mode——若文件曾以 600 落盘（如旧版 deploy.sh umask 077
+    # 泄漏建成），in-place 重写不会修复权限，这里显式归位 644。
+    try:
+        os.chmod(path, 0o644)
+    except OSError:
+        pass
 
 
 def _reload(url: str, what: str, tries: int = 8, delay: float = 3.0) -> bool:

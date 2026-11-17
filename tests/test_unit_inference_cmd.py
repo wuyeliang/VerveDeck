@@ -197,12 +197,14 @@ def test_gpu_snapshot_power_limit_and_remap(monkeypatch):
 # ---------------- gpu-agent 环境采集（agent.meta） ----------------
 
 def test_gpu_read_meta(monkeypatch, tmp_path):
+    # #103 起 meta 含 ib_devices 键（RDMA 设备名，宿主无 RDMA 时为空）
     f = tmp_path / "agent.meta"
-    f.write_text("driver=550.54.15\ncuda=12.4\n")
+    f.write_text("driver=550.54.15\ncuda=12.4\nib_devices=uverbs0,uverbs1,rdma_cm\n")
     monkeypatch.setattr(gs, "META_FILE", str(f))
-    assert gs.read_meta() == {"driver": "550.54.15", "cuda": "12.4"}
+    assert gs.read_meta() == {"driver": "550.54.15", "cuda": "12.4",
+                              "ib_devices": "uverbs0,uverbs1,rdma_cm"}
 
 
 def test_gpu_read_meta_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(gs, "META_FILE", str(tmp_path / "nope"))
-    assert gs.read_meta() == {"driver": "", "cuda": ""}
+    assert gs.read_meta() == {"driver": "", "cuda": "", "ib_devices": ""}
