@@ -168,21 +168,41 @@ def _local_gpu_count() -> int:
         return 0
 
 
+def _gpu_free_snapshot() -> tuple[list[int], set[int], int, dict | None]:
+    """单次「空闲 GPU」快照：(free, reserved, total, mem)。
+
+    空闲 = 未被平台容器预留 且 DCGM 显存低于阈值（无外部进程）。
+    枚举不到卡（DCGM 未就绪/节点未登记）时 total=0，由调用方退回旧行为。"""
+    mem = _host_gpu_mem_used()
+    reserved = _fintune_reserved_gpus()
+    total = max(_local_gpu_count(), len(mem) if mem else 0)
+    if total == 0:
+        return [], set(), 0, mem
+    free = [i for i in range(total)
+            if i not in reserved and (mem is None or mem.get(i, 0) < _GPU_BUSY_MEM_MIB)]
+    return free, reserved, total, mem
+
+
 def assign_gpus(n: int) -> list[int]:
     """分配 n 张空闲 GPU 卡，返回物理索引（升序）。
 
-    空闲 = 宿主显存低于阈值（无外部进程）且未被平台容器预留。全局锁串行化
-    「查询-标记-创建」窗口（start_task 紧随 create，毫秒级），防并发双占。
-    枚举不到卡（DCGM 未就绪/节点未登记）时退回旧行为（按索引取前 N 张），
-    由引擎在真实撞卡时报错。"""
+    空闲 = 宿主显存低于阈值（无外部进程）且未被平台容器预留。
+    DCGM→Prometheus 存在最长约 45s 滞后（dcgm 更新 30s + scrape 15s）：平台刚释放
+    的卡仍被报高占用，直接判会误报"外部占用"。故先在**锁外**等指标沉降（让刚释放
+    的卡从"外部占用"翻转为空闲）——真正被外部占用的卡整段等待都保持占用，等待后
+    仍不足则正确报错；最后**锁内**做权威「检查+绑定」（等待期状态可能变化），
+    串行化并发分配防双占。常见情况（卡充足）首次即命中，无任何等待。"""
+    free, reserved, total, mem = _gpu_free_snapshot()
+    if total > 0 and len(free) < n:
+        for _ in range(9):  # 最多 ~45s，覆盖 DCGM+scrape 滞后窗口
+            time.sleep(5)
+            free, reserved, total, mem = _gpu_free_snapshot()
+            if total == 0 or len(free) >= n:
+                break
     with _gpu_alloc_lock:
-        mem = _host_gpu_mem_used()
-        reserved = _fintune_reserved_gpus()
-        total = max(_local_gpu_count(), len(mem) if mem else 0)
+        free, reserved, total, mem = _gpu_free_snapshot()  # 锁内权威复检
         if total == 0:
-            return list(range(n))
-        free = [i for i in range(total)
-                if i not in reserved and (mem is None or mem.get(i, 0) < _GPU_BUSY_MEM_MIB)]
+            return list(range(n))  # 枚举不到卡退回旧行为，由引擎真实撞卡时报错
         if len(free) < n:
             ext = [i for i in range(total) if i not in reserved
                    and mem is not None and mem.get(i, 0) >= _GPU_BUSY_MEM_MIB]
