@@ -20,7 +20,8 @@ def _status(admin_tok):
 def test_upgrade_status_shape(admin_tok):
     rows = _status(admin_tok)
     assert {x["key"] for x in rows} == {
-        "vllm", "sglang", "llamafactory", "gpu_agent", "backend", "web"}
+        "vllm", "sglang", "llamafactory", "gpu_agent", "evalscope", "mineru",
+        "backend", "web"}
     for x in rows:
         assert {"key", "label", "image", "kind", "impact", "exists", "size",
                 "runtime", "impact_hint", "running_task"} <= set(x)
@@ -103,7 +104,7 @@ def test_upgrade_tasks_shape(admin_tok):
                 "created_at", "finished_at"} <= set(t)
         assert t["status"] in ("running", "success", "failed")
         assert t["target"] in ("vllm", "sglang", "llamafactory", "gpu_agent",
-                               "backend", "web")
+                               "evalscope", "mineru", "backend", "web")
 
 
 def test_upgrade_tasks_limit(admin_tok):

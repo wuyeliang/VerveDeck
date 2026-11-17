@@ -563,8 +563,8 @@ def audit_actions(db=Depends(get_db), user=Depends(require_role("super_admin", "
 # ---------- 集群升级 ----------
 
 class UpgradeReq(BaseModel):
-    target: str  # vllm/sglang/llamafactory/gpu_agent/backend/web
-    to_version: str = ""  # pull 类组件必填（目标 tag）；build 类组件忽略
+    target: str  # vllm/sglang/llamafactory/gpu_agent/evalscope/mineru/backend/web
+    to_version: str = ""  # pull 类组件必填（目标 tag）；build 类组件忽略（以源码树重建同 tag）
 
 
 @router.get("/upgrade/status")

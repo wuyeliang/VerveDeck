@@ -133,6 +133,7 @@ Grafana is embedded in the platform monitoring dashboard via iframe (`GF_SECURIT
 ### 3.8 Cluster Upgrade (Blue-Green)
 
 - **Engine kinds** (vllm/sglang/llamafactory/gpu-agent): Docker Hub version probe (10min cache) → pull new tag → write runtime pin (`/data/upgrade/image_pins.json`); **running jobs are untouched**, new jobs use the new image;
+- **Self-built task image kinds** (evalscope evaluation / mineru document parsing): rebuild the same tag from the host `/repo` source tree (a rebuild upgrades its dependencies); evalscope only affects new eval jobs, MinerU's resident container is blue-green recreated (seconds of interruption);
 - **Platform kinds** (backend/web): rebuild image from host `/repo` + blue-green container recreate (temp-named new container → verify running → stop old, remove old, rename; service aliases keep DNS stable);
 - **Self-upgrade convergence**: when backend upgrades itself, the old process dies with its container; the new process's scheduler `converge()` checks the temp container each round and completes the switch (15min timeout → failed).
 

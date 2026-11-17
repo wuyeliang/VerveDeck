@@ -12,6 +12,7 @@ from ..models import EvalTask, Deployment, ModelAsset, Dataset, DatasetVersion
 from ..database import SessionLocal
 from . import taskcontainer as tc
 from . import dataset_service as ds
+from . import upgrade_service
 from .inference_service import deployment_endpoint, ensure_serving
 
 
@@ -91,7 +92,7 @@ def launch(task: EvalTask) -> None:
     name = f"ft-eval-{task_id}"
     tc.remove_container(name, force=True)
     cid = tc.create_container(
-        name=name, image=settings.images_eval, gpus=0, cpus=4, mem_gb=8,
+        name=name, image=upgrade_service.current_image("evalscope"), gpus=0, cpus=4, mem_gb=8,
         labels={"fintune.job": str(task_id), "fintune.type": "eval"},
     )
     # task.json 由 backend 写到宿主机 /data/evals/<id>/（容器经挂载可见）；

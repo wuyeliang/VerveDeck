@@ -228,6 +228,8 @@ def test_service_aliases(pin_dir):
 @pytest.mark.parametrize("target,hint", [
     ("vllm", "拉取完成后新任务/新部署使用新镜像"),
     ("gpu_agent", "GPU 监控 Agent 将以新镜像重建"),
+    ("evalscope", "重建完成后新评测任务使用新镜像"),
+    ("mineru", "MinerU 文档解析容器将以新镜像重建"),
     ("backend", "该服务将以新镜像重建"),
     ("nope", ""),
 ])

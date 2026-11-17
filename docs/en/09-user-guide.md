@@ -154,7 +154,7 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
 | Guard Rules | Content-safety rules (regex/keyword, input/output interception, scope); batch delete |
 | Alert Rules | Prometheus-expression rules, severity, duration, notification channels (WeCom/email, test send) |
 | Login Security | IP whitelist, failure lockout threshold/duration |
-| Cluster Upgrade | Per-component current/available versions (Docker Hub) / one-click upgrade; engine kinds only update the pin (new jobs pick it up), agent/platform kinds blue-green recreate containers (impact shown in the UI) |
+| Cluster Upgrade | Per-component current/available versions (Docker Hub) / one-click upgrade; engine kinds only update the pin (new jobs pick it up), self-built images (evalscope evaluation / MinerU parsing) are rebuilt (evalscope only affects new jobs; MinerU container blue-green recreated), agent/platform kinds blue-green recreate containers (impact shown in the UI) |
 | Theme & Appearance | Light/dark theme, 6 languages |
 | About | Version, open-source license, GitHub link |
 

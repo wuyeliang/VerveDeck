@@ -4,6 +4,10 @@
 - vllm / sglang / llamafactory：官方镜像，docker pull 目标 tag → 写运行时 pin
   （/data/upgrade/image_pins.json），新任务/部署使用新镜像，运行中的不受影响
 - gpu_agent：DCGM Agent（nvidia/dcgm），pull + 蓝绿重建容器（监控中断数秒）
+- evalscope：评测引擎自构镜像（fintune/evalscope:1.0，evalscope + 平台 runner），
+  以宿主源码树 /repo 重建同 tag，仅新评测任务生效（运行中评测容器不受影响）
+- mineru：文档解析常驻容器（fintune/mineru:1.0），重建同 tag + 蓝绿重建
+  容器（解析服务中断数秒）
 - backend / web：自构镜像（fintune/*:1.0），以宿主源码树 /repo 重建同 tag +
   蓝绿重建容器（平台短暂不可用约 1 分钟；backend 自升级时 worker 线程随旧容器
   消亡，新进程调度器每轮调 converge() 完成任务收敛）
@@ -44,6 +48,13 @@ COMPONENTS: dict[str, dict] = {
     "gpu_agent": {"label": "GPU 监控 Agent (DCGM)", "kind": "pull", "hub": "nvidia/dcgm",
                   "tag_re": r"^\d+\.\d+\.\d+-ubuntu24\.04$", "impact": "agent",
                   "container": "fintune-gpu-agent-1"},
+    "evalscope": {"label": "evalscope 评测引擎", "kind": "build", "ctx": "images/evalscope",
+                  "image": "fintune/evalscope:1.0", "impact": "engine",
+                  "hint": "重建完成后新评测任务使用新镜像（evalscope 为最新版）；运行中的评测任务不受影响"},
+    "mineru": {"label": "MinerU 文档解析", "kind": "build", "ctx": "images/mineru",
+               "image": "fintune/mineru:1.0", "impact": "agent",
+               "container": "fintune-mineru-1",
+               "hint": "MinerU 文档解析容器将以新镜像重建，解析服务中断数秒"},
     "backend": {"label": "平台后端", "kind": "build", "ctx": "platform/backend",
                 "image": "fintune/backend:1.0", "container": "fintune-backend-1", "impact": "self"},
     "web": {"label": "Web 前端", "kind": "build", "ctx": "platform/frontend",
@@ -61,6 +72,7 @@ def _base_pins() -> dict:
         "sglang": settings.images_sglang,
         "llamafactory": settings.images_train,
         "gpu_agent": GPU_AGENT_IMAGE,
+        "evalscope": settings.images_eval,
     }
 
 
@@ -95,11 +107,14 @@ def current_image(key: str) -> str:
 
 
 def impact_hint(target: str) -> str:
+    c = COMPONENTS.get(target, {})
+    if c.get("hint"):
+        return c["hint"]
     return {
         "engine": "拉取完成后新任务/新部署使用新镜像；运行中的任务与部署不受影响（重新部署后生效）",
         "agent": "GPU 监控 Agent 将以新镜像重建，监控数据中断数秒",
         "self": "该服务将以新镜像重建，平台短暂不可用（约 1 分钟）",
-    }.get(COMPONENTS.get(target, {}).get("impact", ""), "")
+    }.get(c.get("impact", ""), "")
 
 
 # ---------------------------------------------------------------------------
