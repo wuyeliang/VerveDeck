@@ -137,6 +137,56 @@
         { "refId": "B", "expr": "rate(node_context_switches_total[2m])", "legendFormat": "上下文切换/s", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
       ],
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 20, "type": "stat", "title": "磁盘 IO 延时 (ms)",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 28 },
+      "targets": [
+        { "refId": "A", "expr": "1000 * (sum(rate(node_disk_io_time_seconds_total[5m])) / (sum(rate(node_disk_reads_completed_total[5m])) + sum(rate(node_disk_writes_completed_total[5m]))))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 50 }, { "color": "red", "value": 200 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 21, "type": "stat", "title": "磁盘 IO 利用率 (%)",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 28 },
+      "targets": [
+        { "refId": "A", "expr": "100 * sum(rate(node_disk_io_time_seconds_total{device!~\"loop.*|ram.*|sr.*|fd.*\"}[5m]))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 90 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 22, "type": "timeseries", "title": "磁盘 IO 延时 (ms，按设备)",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 28 },
+      "targets": [
+        { "refId": "A", "expr": "1000 * (rate(node_disk_io_time_seconds_total[5m]) / (rate(node_disk_reads_completed_total[5m]) + rate(node_disk_writes_completed_total[5m])))", "legendFormat": "{{device}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 23, "type": "timeseries", "title": "磁盘 IO 利用率 (%)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "targets": [
+        { "refId": "A", "expr": "100 * rate(node_disk_io_time_seconds_total[5m])", "legendFormat": "{{device}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 24, "type": "timeseries", "title": "平均 IO 队列深度",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "targets": [
+        { "refId": "A", "expr": "rate(node_disk_io_time_weighted_seconds_total[5m])", "legendFormat": "{{device}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } }, "overrides": [] }
     }
   ]
 }

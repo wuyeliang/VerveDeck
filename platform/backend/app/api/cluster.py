@@ -202,6 +202,41 @@ def system_metrics(minutes: int = 60, db=Depends(get_db), user=Depends(get_curre
     return {"node": node.name if node else "", "latest": latest, "series": series}
 
 
+@router.get("/storage")
+def storage_metrics(minutes: int = 60, db=Depends(get_db), user=Depends(get_current_user)):
+    """宿主存储 IO（node-exporter）：读写吞吐 + IO 延时/利用率，最新快照 + 趋势。
+
+    io_ms 空闲窗口为 NaN（0/0）——按"无数据"处理（None/不进序列），不会 500 也不误报告警。
+    """
+    node = db.query(GpuNode).filter_by(name=settings.node_name).first()
+    P = prom_service.PROMQL
+
+    def inst(expr):
+        try:
+            r = prom_service.prom_instant(expr)
+            return _f(r[0]["value"][1]) if r else None
+        except Exception:
+            return None
+
+    read = inst(P["host_disk_read"])
+    write = inst(P["host_disk_write"])
+    io_ms = inst(P["host_disk_io_ms"])
+    io_util = inst(P["host_disk_util"])
+    latest = (None if (read is None and write is None
+                       and io_ms is None and io_util is None) else {
+        "ts": int(time.time()),
+        "read_bps": read, "write_bps": write,
+        "io_ms": io_ms, "io_util_pct": io_util,
+    })
+    series = _merged_series([
+        ("read_bps", P["host_disk_read"]),
+        ("write_bps", P["host_disk_write"]),
+        ("io_ms", P["host_disk_io_ms"]),
+        ("io_util", P["host_disk_util"]),
+    ], minutes)
+    return {"node": node.name if node else "", "latest": latest, "series": series}
+
+
 class PriorityReq(BaseModel):
     priority: int  # 1-9
 

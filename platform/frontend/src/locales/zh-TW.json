@@ -203,6 +203,7 @@
     "gpuDetail": "顯存溫度 {{mt}}°C · SM/顯存時鐘 {{sm}}/{{mc}}MHz · ECC dbe/sbe {{ecc}} · XID {{xid}} · 降頻 {{thr}}",
     "monTitle": "監控大屏", "monGpu": "GPU", "monNode": "節點",
     "monInfer": "推理", "monHint": "數據由 Prometheus 采集、Grafana 呈現 · 告警規則與通知通道請在管理端配置", "monFull": "全螢幕",
+    "monStorage": "儲存 I/O", "stgRead": "讀吞吐量", "stgWrite": "寫吞吐量", "stgIoMs": "IO 延遲", "stgIoUtil": "IO 利用率",
     "healthOk": "正常", "healthWarn": "警告", "healthErr": "異常",
     "trend": "GPU 利用率 / 顯存 / 功耗（近 1 小時）", "chartUtil": "利用率%", "chartMem": "顯存GB", "chartPower": "功耗W",
     "queueTitle": "任務排隊（優先級調度：1-9，越大越先）", "colTask": "任務", "colStage": "階段",

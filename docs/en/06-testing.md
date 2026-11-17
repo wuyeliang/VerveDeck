@@ -38,6 +38,7 @@ Files and coverage:
 | test_api_deploy_lifecycle.py | Inference deployment state machine (start/stop/scale/token-reissue races) |
 | test_api_cluster_dashboard.py | Nodes/queue/priority/Dashboard (incl. storage health field) |
 | test_api_cluster_nodes.py | **Compute-node registration CRUD (#60) + system/inference overview views** |
+| test_api_cluster_storage.py | **Storage I/O monitoring (read/write throughput + IO latency/utilization) + default storage alert rules** (structure/finite values/RBAC/default rules/metric validation) |
 | test_api_storage.py | **Object storage S3 integration** (health field/roundtrip fetch/version sync/delete cleanup; whole group skipped when S3 absent) |
 | test_api_quantize.py | **Quantize (model compression) center, 33 cases**: method metadata / full creation-validation matrix / tenant isolation / detail & logs / delete rules / batch delete (mixed + cross-tenant) / scheduler state machine (real scheduler reconciles lost context → failed + alert; success → artifact registered as merged asset with lineage) / build_config all 4 methods / artifact name dedup |
 | test_api_notify.py | Notify channel config/validation/per-channel test/RBAC |

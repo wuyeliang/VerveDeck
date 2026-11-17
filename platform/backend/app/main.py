@@ -102,6 +102,8 @@ DEFAULT_ALERT_RULES = [
     ("宿主 CPU 过高", "threshold", "host_cpu", ">", 90, "warning", 600, ""),
     ("宿主内存过高", "threshold", "host_mem", ">", 90, "warning", 600, ""),
     ("宿主磁盘过高", "threshold", "host_disk", ">", 85, "warning", 900, ""),
+    ("磁盘 IO 延时过高", "threshold", "host_disk_io_ms", ">", 200, "warning", 300, ""),
+    ("磁盘 IO 利用率过高", "threshold", "host_disk_util", ">", 90, "warning", 300, ""),
     ("推理 KV 缓存过高", "threshold", "kv_cache", ">", 90, "warning", 300, ""),
     ("推理服务离线", "threshold", "infer_down", "<", 1, "critical", 300, ""),
     ("监控目标离线", "threshold", "system_up", "<", 1, "warning", 300, ""),
@@ -163,6 +165,16 @@ def init_db():
                 db.add(AlertRule(name="登录锁定（疑似暴力破解）", kind="event",
                                  metric="", op="", threshold=0, event=event,
                                  severity="warning", cooldown=300))
+        # 存量库幂等补默认阈值规则（2026-11 新增存储 IO 监控：老库没有对应规则则补建，
+        # 用户已自建同指标+操作+阈值规则时不重复补）
+        for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
+            if kind != "threshold" or metric not in ("host_disk_io_ms", "host_disk_util"):
+                continue
+            if not db.query(AlertRule).filter(
+                    AlertRule.kind == "threshold", AlertRule.metric == metric,
+                    AlertRule.op == op, AlertRule.threshold == thr).first():
+                db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
+                                 threshold=thr, event=event, severity=sev, cooldown=cd))
         # 数据目录
         for d in ("models/hub", "datasets", "jobs", "evals", "infer", "gpu",
                   "uploads", "dvc-remote", "hf-cache", "argilla"):

@@ -203,6 +203,7 @@
     "gpuDetail": "Mem {{mt}}°C · Reloj SM/Mem {{sm}}/{{mc}}MHz · ECC dbe/sbe {{ecc}} · XID {{xid}} · Ahogo {{thr}}",
     "monTitle": "Paneles de monitoreo", "monGpu": "GPU", "monNode": "Nodo",
     "monInfer": "Inferencia", "monHint": "Datos recogidos por Prometheus y mostrados en Grafana · Configure reglas de alertas y canales en Administrar", "monFull": "Pantalla completa",
+    "monStorage": "E/S de almacenamiento", "stgRead": "Tasa de lectura", "stgWrite": "Tasa de escritura", "stgIoMs": "Latencia E/S", "stgIoUtil": "Utilización E/S",
     "healthOk": "OK", "healthWarn": "Aviso", "healthErr": "Error",
     "trend": "Uso de GPU / Memoria / Potencia (última hora)", "chartUtil": "Uso %", "chartMem": "Mem GB", "chartPower": "Potencia W",
     "queueTitle": "Cola de tareas (prioridad: 1-9, mayor primero)", "colTask": "Tarea", "colStage": "Etapa",

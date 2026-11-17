@@ -203,6 +203,7 @@
     "gpuDetail": "Mem {{mt}}°C · SM/Mem clock {{sm}}/{{mc}}MHz · ECC dbe/sbe {{ecc}} · XID {{xid}} · Throttle {{thr}}",
     "monTitle": "Monitoring dashboards", "monGpu": "GPU", "monNode": "Node",
     "monInfer": "Inference", "monHint": "Data collected by Prometheus, rendered by Grafana · Configure alert rules and channels in Admin", "monFull": "Full screen",
+    "monStorage": "Storage I/O", "stgRead": "Read throughput", "stgWrite": "Write throughput", "stgIoMs": "IO latency", "stgIoUtil": "IO utilization",
     "healthOk": "OK", "healthWarn": "Warning", "healthErr": "Error",
     "trend": "GPU Utilization / Memory / Power (last hour)", "chartUtil": "Util %", "chartMem": "Mem GB", "chartPower": "Power W",
     "queueTitle": "Job Queue (priority scheduling: 1-9, higher first)", "colTask": "Job", "colStage": "Stage",

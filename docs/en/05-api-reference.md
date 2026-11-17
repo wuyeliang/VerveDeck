@@ -198,6 +198,7 @@ Components: vllm / sglang / llamafactory / gpu_agent (pull kind, tag swap); back
 | DELETE | /api/cluster/nodes/{nid} | Remove node |
 | GET | /api/cluster/nodes/{nid}/metrics | Node metric history `{minutes}` (Prometheus) |
 | GET | /api/cluster/system | System metrics (CPU/mem/disk/net/OS) |
+| GET | /api/cluster/storage | Storage I/O (read/write throughput B/s + IO latency ms + IO utilization %, node-exporter; `{minutes}`) |
 | GET | /api/cluster/queue | Task queue (queued/running, GPU usage) |
 | PUT | /api/cluster/queue/{jid} | Adjust priority `{priority 1-9}` |
 | POST | /api/cluster/queue/{jid}/promote | Promote to head of queue |

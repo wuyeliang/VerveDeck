@@ -24,6 +24,7 @@ tests/
 ├── test_api_deploy_lifecycle.py 部署状态机（唯一一次真实部署切换）
 ├── test_api_cluster_dashboard.py 节点/队列/优先级/Dashboard
 ├── test_api_cluster_nodes.py     计算节点纳管 CRUD（#60）+ 系统/推理总览
+├── test_api_cluster_storage.py   存储 IO 监控（读写吞吐 + IO 延时/利用率）+ 默认存储告警规则
 ├── test_api_storage.py  对象存储 S3 集成（无 S3 整组 skip）
 ├── test_api_quantize.py 量化（模型压缩）33 用例
 ├── test_api_notify.py   通知通道配置/校验/RBAC

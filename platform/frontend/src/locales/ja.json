@@ -203,6 +203,7 @@
     "gpuDetail": "メモリ温度 {{mt}}°C · SM/メモリクロック {{sm}}/{{mc}}MHz · ECC dbe/sbe {{ecc}} · XID {{xid}} · スロットル {{thr}}",
     "monTitle": "監視ダッシュボード", "monGpu": "GPU", "monNode": "ノード",
     "monInfer": "推論", "monHint": "Prometheus が収集し Grafana が表示 · アラートルールと通知チャネルは管理画面で設定", "monFull": "全画面",
+    "monStorage": "ストレージ I/O", "stgRead": "読み込みスループット", "stgWrite": "書き込みスループット", "stgIoMs": "IO レイテンシ", "stgIoUtil": "IO 使用率",
     "healthOk": "正常", "healthWarn": "警告", "healthErr": "異常",
     "trend": "GPU 使用率 / VRAM / 電力（直近 1 時間）", "chartUtil": "使用率%", "chartMem": "VRAM GB", "chartPower": "電力 W",
     "queueTitle": "ジョブキュー（優先度スケジューリング：1-9、大きいほど先）", "colTask": "ジョブ", "colStage": "ステージ",

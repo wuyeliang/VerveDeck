@@ -254,6 +254,37 @@ function GpusView({ gpus }: { gpus: any[] }) {
   )
 }
 
+/** 存储 IO 原生卡片（读/写吞吐 + IO 延时/利用率），数据源 node-exporter，30s 轮询 */
+function StorageCard({ t }: { t: (k: string) => string }) {
+  const [stg, setStg] = useState<any>(null)
+  useEffect(() => {
+    const load = () => api.get('/api/cluster/storage').then((r) => setStg(r.data)).catch(() => {})
+    load()
+    const h = setInterval(load, 30000)
+    return () => clearInterval(h)
+  }, [])
+  const latest = stg?.latest
+  const ioMs = latest?.io_ms
+  const ioUtil = latest?.io_util_pct
+  return (
+    <Card size="small" style={{ marginBottom: 16 }} title={t('cluster.monStorage')}
+      extra={<span style={{ color: '#999', fontSize: 12 }}>{stg?.node || ''}</span>}>
+      <Row gutter={16}>
+        <Col span={6}><Statistic title={t('cluster.stgRead')} value={fmtBps(latest?.read_bps)} /></Col>
+        <Col span={6}><Statistic title={t('cluster.stgWrite')} value={fmtBps(latest?.write_bps)} /></Col>
+        <Col span={6}>
+          <Statistic title={t('cluster.stgIoMs')} value={ioMs == null ? '-' : `${Math.round(ioMs)} ms`}
+            valueStyle={{ color: ioMs != null && ioMs > 200 ? '#cf1322' : ioMs != null && ioMs > 50 ? '#fa8c16' : undefined }} />
+        </Col>
+        <Col span={6}>
+          <Statistic title={t('cluster.stgIoUtil')} value={ioUtil == null ? '-' : `${Math.round(ioUtil)}%`}
+            valueStyle={{ color: ioUtil != null && ioUtil > 90 ? '#cf1322' : ioUtil != null && ioUtil > 70 ? '#fa8c16' : undefined }} />
+        </Col>
+      </Row>
+    </Card>
+  )
+}
+
 /** 监控大屏：Grafana 仪表盘嵌入（GPU / 系统 / 推理，kiosk 只读视图，经 nginx 同源代理）
  *  主题跟随：Grafana 匿名主题固定（11.6 镜像 default_theme=dark，匿名 API 不允许改偏好），
  *  故维护两个实例——深色走 /grafana（默认 dark），浅色走 /grafana-light（default_theme=light），
@@ -293,6 +324,7 @@ function MonitorView({ queue, util, alerts, t }: { queue: any; util: any; alerts
           src={`${gfBase}/d/${dash}/?kiosk&orgId=1&from=${from}&to=now`}
           style={{ width: '100%', height: 540, border: `1px solid ${dark ? '#303030' : '#f0f0f0'}`, borderRadius: 6, background: dark ? '#111217' : '#fff' }} />
       </Card>
+      <StorageCard t={t} />
       <Row gutter={16}>
         <Col span={12}>
           <RunningTable queue={queue} t={t} util={util} />

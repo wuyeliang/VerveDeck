@@ -198,6 +198,7 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 | DELETE | /api/cluster/nodes/{nid} | 移除节点 |
 | GET | /api/cluster/nodes/{nid}/metrics | 节点指标历史 `{minutes}`（Prometheus） |
 | GET | /api/cluster/system | 系统指标（CPU/内存/磁盘/网络/OS） |
+| GET | /api/cluster/storage | 存储 IO（读/写吞吐 B/s + IO 延时 ms + IO 利用率 %，node-exporter；`{minutes}`） |
 | GET | /api/cluster/queue | 任务队列（queued/running，GPU 占用） |
 | PUT | /api/cluster/queue/{jid} | 调整优先级 `{priority 1-9}` |
 | POST | /api/cluster/queue/{jid}/promote | 插队到队首 |

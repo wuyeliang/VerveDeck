@@ -37,6 +37,16 @@ PROMQL = {
                   ' / node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}))'),
     "host_net_rx": 'sum(rate(node_network_receive_bytes_total{device!="lo"}[2m]))',
     "host_net_tx": 'sum(rate(node_network_transmit_bytes_total{device!="lo"}[2m]))',
+    # 存储 IO（磁盘读写吞吐 B/s；排除 loop/ram/sr 伪设备）。
+    # 注意：io_ms 空闲时为 0/0=NaN——告警比较对 NaN 恒为假（不会误报），
+    # API 侧 _f 把 NaN 转 None 按"无数据"处理；LVM（dm-*）双计对延时（比值）无影响，
+    # 吞吐/利用率只会偏高，阈值语义仍成立
+    "host_disk_read": 'sum(rate(node_disk_read_bytes_total{device!~"loop.*|ram.*|sr.*|fd.*"}[2m]))',
+    "host_disk_write": 'sum(rate(node_disk_written_bytes_total{device!~"loop.*|ram.*|sr.*|fd.*"}[2m]))',
+    "host_disk_io_ms": ('1000 * (sum(rate(node_disk_io_time_seconds_total[5m])) '
+                        '/ (sum(rate(node_disk_reads_completed_total[5m])) '
+                        '+ sum(rate(node_disk_writes_completed_total[5m]))))'),
+    "host_disk_util": '100 * sum(rate(node_disk_io_time_seconds_total{device!~"loop.*|ram.*|sr.*|fd.*"}[5m]))',
     "gpu_util": "DCGM_FI_DEV_GPU_UTIL",
     "gpu_temp": "DCGM_FI_DEV_GPU_TEMP",
     "gpu_mem": "100 * DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)",
@@ -55,6 +65,10 @@ METRIC_NAMES = {
     "host_cpu": "宿主 CPU",
     "host_mem": "宿主内存",
     "host_disk": "宿主磁盘",
+    "host_disk_read": "宿主磁盘读吞吐(B/s)",
+    "host_disk_write": "宿主磁盘写吞吐(B/s)",
+    "host_disk_io_ms": "宿主磁盘 IO 延时(ms)",
+    "host_disk_util": "宿主磁盘 IO 利用率(%)",
     "gpu_util": "GPU 利用率",
     "gpu_temp": "GPU 温度",
     "gpu_mem": "GPU 显存占用",
@@ -78,6 +92,8 @@ _ALERT_SLUG = {
     "kv_cache": "KvCacheHigh", "infer_waiting": "InferQueueHigh",
     "infer_latency_p95": "InferLatencyP95High",
     "infer_down": "InferDown", "system_up": "MonitorTargetDown",
+    "host_disk_read": "HostDiskReadHigh", "host_disk_write": "HostDiskWriteHigh",
+    "host_disk_io_ms": "HostDiskIoMsHigh", "host_disk_util": "HostDiskUtilHigh",
 }
 
 RULES_DIR = os.path.join(settings.data_dir, "monitoring", "rules")

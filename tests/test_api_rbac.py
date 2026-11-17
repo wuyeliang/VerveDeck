@@ -182,6 +182,7 @@ PUBLIC = [
     ("cluster_nodes", "GET", "/api/cluster/nodes", None),
     ("cluster_queue", "GET", "/api/cluster/queue", None),
     ("cluster_util", "GET", "/api/cluster/utilization", None),
+    ("cluster_storage", "GET", "/api/cluster/storage", None),
     ("dashboard", "GET", "/api/dashboard/summary", None),
 ]
 
