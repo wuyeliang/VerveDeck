@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
 """推理部署 API：部署管理 / OpenAI 兼容代理（鉴权×护栏×流式）/ 多 LoRA 热加载 / 扩缩容
 
-依赖常驻部署 1（qwen25-05b-base, running）。不创建新部署（GPU 单卡互斥）。
+依赖常驻部署（qwen25-05b-base, running）。本文件只真实创建 1 个部署
+（test_deploy_advanced_params_real：验证 advanced 参数被真实 vLLM 容器接受），
+在空闲卡上与常驻部署并行，finally 内 stop+delete 清理，不占卡、不污染常驻部署。
 """
+import time
+
 import pytest
 import requests
 
-from conftest import BASE, H, SUF, DEFAULT_PROJECT, DEPLOY_ID, DEPLOY_NAME
+from conftest import (BASE, H, SUF, DEFAULT_PROJECT, BASE_MODEL_ASSET_ID,
+                      DEPLOY_ID, DEPLOY_NAME)
 
 
 def _lora_asset(admin_tok):
@@ -443,3 +448,59 @@ def test_scale_missing_404(admin_tok):
     r = requests.post(f"{BASE}/api/inference/deployments/999999/scale",
                       headers=H(admin_tok), timeout=30, json={"replicas": 1})
     assert r.status_code == 404
+
+
+# ---------- 高级参数真实部署（唯一一次真实容器，验证命令被 vLLM 接受） ----------
+
+ADV_NAME = f"adv500-{SUF}"
+
+
+def _wait_terminal(admin_tok, did, timeout=900, interval=5):
+    """轮询部署直到终态（running/failed/error），返回其明细"""
+    t0 = time.time()
+    last = {}
+    while time.time() - t0 < timeout:
+        r = requests.get(f"{BASE}/api/inference/deployments/{did}",
+                         headers=H(admin_tok), timeout=15)
+        last = r.json() if r.status_code == 200 else {}
+        if last.get("status") in ("running", "failed", "error"):
+            return last
+        time.sleep(interval)
+    return last
+
+
+def test_deploy_advanced_params_real(admin_tok):
+    """带 advanced 参数真实部署 vLLM：单测只验证命令字符串正确，本用例验证
+    vLLM 真实接受这些参数（dtype/enforce_eager/max_num_seqs）启动并能提供
+    推理服务。在空闲卡上与常驻部署并行，finally 内 stop+delete 清理不占卡。
+
+    若某高级参数被 vLLM 版本拒绝（如不认 flag / 与量化冲突），部署会 failed，
+    本用例以失败暴露——这正是单测覆盖不到的"参数进真实容器"链路。
+    """
+    body = {"project_id": DEFAULT_PROJECT, "name": ADV_NAME,
+            "model_asset_id": BASE_MODEL_ASSET_ID, "engine": "vllm",
+            "tensor_parallel": 1, "max_model_len": 4096,
+            "advanced": {"dtype": "bfloat16", "enforce_eager": True,
+                         "max_num_seqs": 32},
+            "replicas": 1}
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=30, json=body)
+    r.raise_for_status()
+    did = r.json()["id"]
+    try:
+        d = _wait_terminal(admin_tok, did, timeout=900)
+        assert d.get("status") == "running", \
+            (f"带 advanced 参数的部署应成功启动: status={d.get('status')} "
+             f"error={str(d.get('error'))[:300]}")
+        r = _chat(tok=admin_tok, name=ADV_NAME, content="只回复两个字: 好的")
+        assert r.status_code == 200, \
+            f"advanced 部署代理 chat 应成功: {r.status_code} {r.text[:200]}"
+        assert r.json().get("choices"), "chat 响应应含 choices"
+    finally:
+        try:
+            requests.post(f"{BASE}/api/inference/deployments/{did}/stop",
+                          headers=H(admin_tok), timeout=120)
+        except Exception:
+            pass
+        requests.delete(f"{BASE}/api/inference/deployments/{did}",
+                        headers=H(admin_tok), timeout=60)
