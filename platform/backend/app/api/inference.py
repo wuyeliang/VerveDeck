@@ -313,16 +313,21 @@ def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curre
         raise HTTPException(400, f"GPU 不足：需要 {need} 卡，可用 {max(0, (node.gpu_count or 0) - used + have)}")
     asset = db.get(ModelAsset, d.model_asset_id)
     path = _resolve_model_path(asset, db)
-    # 先扩后缩
-    if want > d.replicas:
-        for i in range(d.replicas, want):
+    old = d.replicas
+    # 扩容：先建新副本（容器一旦创建即 docker-alive），再登记并提交——
+    # 避免并发 reconcile 在"新副本尚未登记"的窗口里按旧 container_ids 判死。
+    if want > old:
+        for i in range(old, want):
             inf.start_replica(d, i, path)
-    else:
-        for i in range(d.replicas - 1, want - 1, -1):
-            tc.remove_container(inf.deployment_container_name(d, i), force=True)
     d.replicas = want
     d.container_ids = [inf.deployment_container_name(d, i) for i in range(want)]
     db.commit()
+    # 缩容：先把新的（更小的）container_ids 落库提交，再摘除多余副本。
+    # 若先删容器后提交，并发 reconcile 会读到"旧表仍含已删副本"，
+    # 误判 not-alive → 把仍健康的部署标成 lost→failed（竞态）。
+    if want < old:
+        for i in range(old - 1, want - 1, -1):
+            tc.remove_container(inf.deployment_container_name(d, i), force=True)
     # 扩缩容后容器 IP 变化，刷新 Prometheus file_sd target
     tgs = []
     for i in range(want):
