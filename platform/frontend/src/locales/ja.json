@@ -210,7 +210,7 @@
     "colPriority": "優先度", "top": "最上位", "emptyQueue": "キューは空です",
     "runningTitle": "実行中ジョブ", "emptyRunning": "実行中ジョブなし", "colStart": "開始",
     "nodeInfo": "ノード {{node}} · オンラインデプロイ {{d}} · トレーニング中 {{j}} · 自動修復：GPU agent ハートビート 60s 超過でオフライン判定、関連ジョブは失敗扱いで再開可能",
-    "tabNodes": "計算ノード", "tabGpus": "GPU デバイス", "tabMonitor": "モニター", "colNode": "ノード", "colIdx": "No.", "colMemTemp": "メモリ温度", "colClocks": "SM/メモリクロック", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "スロットル", "colHealth": "健全性", "hostMetrics": "ホスト指標", "driver": "ドライバー", "cuda": "CUDA", "sysNet": "ネットワーク", "colPowerLimit": "電力制限", "colRemap": "リマップ", "colName": "GPU", "colTemp": "温度 (°C)",
+    "tabNodes": "計算ノード", "tabGpus": "GPU デバイス", "tabMonitor": "モニター", "tabMetrics": "メトリクス", "mcTitle": "メトリクスカタログ", "mcTotalSeries": "アクティブシリース", "mcTotalNames": "メトリクスタイプ", "mcName": "メトリクス名", "mcCategory": "カテゴリ", "mcSource": "ソース", "mcSeries": "シリース数", "mcSearchPh": "メトリクス名を検索…", "catHost": "ホスト", "catInference": "推論", "catSystem": "システム", "catOther": "その他", "colNode": "ノード", "colIdx": "No.", "colMemTemp": "メモリ温度", "colClocks": "SM/メモリクロック", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "スロットル", "colHealth": "健全性", "hostMetrics": "ホスト指標", "driver": "ドライバー", "cuda": "CUDA", "sysNet": "ネットワーク", "colPowerLimit": "電力制限", "colRemap": "リマップ", "colName": "GPU", "colTemp": "温度 (°C)",
     "systemTitle": "ホストシステム指標（過去1時間）", "noSysData": "システム指標なし（gpu-agent 収集中…）", "sysCpu": "CPU",
     "sysMem": "メモリ", "sysDisk": "ディスク", "sysLoad": "負荷(1分)",
     "sysNetRx": "受信", "sysNetTx": "送信", "sysMemDetail": "メモリ使用 {{u}}/{{tgb}}GB",

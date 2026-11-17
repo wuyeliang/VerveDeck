@@ -266,6 +266,74 @@ def host_snapshot(instance: str | None = None) -> dict:
     }
 
 
+# ---------- 监控指标目录（指标清单：「监控指标」页） ----------
+
+def _metric_meta(name: str) -> tuple:
+    """(category, source)：按指标名前缀归类（目录的类别 / 来源列）"""
+    if name.startswith("DCGM"):
+        return "GPU", "dcgm-exporter"
+    if name.startswith("node_"):
+        return "host", "node-exporter"
+    if name.startswith(("vllm", "sglang")):
+        return "inference", "vllm/sglang"
+    if name.startswith(("prometheus", "alertmanager")):
+        return "system", "prometheus/alertmanager"
+    if name.startswith(("go_", "process_")):
+        return "system", "runtime"
+    if name in ("up", "scrape_duration_seconds", "scrape_samples_scraped",
+                "scrape_series_post_relabel", "python_info", "instance_info"):
+        return "system", "prometheus"
+    return "other", "other"
+
+
+def metrics_catalog() -> dict:
+    """监控指标目录：全部实际采集的指标（名称/类别/来源/series 数）+ 汇总统计。
+
+    数据源 = Prometheus 实时查询（反映真实采集面）。返回全量，前端做搜索/筛选/分页
+    （数百指标名，数据量小）；对齐行业采集面（GPU 关键字段 + 宿主 + 推理引擎）。
+    """
+    try:
+        names = _prom("/api/v1/label/__name__/values", {})
+    except Exception:
+        return {"ok": False, "error": "prometheus unreachable"}
+    names = [n for n in names if n]
+    # 每指标名 series 数（单查询，按 __name__ 分组返回每指标一项）
+    counts: dict = {}
+    try:
+        for r in _prom("/api/v1/query",
+                       {"query": 'count({__name__=~".+"}) by (__name__)'}):
+            n = r["metric"].get("__name__", "")
+            if n:
+                try:
+                    counts[n] = int(float(r["value"][1]))
+                except (TypeError, ValueError):
+                    pass
+    except Exception:
+        pass
+    # 总活跃 series（TSDB head）；失败回退为各指标计数求和
+    total_series = 0
+    try:
+        for r in _prom("/api/v1/query", {"query": "prometheus_tsdb_head_series"}):
+            total_series = int(float(r["value"][1]))
+            break
+    except Exception:
+        pass
+    if not total_series:
+        total_series = sum(counts.values())
+    by_cat: dict = {}
+    by_src: dict = {}
+    metrics = []
+    for n in names:
+        cat, src = _metric_meta(n)
+        sc = counts.get(n, 1)
+        by_cat[cat] = by_cat.get(cat, 0) + sc
+        by_src[src] = by_src.get(src, 0) + sc
+        metrics.append({"name": n, "category": cat, "source": src, "series": sc})
+    metrics.sort(key=lambda m: (-m["series"], m["name"]))
+    return {"ok": True, "total_series": total_series, "total_names": len(names),
+            "by_category": by_cat, "by_source": by_src, "metrics": metrics}
+
+
 # ---------- 规则渲染（UI 阈值规则 → Prometheus 规则文件） ----------
 
 def _cat_slug(category: str) -> str:

@@ -100,20 +100,52 @@ def _migrate_columns():
 
 # 默认告警规则（新库 seed；阈值型渲染为 Prometheus 规则、事件型由平台故障收敛点触发）
 # 与 deploy/monitoring/prometheus/rules/alerts.default.yml 首启兜底规则同口径
+# ---------- 默认告警规则集 ----------
+# 设计：「核心启用，对齐行业水位」（业界告警规则即数十条核心告警，数百条会造成告警疲劳）
+#   - 39 条核心规则：全覆盖 21 个可告警指标，合理阈值，默认启用
+#   - 两档阈值：warning + critical（GPU/宿主/推理/系统四大域）+ 事件型告警（节点/任务/登录）
+#   - 不预置批量禁用阈值模板；需要更多阈值档时由用户在界面按需搜索/启用或批量导入
+#   - reconcile 幂等补建（存量库保留用户自定义、不改已有），事件型重复项自动清理
+
+# 核心规则（默认启用）
+# (name, kind, metric, op, thr, severity, cooldown, event)
 DEFAULT_ALERT_RULES = [
-    # (name, kind, metric, op, thr, severity, cooldown, event)
+    # GPU
     ("GPU 温度过高", "threshold", "gpu_temp", ">", 85, "critical", 300, ""),
+    ("GPU 温度严重", "threshold", "gpu_temp", ">", 90, "critical", 300, ""),
     ("GPU 显存过高", "threshold", "gpu_mem", ">", 95, "warning", 300, ""),
+    ("GPU 显存严重", "threshold", "gpu_mem", ">", 98, "critical", 300, ""),
+    ("GPU 显存温度过高", "threshold", "gpu_mem_temp", ">", 95, "warning", 300, ""),
+    ("GPU 显存温度严重", "threshold", "gpu_mem_temp", ">", 100, "critical", 300, ""),
+    ("GPU 功耗接近限额", "threshold", "gpu_power", ">", 450, "warning", 600, ""),
+    ("GPU 持续空闲（低利用率）", "threshold", "gpu_util", "<", 5, "warning", 1800, ""),
     ("GPU XID 错误", "threshold", "gpu_xid", ">", 0, "critical", 300, ""),
     ("GPU ECC 双比特错误", "threshold", "gpu_ecc_dbe", ">", 0, "critical", 300, ""),
+    # 宿主
     ("宿主 CPU 过高", "threshold", "host_cpu", ">", 90, "warning", 600, ""),
+    ("宿主 CPU 严重", "threshold", "host_cpu", ">", 95, "critical", 600, ""),
     ("宿主内存过高", "threshold", "host_mem", ">", 90, "warning", 600, ""),
+    ("宿主内存严重", "threshold", "host_mem", ">", 95, "critical", 600, ""),
     ("宿主磁盘过高", "threshold", "host_disk", ">", 85, "warning", 900, ""),
+    ("宿主磁盘严重", "threshold", "host_disk", ">", 90, "critical", 900, ""),
     ("磁盘 IO 延时过高", "threshold", "host_disk_io_ms", ">", 200, "warning", 300, ""),
+    ("磁盘 IO 延时严重", "threshold", "host_disk_io_ms", ">", 400, "critical", 300, ""),
     ("磁盘 IO 利用率过高", "threshold", "host_disk_util", ">", 90, "warning", 300, ""),
+    ("磁盘 IO 利用率严重", "threshold", "host_disk_util", ">", 95, "critical", 300, ""),
+    ("网络接收带宽过高", "threshold", "host_net_rx", ">", 1000000000, "warning", 600, ""),
+    ("网络发送带宽过高", "threshold", "host_net_tx", ">", 1000000000, "warning", 600, ""),
+    ("磁盘读吞吐过高", "threshold", "host_disk_read", ">", 500000000, "warning", 600, ""),
+    ("磁盘写吞吐过高", "threshold", "host_disk_write", ">", 500000000, "warning", 600, ""),
+    # 推理 / 系统
     ("推理 KV 缓存过高", "threshold", "kv_cache", ">", 90, "warning", 300, ""),
+    ("推理 KV 缓存严重", "threshold", "kv_cache", ">", 95, "critical", 300, ""),
+    ("推理排队过长", "threshold", "infer_waiting", ">", 20, "warning", 300, ""),
+    ("推理排队拥塞", "threshold", "infer_waiting", ">", 50, "critical", 300, ""),
+    ("推理延迟 P95 过高", "threshold", "infer_latency_p95", ">", 3, "warning", 300, ""),
+    ("推理延迟 P95 严重", "threshold", "infer_latency_p95", ">", 8, "critical", 300, ""),
     ("推理服务离线", "threshold", "infer_down", "<", 1, "critical", 300, ""),
     ("监控目标离线", "threshold", "system_up", "<", 1, "warning", 300, ""),
+    # 事件
     ("计算节点离线", "event", "", "", 0, "critical", 300, "node_offline"),
     ("计算节点恢复在线", "event", "", "", 0, "info", 300, "node_online"),
     ("训练任务失败", "event", "", "", 0, "critical", 60, "train_failed"),
@@ -122,7 +154,6 @@ DEFAULT_ALERT_RULES = [
     ("推理服务不可用", "event", "", "", 0, "critical", 300, "infer_down"),
     ("登录锁定（疑似暴力破解）", "event", "", "", 0, "warning", 300, "login_locked"),
 ]
-
 
 def _seed_category(kind: str, metric: str, event: str) -> str:
     """默认规则的分类（与前端分类预设同词表）；自定义规则由用户填写"""
@@ -135,6 +166,38 @@ def _seed_category(kind: str, metric: str, event: str) -> str:
     if metric.startswith(("kv_cache", "infer_")):
         return "inference"
     return "system"  # host_* / system_up 等宿主与监控自身指标
+
+
+def _reconcile_alert_rules(db) -> int:
+    """幂等对齐默认规则：补建缺失项（按 唯一键 判断 DB 无则新建），
+    保留用户自定义（不改/不删已有），清理事件型重复项（历史重复种子）。
+    对齐行业水平：核心规则数十条（21 指标全覆盖 + warning/critical 两档阈值），
+    不预置批量禁用阈值模板（避免告警疲劳）；需更多阈值时由用户在界面按需启用/新建
+    （容量 5000 + 分类 + 批量导入）。每次启动 init_db 调用；返回新建条数。"""
+    created = 0
+    existing = {(r.kind, r.metric or "", r.op or "", r.threshold, r.event or "")
+                for r in db.query(AlertRule).all()}
+    for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
+        key = (kind, metric, op, thr, event)
+        if key in existing:
+            continue
+        db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
+                         threshold=thr, event=event, severity=sev, cooldown=cd,
+                         enabled=True, category=_seed_category(kind, metric, event)))
+        existing.add(key)
+        created += 1
+    # 事件型重复清理（同 event+kind 保留最小 id）
+    by_event: dict[str, list] = {}
+    for r in db.query(AlertRule).filter(
+            AlertRule.kind == "event", AlertRule.event != "").all():
+        by_event.setdefault(r.event, []).append(r)
+    for rows in by_event.values():
+        if len(rows) <= 1:
+            continue
+        rows.sort(key=lambda x: x.id)
+        for dup in rows[1:]:
+            db.delete(dup)
+    return created
 
 
 def init_db():
@@ -173,38 +236,19 @@ def init_db():
                 (r"暴恐|恐怖袭击方法", "暴恐内容（默认护栏）"),
             ]:
                 db.add(GuardRule(project_id=None, pattern=pat, scope="both", description=desc))
-        # 默认告警规则（阈值型渲染为 Prometheus 规则；事件型由平台故障收敛点触发）
-        if not db.query(AlertRule).first():
-            for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
-                db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
-                                 threshold=thr, event=event, severity=sev, cooldown=cd,
-                                 category=_seed_category(kind, metric, event)))
-        # 存量库幂等补事件规则（新代码新增的事件码，老库没有对应规则则补建）
-        for event in ("login_locked",):
-            if not db.query(AlertRule).filter(
-                    AlertRule.event == event, AlertRule.kind == "event").first():
-                db.add(AlertRule(name="登录锁定（疑似暴力破解）", kind="event",
-                                 metric="", op="", threshold=0, event=event,
-                                 severity="warning", cooldown=300,
-                                 category=_seed_category("event", "", event)))
-        # 存量库幂等补默认阈值规则（2026-11 新增存储 IO 监控：老库没有对应规则则补建，
-        # 用户已自建同指标+操作+阈值规则时不重复补）
-        for name, kind, metric, op, thr, sev, cd, event in DEFAULT_ALERT_RULES:
-            if kind != "threshold" or metric not in ("host_disk_io_ms", "host_disk_util"):
-                continue
-            if not db.query(AlertRule).filter(
-                    AlertRule.kind == "threshold", AlertRule.metric == metric,
-                    AlertRule.op == op, AlertRule.threshold == thr).first():
-                db.add(AlertRule(name=name, kind=kind, metric=metric, op=op,
-                                 threshold=thr, event=event, severity=sev, cooldown=cd,
-                                 category=_seed_category(kind, metric, event)))
-        # 存量库幂等补默认规则分类（2026-11 新增分类功能；仅补名称与默认集一致且未分类的行，
+        # 默认告警规则：39 条核心（对齐行业水位），幂等补建
+        # 新库建全套 39 核心；存量库仅补缺失规则（保留用户自定义、不改已有）；
+        # 事件型重复项自动清理（历史重复种子）。阈值型渲染为 Prometheus 规则，事件型由故障收敛点触发
+        _created = _reconcile_alert_rules(db)
+        # 存量库幂等补默认规则分类（仅补 category 为空且名称与默认集一致的行；
         # 用户自定义规则不受影响；已补过的行 category 非空自动跳过）
         _default_cats = {n: _seed_category(k, m, e)
                          for n, k, m, _o, _th, _s, _c, e in DEFAULT_ALERT_RULES}
         for r in db.query(AlertRule).filter(AlertRule.category == "").all():
             if r.name in _default_cats:
                 r.category = _default_cats[r.name]
+        if _created:
+            log.info("默认告警规则对齐（行业 39 核心）：新建 %d 条", _created)
         # 数据目录
         for d in ("models/hub", "datasets", "jobs", "evals", "infer", "gpu",
                   "uploads", "dvc-remote", "hf-cache", "argilla"):

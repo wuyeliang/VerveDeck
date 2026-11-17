@@ -15,6 +15,7 @@ from ..security import get_current_user
 from ..models import GpuNode, TrainingJob, Deployment
 from .. import scheduler
 from ..services import prom_service
+from ..services import taskcontainer as tc
 
 router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 
@@ -72,14 +73,28 @@ def _gpu_series(exprs: list[tuple[str, str]], minutes: int) -> dict[str, list[di
 @router.get("/nodes")
 def nodes(db=Depends(get_db), user=Depends(get_current_user)):
     out = []
+    local_rdma: dict | None = None
     for n in db.query(GpuNode).all():
         meta = n.meta or {}
+        if n.name == settings.node_name:
+            if local_rdma is None:
+                try:
+                    local_rdma = tc.rdma_info()
+                except Exception:
+                    local_rdma = {"present": False, "devices": []}
+            rdma = local_rdma
+        else:
+            # 远端节点：gpu-agent 在宿主侧采集写 meta.ib_devices
+            ib = [x.strip() for x in str(meta.get("ib_devices", "")).split(",") if x.strip()]
+            devs = [d for d in ib if d.startswith("uverbs")]
+            rdma = {"present": bool(devs), "devices": devs}
         out.append({
             "id": n.id, "name": n.name, "gpu_count": n.gpu_count, "status": n.status,
             "last_heartbeat": str(n.last_heartbeat) if n.last_heartbeat else "",
             "meta": meta,
             "driver": meta.get("driver", ""),   # gpu-agent 采集（nvidia-smi）
             "cuda": meta.get("cuda", ""),
+            "rdma": rdma,                       # IB/RDMA 状态（present + uverbs 设备）
             "host": prom_service.host_snapshot(n.name),  # 宿主 CPU/内存/磁盘/网络
             "gpus": prom_service.gpu_snapshot(n),
             "gpu_in_use": scheduler._gpu_in_use(db),
@@ -239,6 +254,13 @@ def storage_metrics(minutes: int = 60, db=Depends(get_db), user=Depends(get_curr
 
 class PriorityReq(BaseModel):
     priority: int  # 1-9
+
+
+@router.get("/metrics/catalog")
+def metrics_catalog_api(db=Depends(get_db), user=Depends(get_current_user)):
+    """监控指标目录：全部实际采集的指标（名称/类别/来源/series 数）+ 汇总统计。
+    「监控指标」页用（只读、登录可见；数据来自 Prometheus 实时查询，对齐行业采集面）。"""
+    return prom_service.metrics_catalog()
 
 
 @router.get("/queue")

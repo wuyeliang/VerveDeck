@@ -210,7 +210,7 @@
     "colPriority": "優先級", "top": "置頂", "emptyQueue": "隊列為空",
     "runningTitle": "運行中任務", "emptyRunning": "無運行任務", "colStart": "開始",
     "nodeInfo": "節點 {{node}} · 在線部署 {{d}} · 訓練中 {{j}} · 故障自愈：GPU agent 心跳 60s 超時自動判離線，關聯任務標記失敗並可斷點續訓",
-    "tabNodes": "計算節點", "tabGpus": "GPU 設備", "tabMonitor": "監控大屏", "colNode": "節點", "colIdx": "編號", "colMemTemp": "顯存溫度", "colClocks": "SM/顯存時鐘", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降頻", "colHealth": "健康度", "hostMetrics": "宿主指標", "driver": "驅動", "cuda": "CUDA", "sysNet": "網路", "colPowerLimit": "功耗限額", "colRemap": "Remap", "colName": "型號", "colTemp": "溫度",
+    "tabNodes": "計算節點", "tabGpus": "GPU 設備", "tabMonitor": "監控大屏", "tabMetrics": "監控指標", "mcTitle": "監控指標目錄", "mcTotalSeries": "活躍 series", "mcTotalNames": "指標類型", "mcName": "指標名稱", "mcCategory": "類別", "mcSource": "來源", "mcSeries": "series 數", "mcSearchPh": "搜尋指標名稱…", "catHost": "宿主", "catInference": "推理", "catSystem": "系統", "catOther": "其他", "colNode": "節點", "colIdx": "編號", "colMemTemp": "顯存溫度", "colClocks": "SM/顯存時鐘", "colEcc": "ECC dbe/sbe", "colXid": "Xid", "colThr": "降頻", "colHealth": "健康度", "hostMetrics": "宿主指標", "driver": "驅動", "cuda": "CUDA", "sysNet": "網路", "colPowerLimit": "功耗限額", "colRemap": "Remap", "colName": "型號", "colTemp": "溫度",
     "systemTitle": "主機系統指標（近 1 小時）", "noSysData": "尚無系統指標資料（gpu-agent 採集中…）", "sysCpu": "CPU",
     "sysMem": "記憶體", "sysDisk": "磁碟", "sysLoad": "負載(1分)",
     "sysNetRx": "網路收", "sysNetTx": "網路發", "sysMemDetail": "記憶體已用 {{u}}/{{tgb}}GB",

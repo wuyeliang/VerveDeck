@@ -121,9 +121,15 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
 - Time-range switch (1h/6h/24h/7d)
 - Dashboard selector (Grafana dashboards, embedded via the platform iframe, read-only anonymous Viewer)
 
+**Metrics Catalog**
+- Live catalog of every active metric in Prometheus: total active series, metric-type count, and distribution by category (host / inference / system / other)
+- The metric table supports name search, category filter and series-count sorting; each row shows the metric name, category, source (node-exporter / DCGM / vLLM, etc.) and current series count
+- Auto-refreshes every 30s; use it to audit "which metrics the platform collects and how many instances are covered" (complements the Grafana dashboards: dashboards show trends, this page shows coverage)
+
 **Alert Rules**
 - Notification channels: WeCom (group bot webhook) / email (SMTP), test send supported
 - Threshold/event rules: custom category (capacity 5000, server-side pagination + category/type/state/name filters), metric/event type, threshold, severity, cooldown, active channels
+- Ships with 39 built-in core rules (aligned with industry practice: covers all 21 alertable metrics with warning/critical tiers plus node/task/login event alerts), auto-created on startup and idempotent across restarts
 - Bulk import: CSV, one rule per line
 
 **Alert Events**
