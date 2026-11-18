@@ -146,7 +146,8 @@ The local node needs no manual registration — gpu-agent's heartbeat manages it
 - Pick a container service to tail live logs (line count adjustable)
 
 **Cluster Upgrade** (moved from System Management)
-- Per-component current/available versions (Docker Hub) / one-click upgrade; engine kinds only update the pin (new jobs pick it up), self-built images (evalscope evaluation / MinerU parsing) are rebuilt (evalscope only affects new jobs; MinerU container blue-green recreated), agent/platform kinds blue-green recreate containers (impact shown in the UI)
+- Full platform image inventory (18 items, identical to the Image Management page): per-component current/available versions (Docker Hub) / one-click upgrade
+- Upgrade modes: engines (vLLM/SGLang/LLaMA-Factory/evalscope) only update the runtime pin (new jobs pick it up); self-built (MinerU/backend/web) are rebuilt from the host source tree + blue-green container recreate; the other 11 monitoring/infrastructure components (DCGM Exporter, Node Exporter, Prometheus, Alertmanager, Grafana dark+light, PostgreSQL, Redis, OpenSearch, Argilla, RustFS) pull the new tag + blue-green recreate (impact shown in the UI)
 
 ## 9. Tenants & Projects
 
@@ -163,9 +164,13 @@ The local node needs no manual registration — gpu-agent's heartbeat manages it
 
 ## 11. Image Management (super_admin)
 
-- Platform engine image inventory: image reference, local state, and version (auto-probed; first open shows "probing…" then fills in) for vLLM / SGLang / LLaMA-Factory / GPU Agent
-- Actions: Pull (official images) / Rebuild (self-built images) / Force probe
-- Custom images: register third-party images such as domestic accelerators (`name:tag` format) to extend deployment options
+- Full platform image inventory (18 items, same data source and order as the cluster upgrade page):
+  - Engines (5): vLLM / SGLang / LLaMA-Factory / GPU Agent / evalscope
+  - Self-built (3): MinerU parsing / platform backend / web frontend
+  - Monitoring & infrastructure (10): DCGM Exporter / Node Exporter / Prometheus / Alertmanager / Grafana (dark + light, two containers) / PostgreSQL / Redis / OpenSearch / Argilla / RustFS
+- Each row shows the image reference, source (official/self-built), local state, size, and version (auto-probed; first open shows "probing…" then fills in; images without a shell show the tag, self-built images show build info)
+- Actions: Pull (official images) / Rebuild (self-built images, using the host source tree /repo as build context) / Force probe
+- Custom images: register third-party images such as domestic accelerators (`name:tag` format, appended after the platform inventory) to extend deployment options
 
 ## 12. System Management
 

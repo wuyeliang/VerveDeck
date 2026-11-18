@@ -17,11 +17,19 @@ def _status(admin_tok):
 
 # ---------- 状态 ----------
 
+# 平台全量镜像清单（与 upgrade_service.COMPONENTS 一致，18 项）
+ALL_COMPONENT_KEYS = {
+    "vllm", "sglang", "llamafactory", "gpu_agent", "evalscope", "mineru",
+    "backend", "web", "dcgm_exporter", "node_exporter", "prometheus",
+    "alertmanager", "grafana", "postgres", "redis", "opensearch", "argilla",
+    "rustfs",
+}
+
+
 def test_upgrade_status_shape(admin_tok):
     rows = _status(admin_tok)
-    assert {x["key"] for x in rows} == {
-        "vllm", "sglang", "llamafactory", "gpu_agent", "evalscope", "mineru",
-        "backend", "web"}
+    assert {x["key"] for x in rows} == ALL_COMPONENT_KEYS
+    assert len(rows) == 18
     for x in rows:
         assert {"key", "label", "image", "kind", "impact", "exists", "size",
                 "runtime", "impact_hint", "running_task"} <= set(x)
@@ -30,16 +38,16 @@ def test_upgrade_status_shape(admin_tok):
         assert x["running_task"] in (0, None) or isinstance(x["running_task"], int)
 
 
-def test_upgrade_status_images_match_images_api(admin_tok):
-    """status 的组件镜像与镜像管理页一致（同源：运行时 pin）"""
-    rows = {x["key"]: x for x in _status(admin_tok)}
+def test_two_pages_image_list_identical(admin_tok):
+    """回归：镜像管理页与集群升级页镜像清单完全一致——同一数据源
+    （upgrade_service.COMPONENTS）同序渲染，(key, image) 序列逐项相等"""
+    rows = _status(admin_tok)
     r = requests.get(f"{BASE}/api/images", headers=H(admin_tok), timeout=60)
     r.raise_for_status()
-    imgs = {x["key"]: x["image"] for x in r.json() if not x["key"].startswith("custom-")}
-    assert rows["vllm"]["image"] == imgs["vllm"]
-    assert rows["sglang"]["image"] == imgs["sglang"]
-    assert rows["llamafactory"]["image"] == imgs["llamafactory"]
-    assert rows["gpu_agent"]["image"] == imgs["gpu-agent"]
+    imgs = [(x["key"], x["image"]) for x in r.json()
+            if not x["key"].startswith("custom-")]
+    assert [(x["key"], x["image"]) for x in rows] == imgs
+    assert len(rows) == 18
 
 
 def test_upgrade_status_selfbuilt_images_fintune(admin_tok):
@@ -103,8 +111,7 @@ def test_upgrade_tasks_shape(admin_tok):
         assert {"id", "target", "from_version", "to_version", "status", "log",
                 "created_at", "finished_at"} <= set(t)
         assert t["status"] in ("running", "success", "failed")
-        assert t["target"] in ("vllm", "sglang", "llamafactory", "gpu_agent",
-                               "evalscope", "mineru", "backend", "web")
+        assert t["target"] in ALL_COMPONENT_KEYS
 
 
 def test_upgrade_tasks_limit(admin_tok):

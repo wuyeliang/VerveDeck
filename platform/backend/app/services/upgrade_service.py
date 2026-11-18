@@ -39,31 +39,118 @@ _LATEST_TTL = 600  # 最新版本检查缓存 10 分钟
 
 # key -> 组件定义
 #   kind: pull（官方镜像换 tag）| build（自构镜像以 /repo 重建同 tag）
-#   impact: engine（仅新任务生效）| agent（重建 agent 容器）| self（重建自身容器）
+#   impact: engine（仅新任务生效）| agent（蓝绿重建组件容器）| self（重建自身容器）
+#   container: 蓝绿重建的容器名；多容器（如 grafana 深浅双实例）为列表
+#   image: 静态镜像引用（无运行时 pin 的组件基准 tag，来自 compose）
+#   probe: 一次性容器内版本探测命令；None = 镜像无 shell（distroless），直接显示 tag
+#   desc: 镜像管理页的组件说明
+#
+# 本表是平台全量镜像清单的唯一数据源：镜像管理页（GET /api/images）与集群升级页
+# （GET /api/admin/upgrade/status）均按此表同序渲染，两页清单完全一致。
 COMPONENTS: dict[str, dict] = {
     "vllm": {"label": "vLLM 推理引擎", "kind": "pull", "hub": "vllm/vllm-openai",
-             "tag_re": r"^v?\d+\.\d+\.\d+$", "impact": "engine"},
+             "tag_re": r"^v?\d+\.\d+\.\d+$", "impact": "engine",
+             "desc": "OpenAI 兼容 API / LoRA 热加载",
+             # 官方开源镜像（vllm/sglang）内只有 python3，无 python 别名
+             "probe": 'python3 -c "import vllm,torch;print(vllm.__version__+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'},
     "sglang": {"label": "SGLang 推理引擎", "kind": "pull", "hub": "lmsysorg/sglang",
-               "tag_re": r"^v?\d+\.\d+\.\d+$", "impact": "engine"},
+               "tag_re": r"^v?\d+\.\d+\.\d+$", "impact": "engine",
+               "desc": "高吞吐 RadixAttention",
+               "probe": 'python3 -c "import sglang,torch;print(sglang.__version__+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'},
     "llamafactory": {"label": "LLaMA-Factory 训练引擎", "kind": "pull", "hub": "hiyouga/llamafactory",
-                     "tag_re": r"^\d+\.\d+\.\d+$", "impact": "engine"},
+                     "tag_re": r"^\d+\.\d+\.\d+$", "impact": "engine",
+                     "desc": "SFT/DPO/RLHF/导出",
+                     "probe": 'python3 -c "import importlib.metadata as m,torch;print(m.version(\'llamafactory\')+\' | torch \'+torch.__version__+\' | CUDA \'+str(torch.version.cuda))"'},
     "gpu_agent": {"label": "GPU 监控 Agent (DCGM)", "kind": "pull", "hub": "nvidia/dcgm",
                   "tag_re": r"^\d+\.\d+\.\d+-ubuntu24\.04$", "impact": "agent",
-                  "container": "fintune-gpu-agent-1"},
+                  "container": "fintune-gpu-agent-1",
+                  "desc": "DCGM 采集（温度/功耗/ECC/XID）",
+                  "hint": "GPU 监控 Agent 将以新镜像重建，监控数据中断数秒",
+                  # dcgmi 非 TTY 下不输出版本，改查 dpkg 包版本（内层单引号防 shell 展开 ${Version}）；
+                  # DCGM 4.x 包拆分为 nv-hostengine/dcgmi（3.x 为 datacenter-gpu-manager），双查兜底
+                  "probe": "dpkg-query -W -f 'DCGM ${Version}' nv-hostengine 2>/dev/null || dpkg-query -W -f 'DCGM ${Version}' datacenter-gpu-manager 2>/dev/null"},
     # hub 为完整 registry 地址（ACR）→ check_latest 走 registry v2 匿名 token 流程
     "evalscope": {"label": "evalscope 评测引擎", "kind": "pull",
                   "hub": "modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/modelscope",
                   "tag_re": r"^ubuntu\d+\.\d+-(cuda[\d.]+-)?py\d{3}-.+$",
                   "impact": "engine",
-                  "hint": "官方开源 ModelScope 镜像（内置 evalscope）；拉取完成后新评测任务使用新 tag，运行中的评测任务不受影响"},
+                  "desc": "规则匹配 / LLM-as-a-Judge / 榜单评测（ModelScope 官方镜像，runner.py 运行时投递）",
+                  "hint": "官方开源 ModelScope 镜像（内置 evalscope）；拉取完成后新评测任务使用新 tag，运行中的评测任务不受影响",
+                  # 查包元数据即可（不触发 torch 重导入，秒级返回；勿 import evalscope 本体，首启可达数十秒）
+                  "probe": 'python3 -c "import importlib.metadata as m;print(m.version(\'evalscope\'))"'},
     "mineru": {"label": "MinerU 文档解析", "kind": "build", "ctx": "images/mineru",
                "image": "fintune/mineru:1.0", "impact": "agent",
                "container": "fintune-mineru-1",
+               "desc": "文档解析服务（PDF/Office → 训练数据预处理）",
                "hint": "MinerU 文档解析容器将以新镜像重建，解析服务中断数秒"},
     "backend": {"label": "平台后端", "kind": "build", "ctx": "platform/backend",
-                "image": "fintune/backend:1.0", "container": "fintune-backend-1", "impact": "self"},
+                "image": "fintune/backend:1.0", "container": "fintune-backend-1", "impact": "self",
+                "desc": "平台 API 服务（FastAPI，含任务调度）"},
     "web": {"label": "Web 前端", "kind": "build", "ctx": "platform/frontend",
-            "image": "fintune/web:1.0", "container": "fintune-web-1", "impact": "self"},
+            "image": "fintune/web:1.0", "container": "fintune-web-1", "impact": "self",
+            "desc": "Web 前端（nginx + 静态资源，含监控大屏反代）"},
+    # ---- 监控与基础设施（compose 常驻服务，升级 = 拉新 tag + 蓝绿重建容器）----
+    "dcgm_exporter": {"label": "GPU 指标导出器 (DCGM Exporter)", "kind": "pull",
+                      "hub": "nvidia/dcgm-exporter", "image": "nvidia/dcgm-exporter:4.6.1-4.8.4",
+                      "tag_re": r"^\d+\.\d+\.\d+-\d+\.\d+\.\d+$", "impact": "agent",
+                      "container": "fintune-dcgm-exporter-1",
+                      "desc": "GPU 指标导出至 Prometheus（DCGM）",
+                      # distroless 镜像无 shell 工具，不做容器内探测（显示镜像 tag）
+                      "probe": None},
+    "node_exporter": {"label": "主机指标导出器 (Node Exporter)", "kind": "pull",
+                      "hub": "prom/node-exporter", "image": "prom/node-exporter:v1.8.2",
+                      "tag_re": r"^v\d+\.\d+\.\d+$", "impact": "agent",
+                      "container": "fintune-node-exporter-1",
+                      "desc": "主机 CPU/内存/磁盘/网络指标",
+                      "probe": "node_exporter --version 2>&1 | head -1"},
+    "prometheus": {"label": "指标存储 (Prometheus)", "kind": "pull",
+                   "hub": "prom/prometheus", "image": "prom/prometheus:v2.55.1",
+                   "tag_re": r"^v\d+\.\d+\.\d+$", "impact": "agent",
+                   "container": "fintune-prometheus-1",
+                   "desc": "指标存储与 PromQL 查询（Prometheus）",
+                   "probe": "prometheus --version 2>&1 | head -1"},
+    "alertmanager": {"label": "告警路由 (Alertmanager)", "kind": "pull",
+                     "hub": "prom/alertmanager", "image": "prom/alertmanager:v0.27.0",
+                     "tag_re": r"^v\d+\.\d+\.\d+$", "impact": "agent",
+                     "container": "fintune-alertmanager-1",
+                     "desc": "告警去重/静默/路由与通知（邮件等）",
+                     "probe": "amtool --version 2>&1 | head -1"},
+    "grafana": {"label": "监控大屏 (Grafana)", "kind": "pull",
+                "hub": "grafana/grafana", "image": "grafana/grafana:11.6.2",
+                "tag_re": r"^\d+\.\d+\.\d+$", "impact": "agent",
+                "container": ["fintune-grafana-1", "fintune-grafana-light-1"],
+                "desc": "监控大屏（深色/浅色双实例，升级两个容器）",
+                "probe": "grafana server -v 2>&1 | head -1"},
+    "postgres": {"label": "业务数据库 (PostgreSQL)", "kind": "pull",
+                 "hub": "postgres", "image": "postgres:16-alpine",
+                 "tag_re": r"^\d+(\.\d+)*(-alpine)?$", "impact": "agent",
+                 "container": "fintune-postgres-1",
+                 "desc": "业务数据库（任务/部署/用户数据）",
+                 "probe": "psql --version"},
+    "redis": {"label": "缓存与队列 (Redis)", "kind": "pull",
+              "hub": "redis", "image": "redis:7-alpine",
+              "tag_re": r"^\d+(\.\d+)*(-alpine)?$", "impact": "agent",
+              "container": "fintune-redis-1",
+              "desc": "缓存 / 分布式锁 / 队列（Redis 7）",
+              "probe": "redis-server --version"},
+    "opensearch": {"label": "搜索服务 (OpenSearch)", "kind": "pull",
+                   "hub": "opensearchproject/opensearch", "image": "opensearchproject/opensearch:2.17.1",
+                   "tag_re": r"^\d+\.\d+\.\d+$", "impact": "agent",
+                   "container": "fintune-opensearch-1",
+                   "desc": "日志与数据检索（任务日志等）",
+                   "probe": "/usr/share/opensearch/bin/opensearch --version 2>/dev/null"},
+    "argilla": {"label": "数据标注平台 (Argilla)", "kind": "pull",
+                "hub": "argilla/argilla-server", "image": "argilla/argilla-server:v2.8.0",
+                "tag_re": r"^v\d+\.\d+\.\d+$", "impact": "agent",
+                "container": "fintune-argilla-1",
+                "desc": "数据标注 / 清洗平台（Argilla）",
+                "probe": 'python3 -c "import importlib.metadata as m;print(m.version(\'argilla-server\'))"'},
+    "rustfs": {"label": "对象存储 (RustFS)", "kind": "pull",
+               "hub": "rustfs/rustfs", "image": "rustfs/rustfs:latest",
+               "tag_re": r"^\d+(\.\d+)*(-[0-9A-Za-z.]+)?$", "impact": "agent",
+               "container": "fintune-rustfs-1",
+               "desc": "S3 兼容对象存储（模型/数据集文件）",
+               "probe": "rustfs --version 2>&1 | head -1"},
 }
 
 
@@ -104,11 +191,43 @@ def save_pins(pins: dict) -> None:
 
 
 def current_image(key: str) -> str:
-    """组件当前生效镜像（基础 pin + 运行时升级覆盖）；训练/推理/镜像页统一走这里"""
+    """引擎组件当前生效镜像（基础 pin + 运行时升级覆盖）；训练/推理统一走这里。
+    仅适用于 _base_pins() 内的 5 个引擎键，其余组件请用 component_image()"""
     base = _base_pins()
     if key not in base:
         raise KeyError(f"未知组件 {key}")
     return load_pins().get(key) or base[key]
+
+
+def _containers(c: dict) -> list[str]:
+    """组件待重建容器名列表（container 字段支持单字符串或列表）"""
+    names = c.get("container")
+    if not names:
+        return []
+    return names if isinstance(names, list) else [names]
+
+
+def component_image(key: str) -> str:
+    """组件当前生效镜像（18 项全量清单统一入口，镜像页与升级页共用）：
+    - 引擎组件（有运行时 pin）：pin 覆盖或基础镜像
+    - 容器组件（agent/self）：优先取运行中容器的实际镜像
+      （升级成功后页面自动反映新 tag，无需改 compose/静态定义）
+    - 其余：静态 image 定义（compose 基准 tag）"""
+    c = COMPONENTS.get(key)
+    if not c:
+        raise KeyError(f"未知组件 {key}")
+    if key in _base_pins():
+        return current_image(key)
+    from . import taskcontainer
+    for name in _containers(c):
+        try:
+            real = (taskcontainer.docker_client().containers.get(name).attrs
+                    .get("Config") or {}).get("Image")
+            if real:
+                return real
+        except Exception:
+            continue
+    return c.get("image") or key
 
 
 def impact_hint(target: str) -> str:
@@ -117,7 +236,7 @@ def impact_hint(target: str) -> str:
         return c["hint"]
     return {
         "engine": "拉取完成后新任务/新部署使用新镜像；运行中的任务与部署不受影响（重新部署后生效）",
-        "agent": "GPU 监控 Agent 将以新镜像重建，监控数据中断数秒",
+        "agent": "该组件容器将以新镜像蓝绿重建，服务中断数秒（数据卷不受影响）",
         "self": "该服务将以新镜像重建，平台短暂不可用（约 1 分钟）",
     }.get(c.get("impact", ""), "")
 
@@ -231,29 +350,28 @@ def _local_info(image: str) -> tuple[bool, int]:
 
 
 def _runtime(key: str) -> str:
-    """运行时版本探测：引擎/agent 复用镜像页探测（5min 缓存）；自构组件显示镜像构建信息"""
-    from . import taskcontainer
-    probe_key = {"vllm": "vllm", "sglang": "sglang",
-                 "llamafactory": "llamafactory", "gpu_agent": "gpu-agent",
-                 "evalscope": "evalscope"}.get(key)
-    if probe_key:
+    """运行时版本探测：带 probe 命令的组件复用镜像页一次性容器探测（5min 缓存、
+    双页同 key 共享）；自构组件显示镜像构建信息；无 shell 的镜像显示当前 tag"""
+    c = COMPONENTS[key]
+    img = component_image(key)
+    if c.get("probe"):
         from ..api import images as images_api
         try:
-            img = current_image(key)
-            for k, _fn, _comp, _desc, cmd in images_api.PLATFORM:
-                if k == probe_key:
-                    return images_api._probe(k, img, cmd)
+            return images_api._probe(key, img, c["probe"])
         except Exception as e:
             return f"探测失败: {str(e)[:120]}"
-        return ""
-    try:
-        imgs = taskcontainer.docker_client().images.list(COMPONENTS[key]["image"])
-        if imgs:
-            created = (imgs[0].attrs.get("Created") or "")[:19].replace("T", " ")
-            return f"镜像 {imgs[0].short_id[:12]}（构建于 {created}）"
-    except Exception:
-        pass
-    return "镜像未拉取"
+    if c["kind"] == "build":
+        from . import taskcontainer
+        try:
+            imgs = taskcontainer.docker_client().images.list(img)
+            if imgs:
+                created = (imgs[0].attrs.get("Created") or "")[:19].replace("T", " ")
+                return f"镜像 {imgs[0].short_id[:12]}（构建于 {created}）"
+        except Exception:
+            pass
+        return "镜像未构建"
+    m = re.search(r":([^:/]+)$", img)
+    return m.group(1) if m else img
 
 
 def status() -> list[dict]:
@@ -269,7 +387,7 @@ def status() -> list[dict]:
         pass
     out = []
     for key, c in COMPONENTS.items():
-        img = c.get("image") or current_image(key)
+        img = component_image(key)
         exists, size = _local_info(img)
         out.append({
             "key": key, "label": c["label"], "image": img,
@@ -446,6 +564,16 @@ def recreate_container(name: str, image: str) -> str:
 # 升级任务
 # ---------------------------------------------------------------------------
 
+def _clear_probe_cache(target: str) -> None:
+    """升级完成后清镜像页版本探测双缓存（旧 tag 的版本值已失效）"""
+    try:
+        from ..api import images as images_api
+        images_api._probe_cache.pop(target, None)
+        images_api._probe_stale.pop(target, None)
+    except Exception:
+        pass
+
+
 def _log(db, task: UpgradeTask, msg: str) -> None:
     line = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
     task.log = ((task.log or "") + line + "\n")[-20000:]
@@ -469,7 +597,7 @@ def execute(db, target: str, to_version: str, user_id: int) -> UpgradeTask:
             raise ValueError("引擎/Agent 镜像升级需指定目标版本（to_version）")
         if not re.match(c["tag_re"], to_version):
             raise ValueError(f"目标版本 {to_version} 不符合该组件 tag 格式")
-    from_version = c.get("image") or current_image(target)
+    from_version = component_image(target)
     running = db.query(UpgradeTask).filter_by(target=target, status="running").first()
     if running:
         raise ValueError(f"{target} 已有升级任务进行中（#{running.id}），请等待其完成")
@@ -506,7 +634,7 @@ def _worker_upgrade(tid: int, target: str, to_version: str) -> None:
             _log(db, task, f"✗ 镜像获取失败: {str(e)[:500]}")
             _finish(db, task, "failed")
             return
-        # 2) 应用：引擎镜像更新 pin；agent/self 蓝绿重建容器
+        # 2) 应用：引擎镜像更新 pin；agent/self 蓝绿重建容器（多容器组件逐个重建）
         try:
             if c["impact"] == "engine":
                 pins = load_pins()
@@ -514,9 +642,12 @@ def _worker_upgrade(tid: int, target: str, to_version: str) -> None:
                 save_pins(pins)
                 _log(db, task, f"pin 已更新: {target} → {img}（新任务/部署将使用新镜像）")
             else:
-                _log(db, task, f"蓝绿重建容器 {c['container']}…")
-                recreate_container(c["container"], img)
-                _log(db, task, f"容器已切换到 {img}")
+                for name in _containers(c):
+                    _log(db, task, f"蓝绿重建容器 {name}…")
+                    recreate_container(name, img)
+                    _log(db, task, f"容器 {name} 已切换到 {img}")
+            # 升级成功后旧版本探测值失效：清镜像页探测双缓存，下次列表触发重探
+            _clear_probe_cache(target)
         except Exception as e:
             _log(db, task, f"✗ 应用失败: {str(e)[:500]}")
             _finish(db, task, "failed")

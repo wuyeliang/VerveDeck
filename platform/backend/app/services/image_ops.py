@@ -50,12 +50,22 @@ def image_exists(image: str) -> bool:
         return False
 
 
+# 自构镜像名 → 构建上下文相对路径的覆盖映射（默认规则是 /repo/images/<repo>，
+# 平台自身两个镜像的 Dockerfile 在 platform/ 下，不走默认规则）
+_CTX_OVERRIDES = {
+    "fintune/backend": "platform/backend",
+    "fintune/web": "platform/frontend",
+}
+
+
 def _ctx_dir(image: str) -> str | None:
-    """自构镜像（fintune/<repo>:tag）的构建上下文：/repo/images/<repo>"""
+    """自构镜像（fintune/<repo>:tag）的构建上下文：
+    覆盖映射优先（backend/web），否则 /repo/images/<repo>"""
     if not image.startswith("fintune/"):
         return None
     repo = image.split("/")[1].split(":")[0]
-    ctx = os.path.join(REPO_DIR, "images", repo)
+    rel = _CTX_OVERRIDES.get(image, os.path.join("images", repo))
+    ctx = os.path.join(REPO_DIR, rel)
     if os.path.isdir(ctx) and os.path.exists(os.path.join(ctx, "Dockerfile")):
         return ctx
     return None

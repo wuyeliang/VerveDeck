@@ -84,12 +84,15 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/admin/upgrade/status | 各组件升级状态（当前 pin / 本地镜像 / 运行时版本 / 进行中任务） |
+| GET | /api/admin/upgrade/status | 平台全量镜像清单（18 组件）升级状态（当前镜像 / 本地镜像 / 运行时版本 / 进行中任务） |
 | POST | /api/admin/upgrade/check | `{target, force?}` → Docker Hub 可用版本列表（10min 缓存） |
 | POST | /api/admin/upgrade/execute | `{target, to_version}` 创建升级任务（pull 换 tag / build 重建 + 蓝绿切容器） |
 | GET | /api/admin/upgrade/tasks | 升级任务历史 `{limit}` |
 
-组件：vllm / sglang / llamafactory / gpu_agent（pull 类，换 tag）；backend / web（build 类，以宿主 /repo 重建 + 蓝绿重建容器，自升级由调度器 converge 兜底）。
+组件（18 项，`upgrade_service.COMPONENTS` 为唯一数据源，与镜像管理页同序一致）：
+- 引擎（pull 换 tag + 运行时 pin，仅新任务生效）：vllm / sglang / llamafactory / evalscope
+- 容器（pull 换 tag + 蓝绿重建容器）：gpu_agent / dcgm_exporter / node_exporter / prometheus / alertmanager / grafana（深色+浅色双容器）/ postgres / redis / opensearch / argilla / rustfs / mineru
+- 自构（build 以宿主 /repo 重建 + 蓝绿重建容器，自升级由调度器 converge 兜底）：backend / web
 
 ## 数据集 /api/datasets（developer+，租户内数据）
 
@@ -233,10 +236,10 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/images | 平台引擎镜像清单（版本探测 5min 缓存 + stale 兜底非阻塞；自定义镜像；pull/build 状态） |
+| GET | /api/images | 平台全量镜像清单（18 项 = 5 引擎 + 3 自构 + 10 监控/基础设施，与集群升级页同一数据源同序；版本探测 5min 缓存 + stale 兜底非阻塞；自定义镜像追加末尾；pull/build 状态） |
 | GET | /api/images/custom | 自定义镜像列表 |
 | POST | /api/images/custom | 登记自定义镜像 `{name: tag, note}`（国产芯片等） |
 | DELETE | /api/images/custom/{cid} | 移除登记 |
 | POST | /api/images/custom/batch-delete | 批量移除 `{ids}` |
-| POST | /api/images/{key}/probe | 强制版本探测（同步；key: vllm/sglang/llamafactory/gpu-agent） |
+| POST | /api/images/{key}/probe | 强制版本探测（同步；key 为 18 组件键；无探测命令的组件返回当前运行时版本） |
 | POST | /api/images/{key}/refresh | 后台拉取/重建 `{force?}`（异步，状态经 GET /api/images 轮询） |

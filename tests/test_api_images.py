@@ -13,8 +13,8 @@ import requests
 
 from conftest import BASE, H, SUF
 
-COMP_KEYS = {"vllm", "sglang", "llamafactory", "gpu-agent"}
-ITEM_FIELDS = {"key", "image", "component", "source", "exists", "size", "version"}
+COMP_KEYS = {"vllm", "sglang", "llamafactory", "gpu_agent"}
+ITEM_FIELDS = {"key", "image", "component", "source", "exists", "size", "version", "desc"}
 
 
 def test_list_components_shape(admin_tok):
@@ -25,6 +25,19 @@ def test_list_components_shape(admin_tok):
     for x in rows:
         assert ITEM_FIELDS <= set(x), f"{x['key']} 缺字段: {ITEM_FIELDS - set(x)}"
         assert x["source"] in ("official", "selfbuilt", "custom")
+
+
+def test_list_full_platform_images(admin_tok):
+    """镜像管理页 = 平台全量镜像清单（18 项：5 引擎 + 3 自构 + 10 基础设施），
+    与集群升级页同一数据源（upgrade_service.COMPONENTS）"""
+    r = requests.get(f"{BASE}/api/images", headers=H(admin_tok), timeout=30)
+    assert r.status_code == 200
+    rows = [x for x in r.json() if not x["key"].startswith("custom-")]
+    assert len(rows) == 18, f"平台镜像清单应为 18 项，实际 {len(rows)}: {[x['key'] for x in rows]}"
+    for key in ("dcgm_exporter", "node_exporter", "prometheus", "alertmanager",
+                "grafana", "postgres", "redis", "opensearch", "argilla", "rustfs",
+                "mineru", "backend", "web", "evalscope"):
+        assert any(x["key"] == key for x in rows), f"清单缺组件 {key}"
 
 
 def test_list_nonblocking_cold(admin_tok):

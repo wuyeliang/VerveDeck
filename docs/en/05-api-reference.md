@@ -84,12 +84,15 @@ Complete REST API route table of the VerveDeck platform backend, one-to-one with
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/admin/upgrade/status | Per-component upgrade state (current pin / local image / runtime version / running task) |
+| GET | /api/admin/upgrade/status | Full platform image inventory (18 components) upgrade state (current image / local image / runtime version / running task) |
 | POST | /api/admin/upgrade/check | `{target, force?}` → available versions from Docker Hub (10min cache) |
 | POST | /api/admin/upgrade/execute | `{target, to_version}` create upgrade task (pull new tag / rebuild + blue-green container switch) |
 | GET | /api/admin/upgrade/tasks | Upgrade task history `{limit}` |
 
-Components: vllm / sglang / llamafactory / gpu_agent (pull kind, tag swap); backend / web (build kind, rebuilt from host /repo + blue-green container recreate; self-upgrade converges via the scheduler).
+Components (18, `upgrade_service.COMPONENTS` is the single source of truth, same order as the Image Management page):
+- Engines (pull + runtime pin, new jobs only): vllm / sglang / llamafactory / evalscope
+- Containers (pull + blue-green recreate): gpu_agent / dcgm_exporter / node_exporter / prometheus / alertmanager / grafana (dark + light, two containers) / postgres / redis / opensearch / argilla / rustfs / mineru
+- Self-built (rebuild from host /repo + blue-green recreate; self-upgrade converges via the scheduler): backend / web
 
 ## Datasets /api/datasets (developer+, tenant-scoped)
 
@@ -233,10 +236,10 @@ Components: vllm / sglang / llamafactory / gpu_agent (pull kind, tag swap); back
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/images | Platform engine image inventory (version probe 5min cache + stale fallback, non-blocking; custom images; pull/build status) |
+| GET | /api/images | Full platform image inventory (18 items = 5 engines + 3 self-built + 10 monitoring/infra; same source & order as the cluster upgrade page; version probe 5min cache + stale fallback, non-blocking; custom images appended; pull/build status) |
 | GET | /api/images/custom | Custom image list |
 | POST | /api/images/custom | Register custom image `{name: tag, note}` (domestic accelerators etc.) |
 | DELETE | /api/images/custom/{cid} | Remove registration |
 | POST | /api/images/custom/batch-delete | Batch remove `{ids}` |
-| POST | /api/images/{key}/probe | Force version probe (synchronous; key: vllm/sglang/llamafactory/gpu-agent) |
+| POST | /api/images/{key}/probe | Force version probe (synchronous; key = any of the 18 component keys; components without a probe command return the current runtime version) |
 | POST | /api/images/{key}/refresh | Background pull/rebuild `{force?}` (async, status polled via GET /api/images) |

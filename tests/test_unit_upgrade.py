@@ -372,11 +372,30 @@ def test_service_aliases(pin_dir):
     ("gpu_agent", "GPU 监控 Agent 将以新镜像重建"),
     ("evalscope", "官方开源 ModelScope 镜像"),
     ("mineru", "MinerU 文档解析容器将以新镜像重建"),
+    ("postgres", "该组件容器将以新镜像蓝绿重建"),
+    ("grafana", "该组件容器将以新镜像蓝绿重建"),
     ("backend", "该服务将以新镜像重建"),
     ("nope", ""),
 ])
 def test_impact_hint(target, hint):
     assert us.impact_hint(target).startswith(hint)
+
+
+def test_components_full_platform_list(pin_dir):
+    """COMPONENTS = 平台全量镜像清单（18 项：5 引擎 + 3 自构 + 10 监控/基础设施），
+    镜像管理页与集群升级页共用此唯一数据源"""
+    assert len(us.COMPONENTS) == 18
+    for k, c in us.COMPONENTS.items():
+        assert c.get("label") and c.get("desc"), f"{k} 缺 label/desc"
+        assert c["kind"] in ("pull", "build")
+        assert c["impact"] in ("engine", "agent", "self")
+        if c["kind"] == "pull":
+            assert c.get("tag_re"), f"{k} pull 组件缺 tag_re"
+            assert c.get("hub") or c.get("image"), f"{k} pull 组件缺 hub/image"
+        else:
+            assert c.get("ctx") and c.get("image"), f"{k} build 组件缺 ctx/image"
+        if c["impact"] in ("agent", "self"):
+            assert us._containers(c), f"{k} 容器组件缺 container"
 
 
 # ---------------- 升级任务校验 ----------------
@@ -449,12 +468,13 @@ def test_execute_pull_valid_tag(sdb, monkeypatch):
 # ---------------- 收敛（converge） ----------------
 
 class _FakeCtr:
-    def __init__(self, name, status):
+    def __init__(self, name, status, image=None):
         self.id = "id-" + name
         self.name = name
         self.status = status
         self.removed = False
         self.renamed_to = None
+        self.attrs = {"Config": {"Image": image or name + ":latest"}}
 
     def remove(self, force=False):
         self.removed = True
@@ -483,6 +503,37 @@ def _patch_docker(monkeypatch, items):
     fake = _FakeDocker(items)
     monkeypatch.setattr(tc, "docker_client", lambda: fake)
     return fake
+
+
+# ---------------- 组件生效镜像（component_image） ----------------
+
+def test_component_image_prefers_running_container(sdb, monkeypatch):
+    """容器组件：运行中容器的实际镜像优先（升级后自动反映新 tag）"""
+    items = {"fintune-postgres-1": _FakeCtr("fintune-postgres-1", "running", "postgres:17-alpine")}
+    _patch_docker(monkeypatch, items)
+    assert us.component_image("postgres") == "postgres:17-alpine"
+    # 多容器组件取第一个存活容器
+    items2 = {"fintune-grafana-1": _FakeCtr("fintune-grafana-1", "running", "grafana/grafana:12.0.0"),
+              "fintune-grafana-light-1": _FakeCtr("fintune-grafana-light-1", "running", "grafana/grafana:11.6.2")}
+    _patch_docker(monkeypatch, items2)
+    assert us.component_image("grafana") == "grafana/grafana:12.0.0"
+
+
+def test_component_image_falls_back_static(sdb, monkeypatch):
+    """容器不存在时回退静态 image 定义；引擎组件仍走运行时 pin"""
+    _patch_docker(monkeypatch, {})
+    assert us.component_image("postgres") == "postgres:16-alpine"
+    assert us.component_image("grafana") == "grafana/grafana:11.6.2"
+    assert us.component_image("backend") == "fintune/backend:1.0"
+    from app.config import settings
+    assert us.component_image("vllm") == us.current_image("vllm")
+    assert us.component_image("vllm") == settings.images_vllm
+
+
+def test_component_image_unknown_key(sdb, monkeypatch):
+    _patch_docker(monkeypatch, {})
+    with pytest.raises(KeyError):
+        us.component_image("no-such-component")
 
 
 def test_converge_temp_running_old_exited_rename_success(sdb, monkeypatch):
