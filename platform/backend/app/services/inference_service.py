@@ -21,6 +21,8 @@ from ..models import Deployment, ModelAsset
 from ..database import SessionLocal
 from . import taskcontainer as tc
 from . import upgrade_service
+from . import backend_registry
+from . import cache_service
 
 log = logging.getLogger("inference")
 
@@ -124,16 +126,17 @@ def start_pd_instance(dep: Deployment, role: str, idx: int, model_path: str) -> 
     cid = tc.create_container(
         name=name,
         image=upgrade_service.current_image("vllm") if dep.engine == "vllm"
-        else upgrade_service.current_image("sglang"),
+        else upgrade_service.current_image("sglang"),  # PD 仅 builtin 引擎（自定义后端 API 层拦截）
         gpus=max(tp, 1),
         cpus=8, mem_gb=20,
         env={"VLLM_LOGGING_LEVEL": "warning",
              "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1",
-             **(dep.nccl_env or {})},
+             **(dep.nccl_env or {}),
+             **cache_service.cache_env_for(dep)},
         labels={"fintune.deployment": str(dep.id), "fintune.type": "inference",
                 "fintune.engine": dep.engine, "fintune.pd_role": role},
     )
-    cmd = build_cmd(dep, model_path, role=role, idx=idx)
+    cmd = build_cmd(dep, model_path, role=role, idx=idx, worker_ip=tc.container_ip(cid))
     exec_env: dict[str, str] = {}
     if dep.engine == "vllm":
         exec_env["VLLM_NIXL_SIDE_CHANNEL_PORT"] = str(pd_side_port(dep, role, idx))
@@ -217,8 +220,37 @@ def _extra_argv(raw) -> list[str]:
         return raw.split()
 
 
-def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: int = 0) -> list[str]:
+def _kv_ext(dep: Deployment) -> dict:
+    """部署级扩展 KV 缓存参数（非 dict 视为空）：
+    vLLM {cpu_offload_gb} → --cpu-offload-gb；SGLang {hicache_size} → --hicache-size"""
+    k = getattr(dep, "kv_cache_ext", None) or {}
+    return k if isinstance(k, dict) else {}
+
+
+def _backend_context(dep: Deployment) -> dict:
+    """自定义后端上下文（image/run_command/env）；builtin 引擎返回空 dict（走既有路径）。
+    后端/版本缺失抛 RuntimeError → launch_thread 记 failed（不静默回退 builtin）。"""
+    if backend_registry.is_custom_name(getattr(dep, "backend_name", "")):
+        return backend_registry.backend_context(dep.backend_name,
+                                                getattr(dep, "backend_version", None) or None)
+    return {}
+
+
+def _engine_image(dep: Deployment, bc: dict | None = None) -> str:
+    """部署生效引擎镜像：自定义后端→版本镜像；builtin→pin 系统（运行时升级生效）"""
+    if bc and bc.get("image"):
+        return bc["image"]
+    return upgrade_service.current_image("vllm") if dep.engine == "vllm" \
+        else upgrade_service.current_image("sglang")
+
+
+def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: int = 0,
+              worker_ip: str = "") -> list[str]:
     """拼引擎启动命令。role：PD 分离实例角色（prefill/decode）；None=协同实例。
+    worker_ip：本容器 IP（自定义后端 {{worker_ip}} 占位符；容器创建后传入）。
+
+    自定义后端（dep.backend_name 非 builtin）：版本启动命令模板占位符渲染
+    （backend_registry.custom_cmd），单机闭环、不支持 PD。
 
     PD 分离（vLLM ≥0.30 / SGLang ≥0.4.9 参数面，按镜像 v0.33.0 / v0.5.23 核实）：
     - vLLM:  --kv-transfer-config '{"kv_connector": "NixlConnector"|"MooncakeConnector",
@@ -229,6 +261,9 @@ def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: in
                     --disaggregation-transfer-backend nixl|mooncake
                     --disaggregation-bootstrap-port <port>（仅 prefill 侧）
     """
+    if backend_registry.is_custom_name(getattr(dep, "backend_name", "")):
+        return backend_registry.custom_cmd(dep, model_path, role, idx, worker_ip,
+                                           _served_name(dep))
     adv = _adv(dep)
     served = _served_name(dep)
     pd = (dep.pd_mode or "off") == "pd" and role in ("prefill", "decode")
@@ -250,6 +285,10 @@ def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: in
             cmd += ["--quantization", dep.quantization]
         if tp > 1:
             cmd += ["--tp", str(tp)]
+        # 部署级扩展 KV 缓存：SGLang HiCache（host 内存二级 KV，GiB）
+        hic = _kv_ext(dep).get("hicache_size")
+        if hic not in (None, "", 0, "0"):
+            cmd += ["--hicache-size", str(hic)]
         if pd:
             cmd += ["--disaggregation-mode", role,
                     "--disaggregation-transfer-backend", _sglang_backend(dep)]
@@ -273,6 +312,10 @@ def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: in
         parts.append(f"--quantization {dep.quantization}")
     if tp > 1:
         parts.append(f"--tensor-parallel-size {tp}")
+    # 部署级扩展 KV 缓存：vLLM CPU offload（GiB）
+    off = _kv_ext(dep).get("cpu_offload_gb")
+    if off not in (None, "", 0, "0"):
+        parts.append(f"--cpu-offload-gb {off}")
     if pd:
         # JSON 含空格/引号，shlex.quote 防 bash -lc 解析破坏
         kvt = {"kv_connector": "NixlConnector" if _vllm_connector(dep) == "nixl"
@@ -313,22 +356,25 @@ def deployment_endpoint(dep: Deployment) -> str:
 def start_replica(dep: Deployment, replica: int, model_path: str) -> str:
     name = deployment_container_name(dep, replica)
     tc.remove_container(name, force=True)
+    bc = _backend_context(dep)  # 自定义后端：镜像+env；builtin：空（既有行为）
+    # VLLM_ALLOW_RUNTIME_LORA_UPDATING：vLLM>=0.15 的运行期 LoRA 热加载 API
+    # （POST /v1/load_lora_adapter、/v1/unload_lora_adapter）默认关闭（官方标注
+    # "仅本地开发使用"），平台需要它实现 LoRA 热加载，故显式开启（仅 builtin 注入）。
+    base_env = bc.get("env") or {"VLLM_LOGGING_LEVEL": "warning",
+                                 "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1"}
     cid = tc.create_container(
         name=name,
-        image=upgrade_service.current_image("vllm") if dep.engine == "vllm"
-        else upgrade_service.current_image("sglang"),
+        image=_engine_image(dep, bc),
         gpus=max(dep.tensor_parallel, 1),
         cpus=8, mem_gb=20,
-        # VLLM_ALLOW_RUNTIME_LORA_UPDATING：vLLM>=0.15 的运行期 LoRA 热加载 API
-        # （POST /v1/load_lora_adapter、/v1/unload_lora_adapter）默认关闭（官方标注
-        # "仅本地开发使用"），平台需要它实现 LoRA 热加载，故显式开启。
-        env={"VLLM_LOGGING_LEVEL": "warning",
-             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1",
-             **(dep.nccl_env or {})},  # NCCL/UCX/NIXL 覆盖（多机 TP / RDMA 调优）
+        env={**base_env,
+             **(dep.nccl_env or {}),   # NCCL/UCX/NIXL 覆盖（多机 TP / RDMA 调优）
+             **cache_service.cache_env_for(dep)},  # 关联缓存服务 → VD_CACHE_ENDPOINT
         labels={"fintune.deployment": str(dep.id), "fintune.type": "inference",
-                "fintune.engine": dep.engine},
+                "fintune.engine": dep.engine,
+                **({"fintune.backend": dep.backend_name} if bc else {})},
     )
-    cmd = build_cmd(dep, model_path)
+    cmd = build_cmd(dep, model_path, worker_ip=tc.container_ip(cid))
     tc.start_task(f"infer-{dep.id}-r{replica}", cid, cmd,
                   os.path.join(settings.data_dir, "infer", f"{dep.id}", f"run-r{replica}.log"))
     return cid
@@ -342,24 +388,37 @@ def _ep_url(dep, path: str = "") -> str:
     return ep + path
 
 
-def _probe_engine(base_url: str, engine: str) -> bool:
-    """引擎存活探测（vLLM /v1/models；SGLang /get_server_info）"""
+def _probe_engine(base_url: str, engine: str, health_path: str | None = None) -> bool:
+    """引擎存活探测（自定义后端→注册表 health_check_path；vLLM /v1/models；SGLang /get_server_info）"""
     try:
-        path = "/v1/models" if engine == "vllm" else "/get_server_info"
+        path = health_path or ("/v1/models" if engine == "vllm" else "/get_server_info")
         r = requests.get(base_url + path, timeout=5)
         return r.status_code == 200
     except Exception:
         return False
 
 
+def _custom_health_path(dep: Deployment) -> str | None:
+    """自定义后端的探活路径；builtin/解析失败返回 None（用引擎默认路径）"""
+    if backend_registry.is_custom_name(getattr(dep, "backend_name", "")):
+        try:
+            return backend_registry.backend_context(dep.backend_name,
+                                                    getattr(dep, "backend_version", None) or None
+                                                    )["health_check_path"]
+        except Exception as e:
+            log.warning("自定义后端探活路径解析失败，用引擎默认路径: %s", e)
+    return None
+
+
 def wait_ready(dep: Deployment, timeout: int = 600) -> bool:
+    hp = _custom_health_path(dep)
     t0 = time.time()
     while time.time() - t0 < timeout:
         if _is_pd(dep):
             if _pd_all_ready(dep):
                 return True
         elif dep.endpoint:
-            if _probe_engine(_ep_url(dep, ""), dep.engine):
+            if _probe_engine(_ep_url(dep, ""), dep.engine, hp):
                 return True
         time.sleep(5)
     return False
@@ -444,6 +503,147 @@ def stop(dep: Deployment) -> None:
         d.container_ids = []
         d.endpoint = ""
         d.status = "stopped"
+        db.commit()
+    finally:
+        db.close()
+
+
+# ---------- 后台启动线程（API start/create 与调度器自动重启共用） ----------
+
+_launch_tokens: dict[int, str] = {}
+_launch_lock = threading.Lock()
+
+
+def issue_launch_token(did: int) -> str:
+    """签发新启动令牌（作废旧后台线程，防其超时回写覆盖新状态——竞态防护）"""
+    import uuid
+    tok = uuid.uuid4().hex
+    with _launch_lock:
+        _launch_tokens[did] = tok
+    return tok
+
+
+def launch_stale(did: int, tok: str) -> bool:
+    with _launch_lock:
+        return _launch_tokens.get(did) != tok
+
+
+def resolve_model_path(asset: ModelAsset, db) -> str:
+    """LoRA 资产解析到基座模型路径；其余资产用自身路径。"""
+    if asset and asset.type == "lora" and asset.parent_asset_id:
+        base = db.get(ModelAsset, asset.parent_asset_id)
+        if base:
+            return base.path
+    return asset.path if asset else ""
+
+
+def wait_engine_image(dep: Deployment, db2) -> str:
+    """引擎镜像按需下载（懒加载）：本地缺失自动后台拉取并等待就绪。
+
+    返回 "ready" 继续建容器；拉取失败/超时回写 failed 并返回 "stop"。
+    """
+    from . import image_ops
+    try:
+        img = _engine_image(dep, _backend_context(dep))
+    except Exception as e:  # 后端/版本被删等 → 直接 failed（清晰报错）
+        dep.status = "failed"
+        dep.error = str(e)[:4000]
+        db2.commit()
+        return "stop"
+    deadline = time.time() + 3600
+    while True:
+        ist = image_ops.ensure_image(img)
+        if ist == "ready":
+            return "ready"
+        if ist == "failed":
+            dep.status = "failed"
+            dep.error = f"引擎镜像下载失败: {image_ops.image_status(img).get('error', '')}"
+            db2.commit()
+            return "stop"
+        dep.status = "creating"
+        msg = f"引擎镜像 {img} 下载中，完成后自动创建容器…"
+        if dep.error != msg:
+            dep.error = msg
+            db2.commit()
+        if time.time() > deadline:
+            dep.status = "failed"
+            dep.error = "引擎镜像下载超时（>1h），请在镜像管理页检查网络后重试"
+            db2.commit()
+            return "stop"
+        time.sleep(10)
+
+
+def launch_thread(did: int, note: str = "") -> str:
+    """后台线程启动部署：镜像等待 → 建容器 → 就绪等待 → 状态回写。
+
+    启动/停止/重启每次换发新令牌作废旧线程；成功就绪回写 running 并清零
+    连续失败计数（自动重启退避重置）。返回本次启动令牌（空=部署不存在）。
+    """
+    db0 = SessionLocal()
+    try:
+        dep = db0.get(Deployment, did)
+        if not dep:
+            return ""
+        model_asset_id = dep.model_asset_id
+        if note:
+            dep.state_message = note
+            db0.commit()
+    finally:
+        db0.close()
+    tok = issue_launch_token(did)
+
+    def _run():
+        db2 = SessionLocal()
+        try:
+            dep = db2.get(Deployment, did)
+            path = resolve_model_path(db2.get(ModelAsset, model_asset_id), db2)
+            if wait_engine_image(dep, db2) != "ready":
+                return
+            launch(dep, path)
+            ready = wait_ready(dep, timeout=1200)
+            if launch_stale(did, tok):
+                return
+            dep = db2.get(Deployment, did)
+            if ready:
+                dep.status = "running"
+                dep.error = ""  # 清除历史错误，避免 DB 显示陈旧 error
+                dep.error_count = 0  # 恢复健康：自动重启退避清零
+                dep.next_restart_at = None
+                dep.state_message = ""
+            else:
+                dep.status = "failed"
+                dep.error = "模型加载超时，请查看日志"
+            db2.commit()
+        except Exception as e:
+            if launch_stale(did, tok):
+                return
+            dep2 = db2.get(Deployment, did)
+            dep2.status = "failed"
+            dep2.error = str(e)[:4000]
+            db2.commit()
+        finally:
+            db2.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return tok
+
+
+def cleanup_instances(dep: Deployment) -> None:
+    """清理部署全部实例容器 + Prometheus target（不写状态——由调用方掌控状态流转）。
+    用于自动重启/参数重建：stop() 会强制写 stopped，重建路径不需要。"""
+    from . import prom_service
+    if _is_pd(dep):
+        targets = set(dep.container_ids or []) | set(_pd_container_names(dep))
+    else:
+        targets = {deployment_container_name(dep, i) for i in range(max(dep.replicas, 1))}
+    for t in targets:
+        tc.remove_container(t, force=True)
+    prom_service.drop_infer_sd(dep.id)
+    db = SessionLocal()
+    try:
+        d = db.get(Deployment, dep.id)
+        d.container_ids = []
+        d.endpoint = ""
         db.commit()
     finally:
         db.close()
@@ -678,6 +878,21 @@ def scrape_metrics(db, force: bool = False):
     deps = db.query(Deployment).filter(Deployment.status == "running").all()
     for dep in deps:
         if not dep.endpoint:
+            continue
+        # 自定义后端：无 vLLM/SGLang 指标口径，探活走注册表 health_check_path
+        # （缺指标不再误判 infer_down；挂死时经健康路径 3 连败兜底）
+        if backend_registry.is_custom_name(getattr(dep, "backend_name", "")):
+            hp = _custom_health_path(dep)
+            if _probe_engine(_ep_url(dep, ""), dep.engine, hp):
+                _infer_fail[dep.id] = 0
+                continue
+            n = _infer_fail.get(dep.id, 0) + 1
+            _infer_fail[dep.id] = n
+            if n == 3:
+                alert_service.trigger_event(db, "infer_down", f"deploy:{dep.id}",
+                                            f"推理服务不可用：{dep.name}",
+                                            f"健康检查 {hp or '/v1/models'} @ {dep.endpoint} "
+                                            f"连续 3 次不可达（服务可能挂死），请查看部署日志")
             continue
         m = _scrape_one(dep)
         if m is None:

@@ -31,6 +31,20 @@ class Settings(BaseSettings):
     images_eval: str = ("modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/"
                         "modelscope:ubuntu22.04-cuda12.4.0-py311-torch2.6.0-1.26.0-LLM")
     node_name: str = "node-1"
+    # 推理网关（Higress All-in-One）：数据面承载模型路由的加权/容灾/重试，
+    # 控制面经 Console API 同步（Basic Auth）。Console 端口 8001（网关 HTTP 8080），
+    # 仅 docker 网络内可达（compose 不映射 8001 到宿主公网）。
+    higress_enabled: bool = True
+    higress_console_url: str = "http://higress:8001"
+    higress_console_username: str = "admin"
+    higress_console_password: str = "admin"
+    # 路由上游解析目标（docker 服务名，Envoy 内 DNS 解析）：backend 主端口 + 端口池
+    higress_upstream_host: str = "backend"
+    # 内部目标代理端口池（每部署一个端口，承载认证+护栏+PD 转发的完整代理）
+    gateway_port_min: int = 3100
+    gateway_port_max: int = 3199
+    # 网关经路由 headerControl 向目标代理注入的内部令牌（防网络内旁路直调 31xx）
+    target_proxy_token: str = "vervedeck-target-proxy-internal"
     # 对象存储（rustfs / S3 兼容）：数据集版本文件主存储，本地 /data 为处理缓存
     s3_endpoint: str = ""  # 如 http://rustfs:9000；为空则纯本地存储
     s3_access_key: str = "rustfsadmin"

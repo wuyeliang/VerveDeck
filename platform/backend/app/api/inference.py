@@ -23,23 +23,14 @@ from ..services import upgrade_service
 log = logging.getLogger("inference")
 router = APIRouter(tags=["inference"])
 
-# 启动线程令牌：每次 start/stop 换发新 token，作废旧后台线程，
-# 防止旧线程 wait_ready 超时后回写 failed/running 覆盖新状态（竞态）
-_launch_tokens: dict[int, str] = {}
-_launch_lock = threading.Lock()
-
-
+# 启动线程令牌/镜像等待/模型路径解析已收敛到 inference_service
+# （API start/create 与调度器自动重启共用同一后台线程实现，行为一致）
 def _issue_launch_token(did: int) -> str:
-    import uuid
-    tok = uuid.uuid4().hex
-    with _launch_lock:
-        _launch_tokens[did] = tok
-    return tok
+    return inf.issue_launch_token(did)
 
 
 def _launch_stale(did: int, tok: str) -> bool:
-    with _launch_lock:
-        return _launch_tokens.get(did) != tok
+    return inf.launch_stale(did, tok)
 
 
 def _check(db, pid, user):
@@ -49,41 +40,11 @@ def _check(db, pid, user):
 
 
 def _resolve_model_path(asset: ModelAsset, db) -> str:
-    if asset.type == "lora" and asset.parent_asset_id:
-        base = db.get(ModelAsset, asset.parent_asset_id)
-        if base:
-            return base.path
-    return asset.path
+    return inf.resolve_model_path(asset, db)
 
 
 def _wait_engine_image(dep: Deployment, db2) -> str:
-    """引擎镜像按需下载（懒加载）：本地缺失自动后台拉取并等待就绪。
-
-    返回 "ready" 继续建容器；拉取失败/超时回写 failed 并返回 "stop"。
-    """
-    img = upgrade_service.current_image("vllm") if dep.engine == "vllm" \
-        else upgrade_service.current_image("sglang")
-    deadline = time.time() + 3600
-    while True:
-        ist = image_ops.ensure_image(img)
-        if ist == "ready":
-            return "ready"
-        if ist == "failed":
-            dep.status = "failed"
-            dep.error = f"引擎镜像下载失败: {image_ops.image_status(img).get('error', '')}"
-            db2.commit()
-            return "stop"
-        dep.status = "creating"
-        msg = f"引擎镜像 {img} 下载中，完成后自动创建容器…"
-        if dep.error != msg:
-            dep.error = msg
-            db2.commit()
-        if time.time() > deadline:
-            dep.status = "failed"
-            dep.error = "引擎镜像下载超时（>1h），请在镜像管理页检查网络后重试"
-            db2.commit()
-            return "stop"
-        time.sleep(10)
+    return inf.wait_engine_image(dep, db2)
 
 
 def _served_name(d: Deployment) -> str:
@@ -116,6 +77,16 @@ def _brief(d: Deployment, db: Session) -> dict:
         "description": d.description or "",
         "created_at": str(d.created_at),
         "openai_base_url": f"/v1/{d.name}" if d.status == "running" else "",
+        # 推理重构（实例运维/网关/后端注册表/扩展 KV）
+        "state_message": d.state_message or "",
+        "restart_on_error": bool(d.restart_on_error),
+        "error_count": d.error_count or 0,
+        "next_restart_at": str(d.next_restart_at) if d.next_restart_at else "",
+        "kv_cache_ext": d.kv_cache_ext or {},
+        "gateway_port": d.gateway_port or 0,
+        "backend_name": d.backend_name or "",
+        "backend_version": d.backend_version or "",
+        "cache_service_id": d.cache_service_id,
     }
 
 
@@ -144,6 +115,10 @@ class DeployReq(BaseModel):
     kv_connector: str = "nixl"  # PD KV 传输：nixl / mooncake
     node_count: int = 1  # 实例池跨逻辑节点数（放置分组；单实例单机闭环）
     nccl_env: dict = {}  # NCCL/UCX/NIXL 环境变量覆盖
+    # ---------- 推理重构（后端注册表/缓存加速） ----------
+    backend_name: str | None = None  # 推理后端（空=builtin 引擎；自定义须以 -custom 结尾）
+    backend_version: str | None = None  # 后端版本（空=默认版本）
+    cache_service_id: int | None = None  # 关联缓存加速服务（实例注入 VD_CACHE_ENDPOINT）
 
 
 @router.post("/api/inference/deployments")
@@ -153,6 +128,9 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         raise HTTPException(400, "engine 需为 vllm/sglang")
     if db.query(Deployment).filter_by(name=req.name).first():
         raise HTTPException(400, "部署名已存在")
+    from ..models import ModelRoute
+    if db.query(ModelRoute).filter_by(name=req.name).first():
+        raise HTTPException(400, "与已有模型路由名冲突（/v1/ 路径前缀不能碰撞）")
     asset = db.get(ModelAsset, req.model_asset_id)
     if not asset or asset.status != "ready":
         raise HTTPException(400, "模型资产不存在或未就绪")
@@ -167,6 +145,17 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
             + max(1, req.decode_replicas) * max(1, req.decode_tp)
     else:
         need = max(1, req.tensor_parallel) * max(1, req.replicas)
+    # 推理后端 / 缓存服务选型校验（自定义后端须存在且不可 PD；builtin 归一为空）
+    from ..services import backend_registry as br
+    from ..models import CacheService
+    try:
+        backend_name, backend_version = br.validate_choice(
+            db, req.backend_name, req.backend_version, pd_mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    cache_service_id = req.cache_service_id
+    if cache_service_id and not db.get(CacheService, cache_service_id):
+        raise HTTPException(400, "关联的缓存服务不存在")
     # GPU 准入预检（fail-fast；容器创建时 taskcontainer 再做物理空闲卡分配兜底）
     from ..models import GpuNode
     from .. import scheduler
@@ -188,43 +177,15 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         kv_connector=req.kv_connector if req.kv_connector in ("nixl", "mooncake") else "nixl",
         node_count=max(1, req.node_count),
         nccl_env={str(k): str(v) for k, v in (req.nccl_env or {}).items()},
+        # 推理重构（后端注册表/缓存加速）
+        backend_name=backend_name, backend_version=backend_version,
+        cache_service_id=cache_service_id,
     )
     db.add(d)
     db.commit()
     db.refresh(d)
 
-    launch_tok = _issue_launch_token(d.id)
-
-    def _launch():
-        db2 = SessionLocal()
-        try:
-            dep = db2.get(Deployment, d.id)
-            path = _resolve_model_path(asset, db2)
-            if _wait_engine_image(dep, db2) != "ready":
-                return
-            inf.launch(dep, path)
-            ready = inf.wait_ready(dep, timeout=1200)
-            if _launch_stale(d.id, launch_tok):
-                return
-            dep = db2.get(Deployment, d.id)
-            if ready:
-                dep.status = "running"
-                dep.error = ""  # 清除历史错误，避免 DB 显示陈旧 error
-            else:
-                dep.status = "failed"
-                dep.error = "模型加载超时，请查看日志"
-            db2.commit()
-        except Exception as e:
-            if _launch_stale(d.id, launch_tok):
-                return
-            dep2 = db2.get(Deployment, d.id)
-            dep2.status = "failed"
-            dep2.error = str(e)[:4000]
-            db2.commit()
-        finally:
-            db2.close()
-
-    threading.Thread(target=_launch, daemon=True).start()
+    inf.launch_thread(d.id, note="推理容器启动中…")
     return _brief(d, db)
 
 
@@ -255,35 +216,12 @@ def start_deploy(did: int, db=Depends(get_db), user=Depends(get_current_user)):
     if not d:
         raise HTTPException(404, "部署不存在")
     _check(db, d.project_id, user)
-    asset = db.get(ModelAsset, d.model_asset_id)
-    launch_tok = _issue_launch_token(d.id)
-
-    def _launch():
-        db2 = SessionLocal()
-        try:
-            dep = db2.get(Deployment, did)
-            path = _resolve_model_path(asset, db2)
-            if _wait_engine_image(dep, db2) != "ready":
-                return
-            inf.launch(dep, path)
-            ready = inf.wait_ready(dep, timeout=1200)
-            if _launch_stale(did, launch_tok):
-                return  # 已被新的 start/stop 取代，不回写状态
-            dep = db2.get(Deployment, did)
-            dep.status = "running" if ready else "failed"
-            dep.error = "" if ready else "模型加载超时"
-            db2.commit()
-        except Exception as e:
-            if _launch_stale(did, launch_tok):
-                return
-            dep2 = db2.get(Deployment, did)
-            dep2.status = "failed"
-            dep2.error = str(e)[:4000]
-            db2.commit()
-        finally:
-            db2.close()
-
-    threading.Thread(target=_launch, daemon=True).start()
+    # 人工启动即干预：清零自动重启退避（下次故障从 30s 重新开始）
+    if d.error_count:
+        d.error_count = 0
+        d.next_restart_at = None
+        db.commit()
+    inf.launch_thread(d.id, note="推理容器启动中…")
     return {"ok": True}
 
 
@@ -450,6 +388,198 @@ def scale_role_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_
     return _brief(d, db)
 
 
+# ---------- 部署编辑（即时字段直改 / 参数字段自动重建生效） ----------
+
+_IMMEDIATE_FIELDS = {"name", "description", "restart_on_error",
+                     "backend_name", "backend_version"}
+
+
+@router.put("/api/inference/deployments/{did}")
+def update_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_current_user)):
+    """编辑部署：name/description/restart_on_error/backend 即时生效；
+    其余参数（引擎/副本/拓扑/高级参数/扩展 KV 等）自动停旧实例重建生效
+    （状态 → creating，后台线程完成重建）。"""
+    d = db.get(Deployment, did)
+    if not d:
+        raise HTTPException(404, "部署不存在")
+    _check(db, d.project_id, user)
+    # 外键字段显式传 null = 清除关联（通用 None 过滤会吞掉该语义，需特判）
+    clear_cache = (req or {}).get("cache_service_id") is None and "cache_service_id" in (req or {})
+    req = {k: v for k, v in (req or {}).items() if v is not None}
+    if clear_cache:
+        req["cache_service_id"] = None
+    if not req:
+        raise HTTPException(400, "无更新字段")
+    if "name" in req and req["name"] != d.name:
+        if db.query(Deployment).filter_by(name=req["name"]).first():
+            raise HTTPException(400, "部署名已存在")
+        from ..models import ModelRoute
+        if db.query(ModelRoute).filter_by(name=req["name"]).first():
+            raise HTTPException(400, "与已有模型路由名冲突")
+    if "model_asset_id" in req:
+        asset = db.get(ModelAsset, req["model_asset_id"])
+        if not asset or asset.status != "ready":
+            raise HTTPException(400, "模型资产不存在或未就绪")
+
+    rebuild = any(k not in _IMMEDIATE_FIELDS for k in req)
+    # 参数校验（与创建同口径）
+    engine = req.get("engine", d.engine)
+    if engine not in ("vllm", "sglang"):
+        raise HTTPException(400, "engine 需为 vllm/sglang")
+    pd_mode = req.get("pd_mode", d.pd_mode or "off")
+    if pd_mode not in ("off", "pd"):
+        raise HTTPException(400, "pd_mode 需为 off/pd")
+    if pd_mode == "pd" and \
+            req.get("kv_connector", d.kv_connector or "nixl") not in ("nixl", "mooncake"):
+        raise HTTPException(400, "kv_connector 需为 nixl/mooncake")
+    # 推理后端 / 缓存服务选型校验（与创建同口径；空串=清除自定义后端/取消关联）
+    from ..services import backend_registry as br
+    from ..models import CacheService
+    try:
+        backend_name, backend_version = br.validate_choice(
+            db, req.get("backend_name", d.backend_name),
+            req.get("backend_version", d.backend_version), pd_mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if "backend_name" in req or "backend_version" in req:
+        # 归一化写回（builtin 选择/空串 → None，与创建口径一致）
+        req["backend_name"] = backend_name
+        req["backend_version"] = backend_version
+    if "cache_service_id" in req and req["cache_service_id"] \
+            and not db.get(CacheService, req["cache_service_id"]):
+        raise HTTPException(400, "关联的缓存服务不存在")
+    # GPU 需求增量预检（重建后需求变大才查容量）
+    new_need = (max(1, req.get("prefill_replicas", d.prefill_replicas or 1))
+                * max(1, req.get("prefill_tp", d.prefill_tp or 1))
+                + max(1, req.get("decode_replicas", d.decode_replicas or 1))
+                * max(1, req.get("decode_tp", d.decode_tp or 1))) \
+        if pd_mode == "pd" \
+        else max(1, req.get("tensor_parallel", d.tensor_parallel)) \
+        * max(1, req.get("replicas", d.replicas))
+    if rebuild and new_need > inf.deployment_gpu_need(d):
+        from ..models import GpuNode
+        from .. import scheduler
+        node = db.query(GpuNode).filter_by(name=settings.node_name).first()
+        used = scheduler._gpu_in_use(db)
+        have = inf.deployment_gpu_need(d)
+        if node and new_need > (node.gpu_count or 0) - used + have:
+            raise HTTPException(400, f"GPU 不足：需要 {new_need} 卡，"
+                                     f"可用 {max(0, (node.gpu_count or 0) - used + have)}")
+    # 应用字段
+    for k, v in req.items():
+        if k == "nccl_env":
+            setattr(d, k, {str(a): str(b) for a, b in (v or {}).items()})
+        elif k in ("kv_cache_ext", "advanced"):
+            setattr(d, k, dict(v or {}))
+        elif k == "lora_adapters":
+            setattr(d, k, list(v or []))
+        else:
+            setattr(d, k, v)
+    if "restart_on_error" in req and not req["restart_on_error"]:
+        d.next_restart_at = None  # 关闭自动重启：取消已计划的退避重启
+    if not rebuild:
+        db.commit()
+        return _brief(d, db)
+    # 参数变更：清旧实例 → 后台重建（镜像→容器→就绪→running）
+    if d.status in ("running", "creating"):
+        inf.cleanup_instances(d)
+    d.status = "creating"
+    d.error = ""
+    d.next_restart_at = None
+    d.state_message = "参数变更，重建实例中…"
+    db.commit()
+    inf.launch_thread(d.id, note="参数变更，重建实例中…")
+    return _brief(d, db)
+
+
+# ---------- 实例视角（单实例状态 / 删除重建） ----------
+
+@router.get("/api/inference/deployments/{did}/instances")
+def list_instances(did: int, db=Depends(get_db), user=Depends(get_current_user)):
+    """实例视角：单实例列表（协同副本 / PD P 池·D 池 / SGLang router）与存活状态"""
+    d = db.get(Deployment, did)
+    if not d:
+        raise HTTPException(404, "部署不存在")
+    _check(db, d.project_id, user)
+    items = []
+    if (d.pd_mode or "off") == "pd":
+        for i in range(max(1, d.prefill_replicas or 1)):
+            name = inf.pd_instance_name(d, "prefill", i)
+            items.append({"role": "prefill", "index": i, "name": name,
+                          "alive": tc.container_alive(name), "ip": tc.container_ip(name) or ""})
+        for j in range(max(1, d.decode_replicas or 1)):
+            name = inf.pd_instance_name(d, "decode", j)
+            items.append({"role": "decode", "index": j, "name": name,
+                          "alive": tc.container_alive(name), "ip": tc.container_ip(name) or ""})
+        if d.engine == "sglang":
+            name = inf.pd_router_name(d)
+            items.append({"role": "router", "index": 0, "name": name,
+                          "alive": tc.container_alive(name), "ip": tc.container_ip(name) or ""})
+    else:
+        for i in range(max(1, d.replicas or 1)):
+            name = inf.deployment_container_name(d, i)
+            items.append({"role": "replica", "index": i, "name": name,
+                          "alive": tc.container_alive(name), "ip": tc.container_ip(name) or ""})
+    return {"status": d.status, "state_message": d.state_message or "",
+            "restart_on_error": bool(d.restart_on_error), "error_count": d.error_count or 0,
+            "next_restart_at": str(d.next_restart_at) if d.next_restart_at else "",
+            "instances": items}
+
+
+@router.post("/api/inference/deployments/{did}/instances/rebuild")
+def rebuild_instance(did: int, req: dict, db=Depends(get_db), user=Depends(get_current_user)):
+    """单实例重建：删除指定实例并重建（部署级状态不变，实例引擎就绪后自动回服务）"""
+    d = db.get(Deployment, did)
+    if not d:
+        raise HTTPException(404, "部署不存在")
+    _check(db, d.project_id, user)
+    if d.status not in ("running", "creating"):
+        raise HTTPException(400, "仅运行中/创建中的部署可重建实例")
+    asset = db.get(ModelAsset, d.model_asset_id)
+    path = _resolve_model_path(asset, db)
+    role = str(req.get("role", "r"))
+    index = int(req.get("index", 0))
+    if (d.pd_mode or "off") == "pd":
+        if role not in ("p", "d", "rt"):
+            raise HTTPException(400, "role 需为 p/d/rt")
+        if role == "rt":
+            if d.engine != "sglang":
+                raise HTTPException(400, "router 实例仅存在于 SGLang PD 部署")
+            inf.start_pd_router(d, path)
+        else:
+            rr = "prefill" if role == "p" else "decode"
+            cur = d.prefill_replicas if role == "p" else d.decode_replicas
+            if not (0 <= index < max(1, cur or 1)):
+                raise HTTPException(400, "实例下标越界")
+            inf.start_pd_instance(d, rr, index, path)
+            if role == "p" and d.engine == "sglang":
+                inf.start_pd_router(d, path)  # SGLang router 需感知 prefill 池变化
+            # vLLM PD 入口=首个 D 实例：重建后入口 IP 可能变化
+            if role == "d" and d.engine == "vllm" and index == 0:
+                d0 = tc.container_ip(inf.pd_instance_name(d, "decode", 0))
+                if d0:
+                    d.endpoint = f"{d0}:8000"
+                    db.commit()
+        tgs = [f"{tc.container_ip(c)}:8000" for c in (d.container_ids or []) if tc.container_ip(c)]
+        first = inf.pd_instance_name(d, "prefill", 0)
+    else:
+        if not (0 <= index < max(1, d.replicas or 1)):
+            raise HTTPException(400, "实例下标越界")
+        inf.start_replica(d, index, path)
+        if index == 0 and not d.endpoint:
+            ip = tc.container_ip(inf.deployment_container_name(d, 0))
+            if ip:
+                d.endpoint = f"{ip}:8000"
+                db.commit()
+        tgs = [f"{tc.container_ip(inf.deployment_container_name(d, i))}:8000"
+               for i in range(max(1, d.replicas or 1))
+               if tc.container_ip(inf.deployment_container_name(d, i))]
+        first = inf.deployment_container_name(d, 0)
+    if tgs:
+        prom_service.write_infer_sd(d.id, d.engine, first, tgs)
+    return _brief(d, db)
+
+
 @router.get("/api/inference/deployments/{did}/logs")
 def deploy_logs(did: int, tail: int = 200, replica: int = 0, role: str = "r",
                 db=Depends(get_db), user=Depends(get_current_user)):
@@ -561,9 +691,17 @@ def _check_guard(db: Session, project_id: int | None, text: str, scope: str) -> 
 
 @router.api_route("/v1/{deploy_name}/{rest:path}", methods=["POST", "GET"])
 async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends(get_db)):
+    """存量直连入口（catch-all 兜底路由 → backend:3001）：按路径解析部署后走代理核心"""
     dep = db.query(Deployment).filter_by(name=deploy_name).first()
     if not dep:
         raise HTTPException(404, "部署不存在")
+    return await _proxy_core(dep, rest, request, db)
+
+
+async def _proxy_core(dep: Deployment, rest: str, request: Request, db: Session):
+    """代理核心（openai_proxy 与网关目标代理 target_proxy 共用）：
+    状态检查 → 认证（x-api-key / Bearer JWT）→ model 名归一 → 输入护栏
+    → PD 二阶段或单目标转发 → 输出护栏。"""
     if dep.status != "running" or not dep.endpoint:
         raise HTTPException(503, "部署未运行")
     # 认证：x-api-key（项目 key）或 Bearer JWT
@@ -620,7 +758,7 @@ async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends
     # 非生成类子路径（/models 等）与 SGLang PD（入口=sglang_router 容器）走下方单目标转发
     if (dep.pd_mode or "off") == "pd" and dep.engine == "vllm" \
             and (rest.endswith("chat/completions") or rest.endswith("completions")):
-        return await _pd_two_stage(dep, rest, payload, request, db, project_id, deploy_name)
+        return await _pd_two_stage(dep, rest, payload, request, db, project_id, dep.name)
 
     # 对外路径 /v1/<deploy_name>/<rest>，vLLM/SGLang 的 OpenAI 兼容路由统一在 /v1/ 下，转发需补前缀
     target = f"http://{dep.endpoint}/v1/{rest}"
@@ -633,7 +771,7 @@ async def openai_proxy(deploy_name: str, rest: str, request: Request, db=Depends
     except Exception as e:
         await client.aclose()
         raise HTTPException(502, f"代理转发失败: {e}")
-    return await _finish_forward(resp, client, db, project_id, deploy_name, rest, payload)
+    return await _finish_forward(resp, client, db, project_id, dep.name, rest, payload)
 
 
 # ---------- 转发收尾（协同单目标 与 PD 二阶段共用） ----------
@@ -789,3 +927,39 @@ async def _pd_two_stage(dep: Deployment, rest: str, payload: dict,
         await client.aclose()
         raise HTTPException(502, f"PD 分离 decode 转发失败: {e}")
     return await _finish_forward(resp, client, db, project_id, deploy_name, rest, payload)
+
+
+# ---------- 内部目标代理（网关端口池 31xx 承载，higress_sync 驱动） ----------
+# 独立 ASGI app：不挂主路由（审计中间件/登录保护不作用于数据面），
+# 每部署一个端口由 port_pool 起 uvicorn 线程服务；仅接受网关经 headerControl
+# 注入内部令牌的请求（docker 网络旁路直调无令牌 → 401）。
+
+from fastapi import FastAPI  # noqa: E402
+
+target_app = FastAPI(title="VerveDeck 内部目标代理", docs_url=None, openapi_url=None)
+
+
+def _target_db():
+    """与 get_db 同语义的会话依赖（yield 依赖在响应完整结束后清理，流式安全）"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@target_app.get("/health")
+def _target_health():
+    return {"status": "ok"}
+
+
+@target_app.api_route("/v1/{deploy_name}/{rest:path}", methods=["POST", "GET"])
+async def target_proxy(deploy_name: str, rest: str, request: Request,
+                       db: Session = Depends(_target_db)):
+    """网关加权端点入口：验内部令牌 → 代理核心（认证+护栏+PD 转发，与主端口一致）"""
+    if request.headers.get("x-vervedeck-internal") != settings.target_proxy_token:
+        raise HTTPException(401, "内部令牌校验失败（仅接受网关转发）")
+    dep = db.query(Deployment).filter_by(name=deploy_name).first()
+    if not dep:
+        raise HTTPException(404, "部署不存在")
+    return await _proxy_core(dep, rest, request, db)

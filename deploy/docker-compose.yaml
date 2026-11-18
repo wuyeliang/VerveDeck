@@ -185,6 +185,23 @@ services:
         condition: service_healthy
     networks: [fintune]
 
+  # 推理网关（Higress All-in-One）：模型路由的加权/容灾/重试数据面，控制面由 backend
+  # 经 Console API（Basic Auth）同步。MODE=full = 网关(8080) + Console(8001) + 控制面同容器。
+  # 数据面路径：客户端 → web(nginx) /v1/ → 127.0.0.1:8080 → 具体路由/兜底路由 → backend
+  # （目标代理端口池 31xx 或主端口 3001）；路由域名均为通配（*），nginx 透传 Host 即可。
+  # 控制台仅本机可访问（调试用）；backend 走 docker 网络服务名 higress 直连 8001。
+  higress:
+    image: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/all-in-one:latest
+    restart: unless-stopped
+    environment:
+      MODE: full
+    ports:
+      - "127.0.0.1:8080:8080"   # 网关 HTTP：web（host 网络）经此转发 /v1/；不暴露公网
+      - "127.0.0.1:8001:8001"   # Console（控制面 API）仅本机调试
+    volumes:
+      - /data/higress:/data     # 网关状态持久化（路由/消费者等，重启不丢）
+    networks: [fintune]
+
   web:
     image: fintune/web:1.0
     build: ../platform/frontend

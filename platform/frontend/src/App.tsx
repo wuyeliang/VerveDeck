@@ -19,6 +19,9 @@ import TrainCenter from './pages/train'
 import EvalCenter from './pages/evals'
 import QuantCenter from './pages/quantize'
 import Inference from './pages/infer'
+import InferRoutes from './pages/infer-routes'
+import InferBackends from './pages/infer-backends'
+import InferCache from './pages/infer-cache'
 import ClusterOps from './pages/cluster'
 import LogsPage from './pages/logs'
 import AdminPanel from './pages/admin'
@@ -107,7 +110,15 @@ function Shell({ children }: { children: React.ReactNode }) {
     { key: '/train', icon: <ExperimentOutlined />, label: t('nav.train') },
     { key: '/evals', icon: <BarChartOutlined />, label: t('nav.evals') },
     { key: '/quantize', icon: <ShrinkOutlined />, label: t('nav.quant') },
-    { key: '/infer', icon: <CloudServerOutlined />, label: t('nav.infer') },
+    {
+      key: '/infer', icon: <CloudServerOutlined />, label: t('nav.infer'),
+      children: [
+        { key: '/infer/deployments', label: t('infer.tabDeploy') },
+        { key: '/infer/routes', label: t('infer.tabRoutes') },
+        { key: '/infer/backends', label: t('infer.tabBackends') },
+        { key: '/infer/cache', label: t('infer.tabCache') },
+      ],
+    },
     // 存储管理 / 镜像管理 置于集群运维上方（仅超管可见）
     ...(isSuper ? [
       { key: '/storage', icon: <HddOutlined />, label: t('nav.storage') },
@@ -167,7 +178,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           <img src="/logo.svg" alt="VerveDeck" style={{ width: 28, height: 28, borderRadius: 7 }} /> VerveDeck
         </div>
         <Menu theme={dark ? 'dark' : 'light'} mode="inline" selectedKeys={[loc.pathname]}
-          defaultOpenKeys={['/cluster']}
+          defaultOpenKeys={['/cluster', '/infer']}
           items={MENU}
           onClick={({ key }) => nav(key)} />
       </Sider>
@@ -222,7 +233,11 @@ function AppRoutes() {
       <Route path="/train" element={hasToken ? <Shell><TrainCenter /></Shell> : <Navigate to="/login" />} />
       <Route path="/evals" element={hasToken ? <Shell><EvalCenter /></Shell> : <Navigate to="/login" />} />
       <Route path="/quantize" element={hasToken ? <Shell><QuantCenter /></Shell> : <Navigate to="/login" />} />
-      <Route path="/infer" element={hasToken ? <Shell><Inference /></Shell> : <Navigate to="/login" />} />
+      <Route path="/infer" element={<Navigate to="/infer/deployments" replace />} />
+      <Route path="/infer/deployments" element={hasToken ? <Shell><Inference /></Shell> : <Navigate to="/login" />} />
+      <Route path="/infer/routes" element={hasToken ? <Shell><InferRoutes /></Shell> : <Navigate to="/login" />} />
+      <Route path="/infer/backends" element={hasToken ? <Shell><InferBackends /></Shell> : <Navigate to="/login" />} />
+      <Route path="/infer/cache" element={hasToken ? <Shell><InferCache /></Shell> : <Navigate to="/login" />} />
       <Route path="/cluster" element={hasToken ? <Shell><Navigate to="/cluster/nodes" replace /></Shell> : <Navigate to="/login" />} />
       <Route path="/cluster/nodes" element={hasToken ? <Shell><ClusterOps tab="nodes" /></Shell> : <Navigate to="/login" />} />
       <Route path="/cluster/gpus" element={hasToken ? <Shell><ClusterOps tab="gpus" /></Shell> : <Navigate to="/login" />} />

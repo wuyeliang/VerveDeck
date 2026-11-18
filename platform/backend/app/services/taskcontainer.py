@@ -215,7 +215,7 @@ def assign_gpus(n: int) -> list[int]:
 def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = None,
                      mem_gb: float | None = None, env: dict | None = None,
                      volumes: dict | None = None, labels: dict | None = None,
-                     gpu_ids: list[int] | None = None) -> str:
+                     gpu_ids: list[int] | None = None, use_image_entrypoint: bool = False) -> str:
     """创建 pause 占位容器（主进程 sleep infinity），返回容器 id。
 
     镜像懒加载：本地缺失时自动后台拉取/构建并抛 ImageNotReady，
@@ -223,6 +223,10 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
 
     gpu_ids 为 None 且 gpus>0 时自动分配空闲物理卡（assign_gpus），
     并以 DeviceIDs 显式绑定 + 标签 fintune.gpus 预留（容器删除即释放）。
+
+    use_image_entrypoint=True 时不覆盖 ENTRYPOINT，直接按镜像默认入口运行
+    （缓存加速服务等"无自定义启动命令、用现成服务镜像"的场景）；
+    返回后容器已在跑（而非 sleep 占位等待 exec）。
     """
     from . import image_ops
     st = image_ops.ensure_image(image)
@@ -241,9 +245,6 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
     kwargs = dict(
         image=image,
         name=name,
-        # pause 占位主进程：显式覆盖镜像 ENTRYPOINT（官方镜像如 vllm/vllm-openai
-        # 的 ENTRYPOINT 是 vllm 本身，不覆盖会执行 "vllm sleep infinity" 直接崩掉）
-        entrypoint=["sleep", "infinity"],
         detach=True,
         auto_remove=False,
         network=settings.docker_network,
@@ -258,6 +259,10 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
         labels=labels,
         stdout=False, stderr=False,
     )
+    if not use_image_entrypoint:
+        # pause 占位主进程：显式覆盖镜像 ENTRYPOINT（官方镜像如 vllm/vllm-openai
+        # 的 ENTRYPOINT 是 vllm 本身，不覆盖会执行 "vllm sleep infinity" 直接崩掉）
+        kwargs["entrypoint"] = ["sleep", "infinity"]
     if gpus and gpus > 0:
         # docker SDK 7.x: GPUDevice 已移除，用 DeviceRequest + nvidia-container-toolkit 钩子。
         # 显式 device_ids 绑定物理卡（容器内引擎看到 0..N-1 重编号）。

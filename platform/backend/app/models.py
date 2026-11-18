@@ -237,6 +237,105 @@ class Deployment(Base):
     status: Mapped[str] = mapped_column(String(32), default="creating")  # creating/running/stopped/failed
     error: Mapped[str] = mapped_column(Text, default="")
     description: Mapped[str] = mapped_column(Text, default="")
+    # ---------- 推理重构（网关/后端注册表/扩展 KV/实例运维） ----------
+    # 状态说明（与 GpuNode.state_message 同语义）：创建进度/错误原因/自动重启退避说明；正常时空
+    state_message: Mapped[str] = mapped_column(String(512), default="")
+    # 错误自动重启（指数退避 30s*2^n 上限 5min）：实例故障时按退避计划自动重建
+    restart_on_error: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)  # 连续失败次数（恢复健康后清零）
+    next_restart_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 下次自动重启计划时刻
+    # 部署级扩展 KV 缓存（引擎原生能力，零镜像依赖）：
+    # vLLM: {cpu_offload_gb: N} → --cpu-offload-gb N；SGLang: {hicache_size: N} → --hicache-size N
+    kv_cache_ext: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 网关内部目标代理端口（backend 端口池 3100-3199，每部署一个端口；0=未分配）
+    gateway_port: Mapped[int] = mapped_column(Integer, default=0)
+    # 推理后端（空=引擎内置 vllm/sglang；非空=自定义后端名，须以 -custom 结尾）
+    backend_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    backend_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 关联缓存加速服务（CacheService）：实例创建时注入 VD_CACHE_ENDPOINT=http://ip:port
+    cache_service_id: Mapped[int | None] = mapped_column(ForeignKey("cache_services.id"), nullable=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ModelRoute(Base):
+    """模型路由：服务名 → 多部署目标（权重 + 容灾）。
+    数据面走 Higress（路径 /v1/<name>/），平台 reconciler 负责把
+    目标权重/fallback 再平衡/重试策略同步到网关 Console API。
+    name 与部署名互斥（路径前缀不能与 /v1/<部署名>/ 存量入口碰撞）。"""
+    __tablename__ = "model_routes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)  # 停用=从网关摘除流量（目标保留）
+    sync_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/synced/error（reconciler 回写）
+    sync_message: Mapped[str] = mapped_column(String(512), default="")
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ModelRouteTarget(Base):
+    """路由目标：部署 + 权重（0-100）+ 容灾标记。
+    主目标（is_fallback=False）不可用时，reconciler 将 fallback 目标
+    权重按比例再平衡到 100 写回网关；恢复后还原。"""
+    __tablename__ = "model_route_targets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    route_id: Mapped[int] = mapped_column(ForeignKey("model_routes.id", ondelete="CASCADE"), index=True)
+    deployment_id: Mapped[int] = mapped_column(ForeignKey("deployments.id", ondelete="CASCADE"), index=True)
+    weight: Mapped[int] = mapped_column(Integer, default=1)
+    is_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    __table_args__ = (Index("uq_route_target", "route_id", "deployment_id", unique=True),)
+
+
+class InferenceBackend(Base):
+    """推理后端注册表：builtin（vllm/sglang，不可删）/ custom（名须以 -custom 结尾，可删）。
+    占位符集：{{model_path}}/{{port}}/{{model_name}}/{{worker_ip}}/{{gpu_count}}/{{gpu_ids}}/{{VAR_NAME}}"""
+    __tablename__ = "inference_backends"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    source: Mapped[str] = mapped_column(String(16), default="builtin")  # builtin/custom
+    description: Mapped[str] = mapped_column(Text, default="")
+    health_check_path: Mapped[str] = mapped_column(String(255), default="/v1/models")
+    default_env: Mapped[dict] = mapped_column(JSON, default=dict)  # 实例启动注入的默认环境变量
+    default_params: Mapped[dict] = mapped_column(JSON, default=dict)  # 通用参数及默认值（前端表单渲染）
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class InferenceBackendVersion(Base):
+    """推理后端版本：version → 镜像 / entrypoint / 启动命令模板 / 环境变量。
+    自定义后端不支持多 worker 分布式（单机闭环）。"""
+    __tablename__ = "inference_backend_versions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    backend_id: Mapped[int] = mapped_column(ForeignKey("inference_backends.id", ondelete="CASCADE"), index=True)
+    version: Mapped[str] = mapped_column(String(64))
+    image: Mapped[str] = mapped_column(String(255))
+    framework: Mapped[str] = mapped_column(String(32), default="cuda")
+    entrypoint: Mapped[str] = mapped_column(String(255), default="")
+    run_command: Mapped[str] = mapped_column(Text, default="")  # 启动命令模板（占位符渲染）
+    env: Mapped[dict] = mapped_column(JSON, default=dict)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    __table_args__ = (Index("uq_backend_version", "backend_id", "version", unique=True),)
+
+
+class CacheService(Base):
+    """缓存服务实例（独立于部署的托管容器）：L2 分布式 KV 缓存存储等。
+    部署关联后向其实例注入 VD_CACHE_ENDPOINT。"""
+    __tablename__ = "cache_services"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    image: Mapped[str] = mapped_column(String(255))
+    command: Mapped[str] = mapped_column(String(512), default="")  # 覆盖镜像默认启动命令
+    env: Mapped[dict] = mapped_column(JSON, default=dict)
+    port: Mapped[int] = mapped_column(Integer, default=0)  # 容器内服务端口（健康检查/endpoint 用）
+    status: Mapped[str] = mapped_column(String(32), default="stopped")  # creating/running/stopped/failed
+    state_message: Mapped[str] = mapped_column(String(512), default="")
+    container_id: Mapped[str] = mapped_column(String(64), default="")
+    endpoint: Mapped[str] = mapped_column(String(128), default="")
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 

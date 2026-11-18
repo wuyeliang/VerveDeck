@@ -182,9 +182,50 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 | POST | /api/inference/deployments/batch-delete | 批量删除 `{ids}`（运行中先 stop 再删） |
 | POST | /api/inference/deployments/{did}/scale | 副本扩缩 `{replicas}` |
 | GET | /api/inference/deployments/{did}/logs | 引擎日志 |
+| PUT | /api/inference/deployments/{did} | 编辑部署（name/description/restart_on_error/backend 即时生效；引擎/副本/参数/扩展 KV/缓存关联自动重建；外键字段传 null 清除关联） |
+| POST | /api/inference/deployments/{did}/scale-role | PD 角色扩缩 `{role, replicas}`（需空闲 GPU） |
+| GET | /api/inference/deployments/{did}/instances | 实例视角（单实例 role/index/name/alive/ip + 自动重启退避信息） |
+| POST | /api/inference/deployments/{did}/instances/rebuild | 单实例重建 `{role, index}`（部署级状态不变） |
 | GET | /api/inference/deployments/{did}/metrics | 引擎指标（QPS/时延/KV 缓存，经 Prometheus） |
 | POST | /api/inference/deployments/{did}/adapters | LoRA 热加载 `{name}`（不停机挂适配器） |
 | DELETE | /api/inference/deployments/{did}/adapters/{name} | LoRA 热卸载 |
+
+### 模型路由 /api/inference/routes（developer+，数据面走 Higress 网关）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/inference/routes | 创建 `{project_id, name, description, targets:[{deployment_id, weight, is_fallback}]}`（名与部署名互斥；权重 1-100 相对值） |
+| GET | /api/inference/routes | 列表（`?project_id=` 过滤；含 targets 与部署状态） |
+| GET | /api/inference/routes/{rid} | 详情（含 sync_status/sync_message） |
+| PUT | /api/inference/routes/{rid} | 编辑（description/enabled/targets 全量替换；路由名不可改） |
+| DELETE | /api/inference/routes/{rid} | 删除（网关残留由调度器孤儿清理摘除） |
+| POST | /api/inference/routes/{rid}/targets | 加目标 `{deployment_id, weight, is_fallback}` |
+| PUT | /api/inference/routes/{rid}/targets/{tid} | 改目标 `{weight, is_fallback}` |
+| DELETE | /api/inference/routes/{rid}/targets/{tid} | 删目标 |
+
+### 推理后端 /api/inference/backends（developer+）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/inference/backends | 列表（builtin/custom + 嵌套 versions + current_image） |
+| POST | /api/inference/backends | 创建自定义后端（名须以 `-custom` 结尾） |
+| PUT | /api/inference/backends/{bid} | 编辑（description/health_check_path/default_env/default_params；名不可改） |
+| DELETE | /api/inference/backends/{bid} | 删除（builtin 403；被部署引用 409） |
+| POST | /api/inference/backends/{bid}/versions | 加版本 `{version, image, run_command…}`（custom 必填 run_command；is_default 互斥） |
+| PUT | /api/inference/backends/{bid}/versions/{vid} | 改版本（被引用的版本号 409 拒改） |
+| DELETE | /api/inference/backends/{bid}/versions/{vid} | 删版本（最后一个 400；被引用 409） |
+| POST | /api/inference/backends/import | YAML 导入（仅创建不覆盖，整批校验） |
+
+### 缓存加速 /api/cache/services（developer+）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/cache/services | 列表（含 used_by 关联部署） |
+| POST | /api/cache/services | 创建 `{name, image, command, env, port}` |
+| PUT | /api/cache/services/{cid} | 编辑（运行中自动重启；名不可改） |
+| DELETE | /api/cache/services/{cid} | 删除（被部署引用 409） |
+| POST | /api/cache/services/{cid}/start | 启动（等镜像 → 容器 → 健康收敛） |
+| POST | /api/cache/services/{cid}/stop | 停止 |
 
 ### OpenAI 兼容代理
 

@@ -2,11 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, Drawer,
   Descriptions, message, Popconfirm, Card, Tabs, Row, Col, Statistic,
-  Collapse, Switch,
+  Collapse, Switch, Tooltip,
 } from 'antd'
 import {
   PlusOutlined, PoweroffOutlined, PlayCircleOutlined, CopyOutlined,
-  CodeOutlined, ThunderboltOutlined,
+  CodeOutlined, ThunderboltOutlined, EditOutlined, ReloadOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useTranslation } from 'react-i18next'
@@ -40,6 +40,12 @@ export default function Inference() {
   const [mon, setMon] = useState<any>(null)
   const [nodeName, setNodeName] = useState('')
   const [rdma, setRdma] = useState<any>({ present: false, devices: [] as string[] })
+  // 推理重构：后端注册表 / 缓存服务 / 编辑弹窗 / 实例视角
+  const [backends, setBackends] = useState<any[]>([])
+  const [cacheServices, setCacheServices] = useState<any[]>([])
+  const [editTarget, setEditTarget] = useState<any>(null)
+  const [editForm] = Form.useForm()
+  const [inst, setInst] = useState<any>(null)
   const tp = Form.useWatch('tensor_parallel', form) || 1
   const rep = Form.useWatch('replicas', form) || 1
   const eng = Form.useWatch('engine', form) || 'vllm'
@@ -50,6 +56,22 @@ export default function Inference() {
   const decodeTp = Form.useWatch('decode_tp', form) || 1
   // GPU 需求预估：协同 = TP×副本；PD = P实例×P_TP + D实例×D_TP
   const gpuNeed = pdMode === 'pd' ? prefillReplicas * prefillTp + decodeReplicas * decodeTp : tp * rep
+  // 创建表单：后端选择联动（custom 后端 → 版本；PD 互斥提示）
+  const selBackend = Form.useWatch('backend_name', form) || ''
+  const selBackendVer = Form.useWatch('backend_version', form)
+  const selBackendObj = backends.find((b: any) => b.name === selBackend)
+  // 编辑表单：后端选择联动（同创建口径）
+  const editBackend = Form.useWatch('backend_name', editForm) || ''
+  const editBackendVer = Form.useWatch('backend_version', editForm)
+  const editBackendObj = backends.find((b: any) => b.name === editBackend)
+  const editEngine = Form.useWatch('engine', editForm) || 'vllm'
+
+  // 后端注册表 / 缓存服务（表单选择用；创建/编辑弹窗打开时刷新）
+  const loadRefs = useCallback(() => {
+    api.get('/api/inference/backends').then((r) => setBackends(r.data || [])).catch(() => {})
+    api.get('/api/cache/services').then((r) => setCacheServices(r.data || [])).catch(() => {})
+  }, [])
+  useEffect(() => { loadRefs() }, [loadRefs])
 
   const load = useCallback(() => {
     api.get('/api/inference/deployments', { params: { project_id: projectId } }).then((r) => setList(r.data)).catch(() => {})
@@ -101,6 +123,17 @@ export default function Inference() {
     return () => { stop = true; clearInterval(x) }
   }, [detail?.id])
 
+  // 实例视角（单实例存活 / 自动重启退避）：详情打开时 4s 轮询
+  useEffect(() => {
+    if (!detail) { setInst(null); return }
+    let stop = false
+    const loadInst = () => api.get(`/api/inference/deployments/${detail.id}/instances`)
+      .then((r) => { if (!stop) setInst(r.data) }).catch(() => {})
+    loadInst()
+    const x = setInterval(loadInst, 4000)
+    return () => { stop = true; clearInterval(x) }
+  }, [detail?.id])
+
   const sendChat = async () => {
     if (!chatInput || !detail) return
     const msgs = [...chat, { role: 'user', content: chatInput }]
@@ -134,6 +167,66 @@ export default function Inference() {
       setLoraModels(all.filter((x: any) => x.type === 'lora'))
     } catch { /* ignore */ }
     setOpen(true)
+  }
+
+  // 编辑部署（即时字段直改 / 参数字段自动重建；后端判定并回写状态）
+  const openEdit = (d: any) => {
+    loadRefs()
+    editForm.resetFields()
+    editForm.setFieldsValue({
+      name: d.name, description: d.description || '',
+      restart_on_error: d.restart_on_error !== false,
+      backend_name: d.backend_name || '', backend_version: d.backend_version || '',
+      cache_service_id: d.cache_service_id || undefined,
+      engine: d.engine, quantization: d.quantization,
+      tensor_parallel: d.tensor_parallel, replicas: d.replicas,
+      max_model_len: d.max_model_len, gpu_mem_util: d.gpu_mem_util,
+      kv_cpu_offload_gb: d.kv_cache_ext?.cpu_offload_gb ?? undefined,
+      kv_hicache_size: d.kv_cache_ext?.hicache_size ?? undefined,
+    })
+    setEditTarget(d)
+  }
+
+  const submitEdit = async () => {
+    if (!editTarget) return
+    const v = await editForm.validateFields()
+    const kv: Record<string, number> = {}
+    if (v.engine === 'sglang') {
+      if (v.kv_hicache_size != null && v.kv_hicache_size !== '') kv.hicache_size = v.kv_hicache_size
+    } else if (v.kv_cpu_offload_gb != null && v.kv_cpu_offload_gb !== '') {
+      kv.cpu_offload_gb = v.kv_cpu_offload_gb
+    }
+    // 清除语义：空串/undefined → null（后端 None 过滤前特判外键）
+    const payload: Record<string, any> = {
+      name: v.name, description: v.description || '',
+      restart_on_error: !!v.restart_on_error,
+      backend_name: v.backend_name || null, backend_version: v.backend_version || null,
+      cache_service_id: v.cache_service_id ?? null,
+      engine: v.engine, quantization: v.quantization,
+      tensor_parallel: v.tensor_parallel, replicas: v.replicas,
+      max_model_len: v.max_model_len, gpu_mem_util: v.gpu_mem_util,
+      kv_cache_ext: kv,
+    }
+    await api.put(`/api/inference/deployments/${editTarget.id}`, payload)
+    message.success(t('infer.edited'))
+    setEditTarget(null)
+    load()
+  }
+
+  // 单实例重建（部署级状态不变）
+  const rebuildInst = (it: any) => {
+    const roleMap: Record<string, string> = { prefill: 'p', decode: 'd', router: 'rt', replica: 'r' }
+    api.post(`/api/inference/deployments/${detail.id}/instances/rebuild`,
+      { role: roleMap[it.role] || 'r', index: it.index })
+      .then(() => message.success(t('infer.rebuildSent')))
+      .catch((e) => message.error(e.response?.data?.detail || e.message))
+  }
+
+  // 自动重启开关（即时字段；关闭时后端取消已排定的退避重启）
+  const toggleRestart = (checked: boolean) => {
+    api.put(`/api/inference/deployments/${detail.id}`, { restart_on_error: checked })
+      .then(() => { setInst((s: any) => ({ ...s, restart_on_error: checked })); load() })
+      .catch((e) => message.error(e.response?.data?.detail || e.message))
   }
 
   // 服务调用代码示例
@@ -181,10 +274,12 @@ console.log(resp.choices[0].message.content)`
         columns={[
           { title: t('common.name'), dataIndex: 'name', width: 165, ellipsis: true, fixed: 'left' },
           { title: t('infer.colModel'), dataIndex: 'model', width: 150, ellipsis: true },
-          { title: t('infer.colEngine'), dataIndex: 'engine', width: 100, render: (v: string, r: any) => (
+          { title: t('infer.colEngine'), dataIndex: 'engine', width: 130, render: (v: string, r: any) => (
             <Space size={4} wrap>
               <Tag color={v === 'vllm' ? 'blue' : 'cyan'}>{v}</Tag>
+              {r.backend_name && <Tag color="orange">{r.backend_name}</Tag>}
               {r.pd_mode === 'pd' && <Tag color="volcano">PD</Tag>}
+              {r.cache_service_id && <Tooltip title={t('infer.cacheOn')}><ThunderboltOutlined style={{ color: '#13c2c2' }} /></Tooltip>}
             </Space>
           ) },
           { title: t('infer.colImage'), dataIndex: 'engine', key: 'image', width: 180, ellipsis: true,
@@ -200,11 +295,17 @@ console.log(resp.choices[0].message.content)`
                 <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => copy(`${location.origin}/v1/${r.name}`)} /></Space>
               : <span style={{ color: '#bbb' }}>-</span>,
           },
-          { title: t('common.status'), dataIndex: 'status', width: 96, render: (v: string) => <Tag color={ST[v]}>{v}</Tag> },
+          { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string, r: any) => (
+            <Space size={4}>
+              <Tag color={ST[v]}>{v}</Tag>
+              {r.state_message && <Tooltip title={r.state_message}><ExclamationCircleOutlined style={{ color: v === 'failed' ? '#cf1322' : '#fa8c16' }} /></Tooltip>}
+            </Space>
+          ) },
           {
-            title: t('common.actions'), width: 220, render: (_: any, r: any) => (
+            title: t('common.actions'), width: 250, render: (_: any, r: any) => (
               <Space size={4}>
                 <Button size="small" onClick={() => openDetail(r.id)}>{t('common.detail')}</Button>
+                <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>{t('common.edit')}</Button>
                 {r.status !== 'running' && r.status !== 'creating' &&
                   <Button size="small" icon={<PlayCircleOutlined />} onClick={() => api.post(`/api/inference/deployments/${r.id}/start`).then(() => message.info(t('infer.startInfo')))}>{t('infer.start')}</Button>}
                 {r.status === 'running' &&
@@ -243,6 +344,13 @@ console.log(resp.choices[0].message.content)`
             if (v.adv_disable_cuda_graph) adv.disable_cuda_graph = true
           }
           if (v.adv_extra_args?.trim()) adv.extra_args = v.adv_extra_args.trim()
+          // 扩展 KV 缓存加速（vLLM=CPU 卸载 GB / SGLang=HiCache 层大小 GB）
+          const kv: Record<string, number> = {}
+          if (v.engine === 'sglang') {
+            if (v.adv_hicache_size != null && v.adv_hicache_size !== '') kv.hicache_size = v.adv_hicache_size
+          } else if (v.adv_cpu_offload_gb != null && v.adv_cpu_offload_gb !== '') {
+            kv.cpu_offload_gb = v.adv_cpu_offload_gb
+          }
           // NCCL/UCX/NIXL 环境变量覆盖（可选 JSON 对象；空=引擎默认）
           let ncclEnv: Record<string, string> = {}
           if (v.adv_nccl_env?.trim()) {
@@ -264,6 +372,10 @@ console.log(resp.choices[0].message.content)`
             decode_replicas: v.decode_replicas || 1, decode_tp: v.decode_tp || 1,
             kv_connector: v.kv_connector || 'nixl', node_count: v.node_count || 1,
             nccl_env: ncclEnv,
+            // 推理重构：后端注册表 / 缓存加速 / 扩展 KV
+            backend_name: v.backend_name || null, backend_version: v.backend_version || null,
+            cache_service_id: v.cache_service_id ?? null,
+            kv_cache_ext: kv,
           })
           message.success(t('infer.created'))
           setOpen(false); load()
@@ -289,8 +401,47 @@ console.log(resp.choices[0].message.content)`
               </Form.Item>
               <Form.Item label={t('infer.dImage')}>
                 <code style={{ fontSize: 12, background: '#f5f5f5', padding: '4px 8px', borderRadius: 4 }}>
-                  {ENGINE_IMAGES[eng] || '—'}
+                  {(selBackendObj && selBackendObj.source === 'custom'
+                    ? (selBackendObj.versions.find((v: any) => v.version === selBackendVer)?.image
+                      || selBackendObj.current_image)
+                    : ENGINE_IMAGES[eng]) || '—'}
                 </code>
+              </Form.Item>
+            </Space>
+            {/* 推理配置：后端注册表（builtin 引擎 / 自定义后端）+ 版本 + 缓存加速服务 */}
+            <Space wrap align="start" style={{ marginTop: 8 }}>
+              <Form.Item name="backend_name" label={t('infer.backend')} tooltip={t('infer.backendHint')}>
+                <Select style={{ width: 240 }} allowClear showSearch optionFilterProp="label"
+                  placeholder={t('infer.backendDefault')}
+                  onChange={(v) => {
+                    if (v) form.setFieldsValue({ backend_version: '' })
+                    if (v && backends.find((b: any) => b.name === v)?.source === 'custom'
+                      && form.getFieldValue('pd_mode') === 'pd') {
+                      form.setFieldsValue({ pd_mode: 'off' })  // 自定义后端不支持 PD 分离
+                    }
+                  }}
+                  options={[
+                    ...backends.filter((b: any) => b.source === 'builtin').map((b: any) => ({
+                      value: '', label: t('infer.backendDefault'), disabled: true,
+                    })),
+                    ...backends.filter((b: any) => b.source === 'custom').map((b: any) => ({
+                      value: b.name, label: b.name,
+                    })),
+                  ]} />
+              </Form.Item>
+              {selBackendObj && selBackendObj.source === 'custom' && (
+                <Form.Item name="backend_version" label={t('infer.backendVer')} tooltip={t('infer.backendVerHint')}>
+                  <Select style={{ width: 180 }} allowClear placeholder={t('infer.backendVerDefault')}
+                    options={selBackendObj.versions.map((v: any) => ({
+                      value: v.version,
+                      label: v.is_default ? `${v.version} (${t('infer.defaultVer')})` : v.version,
+                    }))} />
+                </Form.Item>
+              )}
+              <Form.Item name="cache_service_id" label={t('infer.cacheSvc')} tooltip={t('infer.cacheSvcHint')}>
+                <Select style={{ width: 200 }} allowClear showSearch optionFilterProp="label"
+                  placeholder={t('infer.cacheSvcNone')}
+                  options={cacheServices.map((c: any) => ({ value: c.id, label: c.name }))} />
               </Form.Item>
             </Space>
             <Space wrap align="start">
@@ -309,11 +460,15 @@ console.log(resp.choices[0].message.content)`
           </InferSection>
           <InferSection title={t('infer.secTopology')}>
             <Space wrap align="start">
-              <Form.Item name="pd_mode" label={t('infer.pdMode')} tooltip={t('infer.pdModeHint')}>
-                <Select style={{ width: 200 }} options={[
-                  { value: 'off', label: t('infer.pdOff') },
-                  { value: 'pd', label: t('infer.pdOn') },
-                ]} />
+              <Form.Item name="pd_mode" label={t('infer.pdMode')}
+                tooltip={selBackendObj && selBackendObj.source === 'custom'
+                  ? t('infer.pdDisabledCustom') : t('infer.pdModeHint')}>
+                <Select style={{ width: 200 }}
+                  disabled={!!selBackendObj && selBackendObj.source === 'custom'}
+                  options={[
+                    { value: 'off', label: t('infer.pdOff') },
+                    { value: 'pd', label: t('infer.pdOn') },
+                  ]} />
               </Form.Item>
               <Form.Item label={t('infer.rdmaStatus')} tooltip={t('infer.rdmaStatusHint')}>
                 <span>
@@ -407,12 +562,111 @@ console.log(resp.choices[0].message.content)`
                     <Col span={12}><Form.Item name="adv_disable_cuda_graph" label={t('infer.advDisableCudaGraph')} valuePropName="checked"><Switch /></Form.Item></Col>
                   </Row>
                 )}
+                {/* 扩展 KV 缓存加速（部署级）：vLLM CPU 卸载 / SGLang HiCache 层级 */}
+                <Space wrap align="start" style={{ marginTop: 8 }}>
+                  {eng === 'sglang' ? (
+                    <Form.Item name="adv_hicache_size" label={t('infer.hicacheSize')} tooltip={t('infer.hicacheSizeHint')}>
+                      <InputNumber min={1} max={512} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: 180 }} />
+                    </Form.Item>
+                  ) : (
+                    <Form.Item name="adv_cpu_offload_gb" label={t('infer.cpuOffloadGb')} tooltip={t('infer.cpuOffloadGbHint')}>
+                      <InputNumber min={1} max={256} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: 180 }} />
+                    </Form.Item>
+                  )}
+                </Space>
                 <Form.Item name="adv_extra_args" label={t('infer.advExtraArgs')} tooltip={t('infer.advExtraArgsHint')} style={{ marginTop: 8 }}>
                   <Input.TextArea placeholder={t('infer.advExtraArgsPh')} autoSize={{ minRows: 1, maxRows: 3 }} />
                 </Form.Item>
               </div>
             ),
           }]} />
+        </Form>
+      </Modal>
+
+      {/* 编辑部署：即时字段（名/描述/自动重启/后端）直改；参数字段触发实例重建（后端判定） */}
+      <Modal title={editTarget ? `${t('infer.editTitle')} · ${editTarget.name}` : t('infer.editTitle')}
+        open={!!editTarget} onCancel={() => setEditTarget(null)} width={680}
+        onOk={async () => {
+          const v = await editForm.validateFields()
+          // PD 部署不走协同 TP/副本参数（编辑面板未暴露 P/D 角色参数，禁改防误操作）
+          if (editTarget.pd_mode === 'pd' &&
+              (v.tensor_parallel !== editTarget.tensor_parallel || v.replicas !== editTarget.replicas)) {
+            message.error(t('infer.pdEditNotAllowed')); return
+          }
+          await submitEdit()
+        }}>
+        <Form form={editForm} layout="vertical">
+          <InferSection title={t('infer.secBasic')}>
+            <Form.Item name="name" label={t('infer.deployName')}
+              rules={[{ required: true, pattern: /^[a-zA-Z0-9_-]+$/, message: t('infer.nameRule') }]}>
+              <Input maxLength={60} showCount />
+            </Form.Item>
+            <Form.Item name="description" label={t('infer.desc')}>
+              <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
+            </Form.Item>
+            <Form.Item name="restart_on_error" label={t('infer.restartOn')} valuePropName="checked"
+              tooltip={t('infer.restartHint')}>
+              <Switch />
+            </Form.Item>
+          </InferSection>
+          <InferSection title={t('infer.secBackend')}>
+            <Space wrap align="start">
+              <Form.Item name="backend_name" label={t('infer.backend')} tooltip={t('infer.backendHint')}>
+                <Select style={{ width: 240 }} allowClear showSearch optionFilterProp="label"
+                  placeholder={t('infer.backendDefault')}
+                  onChange={(v) => {
+                    if (v) editForm.setFieldsValue({ backend_version: '' })
+                    if (v && backends.find((b: any) => b.name === v)?.source === 'custom'
+                      && editTarget?.pd_mode === 'pd') {
+                      message.warning(t('infer.customNoPd'))
+                    }
+                  }}
+                  options={backends.filter((b: any) => b.source === 'custom')
+                    .map((b: any) => ({ value: b.name, label: b.name }))} />
+              </Form.Item>
+              {editBackendObj && (
+                <Form.Item name="backend_version" label={t('infer.backendVer')} tooltip={t('infer.backendVerHint')}>
+                  <Select style={{ width: 180 }} allowClear placeholder={t('infer.backendVerDefault')}
+                    options={editBackendObj.versions.map((v: any) => ({
+                      value: v.version,
+                      label: v.is_default ? `${v.version} (${t('infer.defaultVer')})` : v.version,
+                    }))} />
+                </Form.Item>
+              )}
+              <Form.Item name="cache_service_id" label={t('infer.cacheSvc')} tooltip={t('infer.cacheSvcHint')}>
+                <Select style={{ width: 200 }} allowClear showSearch optionFilterProp="label"
+                  placeholder={t('infer.cacheSvcNone')}
+                  options={cacheServices.map((c: any) => ({ value: c.id, label: c.name }))} />
+              </Form.Item>
+            </Space>
+            <div style={{ color: '#999', fontSize: 12, marginTop: -4 }}>{t('infer.editRebuildHint')}</div>
+          </InferSection>
+          <InferSection title={t('infer.secParams')}>
+            <Space wrap>
+              <Form.Item name="engine" label={t('infer.engine')}
+                rules={[{ required: true }]}>
+                <Select style={{ width: 130 }} options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
+              </Form.Item>
+              <Form.Item name="quantization" label={t('infer.quant')}>
+                <Select style={{ width: 120 }} options={['none', 'awq', 'gptq', 'int8'].map((q) => ({ value: q, label: q }))} />
+              </Form.Item>
+              <Form.Item name="tensor_parallel" label={t('infer.tp')}><InputNumber min={1} max={8} /></Form.Item>
+              <Form.Item name="replicas" label={t('infer.replicas')}><InputNumber min={1} max={8} /></Form.Item>
+              <Form.Item name="max_model_len" label={t('infer.maxLen')}><InputNumber min={1024} step={1024} /></Form.Item>
+              <Form.Item name="gpu_mem_util" label={t('infer.memUtil')}><InputNumber step={0.05} min={0.3} max={0.95} /></Form.Item>
+            </Space>
+            <Space wrap align="start" style={{ marginTop: 8 }}>
+              {editEngine === 'sglang' ? (
+                <Form.Item name="kv_hicache_size" label={t('infer.hicacheSize')} tooltip={t('infer.hicacheSizeHint')}>
+                  <InputNumber min={1} max={512} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: 180 }} />
+                </Form.Item>
+              ) : (
+                <Form.Item name="kv_cpu_offload_gb" label={t('infer.cpuOffloadGb')} tooltip={t('infer.cpuOffloadGbHint')}>
+                  <InputNumber min={1} max={256} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: 180 }} />
+                </Form.Item>
+              )}
+            </Space>
+          </InferSection>
         </Form>
       </Modal>
 
@@ -452,6 +706,11 @@ console.log(resp.choices[0].message.content)`
                       },
                     ]} />
                   <p style={{ color: '#888', fontSize: 12, marginTop: -8 }}>{t('infer.invokeHint')}</p>
+                  {detail.state_message && detail.status !== 'running' && (
+                    <p style={{ color: '#fa8c16', whiteSpace: 'pre-wrap', marginTop: -4 }}>
+                      <ExclamationCircleOutlined style={{ marginRight: 6 }} />{detail.state_message}
+                    </p>
+                  )}
                   {detail.error && <p style={{ color: '#cf1322', whiteSpace: 'pre-wrap' }}>{detail.error}</p>}
                   <Card size="small" title={t('infer.example')} style={{ marginBottom: 12 }}
                     extra={<Button size="small" type="text" icon={<CopyOutlined />}
@@ -462,6 +721,47 @@ console.log(resp.choices[0].message.content)`
                     { key: 'py', label: 'Python', children: <CodeBlock code={codePy} onCopy={copy} /> },
                     { key: 'node', label: 'Node.js', children: <CodeBlock code={codeNode} onCopy={copy} /> },
                   ]} />
+                </div>
+              ),
+            },
+            {
+              key: 'instances', label: <span><ReloadOutlined /> {t('infer.tabInstances')}</span>, children: (
+                <div>
+                  <Space wrap style={{ marginBottom: 12 }}>
+                    <Switch checked={inst?.restart_on_error !== false} onChange={toggleRestart}
+                      checkedChildren={t('infer.restartOn')} unCheckedChildren={t('infer.restartOff')} />
+                    <span style={{ color: '#888', fontSize: 12 }}>{t('infer.restartHint')}</span>
+                    {inst && inst.error_count > 0 && (
+                      <Tag color="red">{t('infer.errCount', { n: inst.error_count })}</Tag>
+                    )}
+                    {inst && inst.next_restart_at && (
+                      <Tag color="orange">{t('infer.nextRestart', { at: inst.next_restart_at })}</Tag>
+                    )}
+                  </Space>
+                  {inst?.state_message && (
+                    <p style={{ color: '#888', fontSize: 12, marginTop: 0, marginBottom: 8 }}>
+                      <ExclamationCircleOutlined style={{ marginRight: 6 }} />{inst.state_message}
+                    </p>
+                  )}
+                  <Table size="small" rowKey={(r: any) => `${r.role}-${r.index}`} pagination={false}
+                    dataSource={inst?.instances || []}
+                    columns={[
+                      { title: t('infer.instRole'), dataIndex: 'role', width: 100, render: (v: string) => (
+                        <Tag color={v === 'prefill' ? 'orange' : v === 'decode' ? 'green' : v === 'router' ? 'purple' : 'blue'}>{v}</Tag>
+                      ) },
+                      { title: t('infer.instIndex'), dataIndex: 'index', width: 70 },
+                      { title: t('common.name'), dataIndex: 'name', ellipsis: true },
+                      { title: t('infer.instAlive'), dataIndex: 'alive', width: 90, render: (v: boolean) => (
+                        <Tag color={v ? 'success' : 'error'}>{v ? t('infer.alive') : t('infer.dead')}</Tag>
+                      ) },
+                      { title: t('infer.instIp'), dataIndex: 'ip', width: 140, render: (v: string) => v ? <code style={{ fontSize: 11 }}>{v}</code> : <span style={{ color: '#bbb' }}>-</span> },
+                      { title: t('common.actions'), width: 90, render: (_: any, it: any) => (
+                        <Popconfirm title={t('infer.rebuildConfirm', { name: it.name })} okButtonProps={{ danger: true }}
+                          onConfirm={() => rebuildInst(it)}>
+                          <Button size="small" icon={<ReloadOutlined />}>{t('infer.rebuild')}</Button>
+                        </Popconfirm>
+                      ) },
+                    ]} />
                 </div>
               ),
             },

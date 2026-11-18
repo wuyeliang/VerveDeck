@@ -13,7 +13,8 @@ from .models import User, Tenant, Project, GpuNode, GuardRule, AlertRule
 from .audit import AuditMiddleware
 from .scheduler import start_scheduler
 from .api import (auth, admin, datasets, models_api, training, evals,
-                  inference, cluster, dashboard, quantize, storage, logs, images)
+                  inference, cluster, dashboard, quantize, storage, logs, images,
+                  backends, cache, model_routes)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -74,6 +75,16 @@ def _migrate_columns():
                 ("kv_connector", "VARCHAR(32) NOT NULL DEFAULT 'nixl'"),
                 ("node_count", "INTEGER NOT NULL DEFAULT 1"),
                 ("nccl_env", f"{json_type} NOT NULL DEFAULT '{{}}'"),
+                # 推理重构（网关/后端注册表/扩展 KV/实例运维）：默认值保持存量部署行为不变
+                ("state_message", "VARCHAR(512) NOT NULL DEFAULT ''"),
+                ("restart_on_error", "BOOLEAN NOT NULL DEFAULT 'true'"),
+                ("error_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("next_restart_at", "TIMESTAMP"),
+                ("kv_cache_ext", f"{json_type} NOT NULL DEFAULT '{{}}'"),
+                ("gateway_port", "INTEGER NOT NULL DEFAULT 0"),
+                ("backend_name", "VARCHAR(64)"),
+                ("backend_version", "VARCHAR(64)"),
+                ("cache_service_id", "INTEGER"),
             ],
             "users": [("must_change_password", "BOOLEAN NOT NULL DEFAULT 'false'")],
             "model_assets": [
@@ -277,6 +288,11 @@ def init_db():
                 r.category = _default_cats[r.name]
         if _created:
             log.info("默认告警规则对齐（行业 39 核心）：新建 %d 条", _created)
+        # 推理后端注册表：builtin（vllm/sglang）种子幂等补建（基线版本+参数默认值）
+        from .services import backend_registry
+        _n_backends = backend_registry.seed_builtin_backends(db)
+        if _n_backends:
+            log.info("推理后端注册表种子：新建 %d 条", _n_backends)
         # 数据目录
         for d in ("models/hub", "datasets", "jobs", "evals", "infer", "gpu",
                   "uploads", "dvc-remote", "hf-cache", "argilla"):
@@ -448,3 +464,6 @@ app.include_router(quantize.router)
 app.include_router(storage.router)
 app.include_router(logs.router)
 app.include_router(images.router)
+app.include_router(backends.router)
+app.include_router(cache.router)
+app.include_router(model_routes.router)

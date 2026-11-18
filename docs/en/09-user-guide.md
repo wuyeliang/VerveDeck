@@ -73,17 +73,26 @@ Home summary: GPU utilization, running jobs (training/inference), queue length, 
 - Artifacts are registered in the repository automatically (named `quant-Nb-*`), with lineage, and are directly deployable for inference
 - Logs/status visible in real time; artifacts of succeeded tasks are protected (deleting the task never deletes the registered artifact)
 
-## 7. Inference
+## 7. Inference (Deployments / Routes / Backends / Cache — four sub-menus)
+
+### 7.1 Deployments
 
 **Creating a deployment**
 1. Pick the model (a ready asset from the repository)
-2. Pick the engine: vLLM (default) / SGLang
-3. Advanced parameters (optional; empty = engine default): max_num_seqs, dtype, prefix_caching, chunked_prefill, served_model_name (the externally exposed model name), api_key (engine-level auth), extra_args
-4. Submit → container starts → status becomes running
+2. Pick the engine: vLLM (default) / SGLang; the effective image is managed by the image pin system (Images page)
+3. **Inference configuration** (optional):
+   - Inference backend: empty = built-in engine; pick a custom backend (registered on the Backends page) and optionally a version (empty = default version); custom backends do not support PD disaggregation
+   - Cache service: when attached, instances get the `VD_CACHE_ENDPOINT` env var (degrades gracefully when the service is down)
+4. Deployment topology (optional): PD disaggregation (P/D pools + NIXL/Mooncake KV transfer), node count, NCCL env vars
+5. Runtime parameters: quantization / max_len / memory fraction / replicas / extended KV (vLLM CPU offload, SGLang HiCache) / extra LoRA
+6. Advanced parameters (optional; empty = engine default): max_num_seqs, dtype, prefix_caching, chunked_prefill, served_model_name (the externally exposed model name), api_key (engine-level auth), extra_args
+7. Submit → the backend runs a GPU admission pre-check first (400 with required/available GPU counts when short) → container starts → status becomes running
 
 **Day-to-day operations**
 - Start / Stop (confirmed) / Delete (running ones stop first; multi-select batch delete supported)
-- Scaling: scale to the target replica count
+- **Edit deployment**: name/description/auto-restart/backend apply immediately; engine/replicas/runtime params/extended KV changes stop and rebuild instances automatically; PD deployments cannot change cooperative TP/replicas here (use Scaling for the P/D pools)
+- **Instance view** (in the detail drawer): per-instance liveness and IP (cooperative replicas / PD P & D pools / router), single-instance rebuild (recreated in place, deployment status unchanged); **auto-restart on error** toggle (exponential backoff 30 s → 2 h; a manual start resets the backoff; shows cumulative error count and next retry time)
+- Replica scaling (needs free GPUs); PD deployments scale per role (P/D)
 - **LoRA hot-load**: attach a LoRA adapter from the detail view, effective instantly without restart; hot-unload warns that requests to it will fail immediately
 - Logs / metrics (QPS, latency, KV cache, via Prometheus)
 
@@ -97,6 +106,35 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
 - API Keys can be scoped to specific models
 - Guardrail match returns 451; deployment not running returns 503
 - Streaming supported (`"stream": true`, SSE)
+- For the same model, add a **route** (see 7.2) to get weighted distribution and failover; the entry point becomes `/v1/<route_name>/`
+
+### 7.2 Routes
+
+- The route data plane is served by the Higress gateway: **weighted distribution** (relative weights are normalized to sum 100) + **fallback takeover** (fallback targets take over proportionally when all primary targets are down, and revert automatically on recovery) + endpoint-level retries (5xx / connection errors switch endpoints)
+- The `/v1/<route_name>/` prefix is globally exclusive with deployment names (no path collisions); both sides are validated at creation
+- Targets: one route holds multiple target deployments, each with a weight + fallback flag; changes in target deployment state converge automatically
+- Enable / disable: disabling removes the traffic from the gateway (targets are kept; re-enabling restores it); every change applies on the next sync cycle — the page shows sync state (pending / synced / error with reason)
+- The route name is the public API prefix and cannot be changed (delete and recreate to rename); deleting a synced route leaves the gateway residue to the scheduler's orphan cleanup
+
+### 7.3 Backends
+
+- **builtin** (vllm / sglang): system-seeded, not deletable; the effective image follows the image pin system (runtime upgrades reflect automatically); the version table shows the baseline version and parameter defaults
+- **custom** (name must end with `-custom`): each version defines image + run-command template
+  - Placeholders: `{{model_path}}` `{{port}}` `{{model_name}}` `{{worker_ip}}` `{{gpu_count}}` `{{gpu_ids}}` `{{VAR}}` (injected env vars); unknown placeholders are kept verbatim with a warning, never silently dropped
+  - Health check path: liveness & metrics probe (default `/v1/models`)
+  - Default env / default params (JSON, used for form defaults)
+- YAML import: create-only, never overwrite (existing names reject the whole batch with per-item errors)
+- Protection: a backend referenced by a deployment cannot be deleted; a referenced version cannot be renamed/deleted; custom backends do not support PD disaggregation
+
+### 7.4 Cache Acceleration
+
+Two levels:
+1. **Per-deployment extended KV**: vLLM `--cpu-offload-gb` (GB of KV cache offloaded to host memory) / SGLang `--hicache-size` (host-memory cache tier in GB); set in the create/edit form or in the "Deployment Extended KV" section here; changes stop and rebuild the deployment's instances, effective after the rebuild
+2. **Cache service instances** (managed containers, e.g. KV cache stores):
+   - Empty command = run the image's default entrypoint; non-empty = executed via `bash -lc` inside the container (logs & exit code available)
+   - Lifecycle: stopped → creating (waiting for the image) → running (health convergence; endpoint refreshed on IP drift); non-zero exit or 3 consecutive probe failures → failed (manual restart required)
+   - Attached deployments get `VD_CACHE_ENDPOINT=http://ip:port` injected into their instances (gracefully empty when the service is down)
+   - Editing a running service restarts it automatically; a service referenced by a deployment cannot be deleted
 
 ## 8. Cluster Ops
 

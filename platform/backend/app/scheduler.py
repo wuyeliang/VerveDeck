@@ -13,6 +13,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
@@ -26,6 +27,8 @@ from .services import training_service, eval_service, inference_service, quantiz
 from .services import image_ops
 from .services import alert_service
 from .services import upgrade_service
+from .services import higress_sync
+from .services import cache_service
 
 log = logging.getLogger("scheduler")
 
@@ -223,13 +226,23 @@ def _reconcile_deployments(db):
                 continue
             was_running = dep.status == "running"
             dep.status = "failed"
-            dep.error = "推理容器异常退出（节点故障或 OOM），请重新启动"
+            dep.error = "推理容器异常退出（节点故障或 OOM）"
+            if dep.restart_on_error:
+                # 错误自动重启：指数退避 30s*2^(n-1) 上限 5min（达上限停止，转人工介入）
+                dep.error_count = (dep.error_count or 0) + 1
+                delay = min(30 * (2 ** (dep.error_count - 1)), 300)
+                dep.next_restart_at = datetime.utcnow() + timedelta(seconds=delay)
+                dep.state_message = f"实例故障，{delay}s 后自动重启（连续第 {dep.error_count} 次失败）"
+            else:
+                dep.state_message = "实例故障（未开启自动重启）"
             db.commit()
             log.warning("deployment %s lost", dep.name)
             if was_running:
                 alert_service.trigger_event(db, "infer_down", f"deploy:{dep.id}",
                                             f"推理服务不可用：{dep.name}",
-                                            "推理容器异常退出（节点故障或 OOM），服务已中断，请重新启动")
+                                            "推理容器异常退出（节点故障或 OOM），服务已中断，"
+                                            + ("将按退避计划自动重启" if dep.restart_on_error
+                                               else "请重新启动"))
             _image_ready_since.pop(dep.id, None)
             continue
         # 容器已存活，退出宽限态
@@ -239,12 +252,47 @@ def _reconcile_deployments(db):
             if ok:
                 dep.status = "running"
                 dep.error = ""  # 清除历史错误，避免 DB 显示陈旧 error
+                dep.error_count = 0  # 恢复健康：自动重启退避清零
+                dep.next_restart_at = None
+                dep.state_message = ""
                 db.commit()
                 log.info("deployment %s ready", dep.name)
         elif dep.status == "running" and dep.error:
             # 容器确认存活但 DB 残留历史 error（如上次 lost 事件），清掉
             dep.error = ""
             db.commit()
+
+
+# 自动重启连续失败上限：达到后停止自动重试（退避已达 5min，继续无益只烧 GPU），
+# 保留 failed 状态与 state_message 提示人工介入；人工 start 会清零重新计数
+_MAX_AUTO_RESTARTS = 10
+
+
+def _auto_restart_failed(db):
+    """failed + 自动重启开启 + 退避到期 → 清理残留容器并重建（launch_thread 后台收敛）。"""
+    now = datetime.utcnow()
+    rows = db.query(Deployment).filter(
+        Deployment.status == "failed",
+        Deployment.restart_on_error == True,  # noqa: E712
+        Deployment.next_restart_at != None,   # noqa: E711
+    ).all()
+    for d in rows:
+        if d.next_restart_at > now:
+            continue
+        if (d.error_count or 0) >= _MAX_AUTO_RESTARTS:
+            d.next_restart_at = None
+            d.state_message = f"连续失败 {d.error_count} 次，已停止自动重启，请查看日志后手动启动"
+            db.commit()
+            log.warning("auto-restart gave up deployment %s (failures=%d)",
+                        d.name, d.error_count)
+            continue
+        log.info("auto-restart deployment %s (failure #%d)", d.name, d.error_count)
+        inference_service.cleanup_instances(d)
+        d.status = "creating"
+        d.next_restart_at = None
+        d.state_message = "自动重启中（重建实例）…"
+        db.commit()
+        inference_service.launch_thread(d.id, note="自动重启中（重建实例）…")
 
 
 def _admit_jobs(db):
@@ -369,7 +417,10 @@ class SchedulerThread(threading.Thread):
                 _reconcile_training(db)
                 _reconcile_quant(db)
                 _reconcile_eval(db)
+                _auto_restart_failed(db)     # 失败部署按退避计划自动重建（上限 10 次）
                 _reconcile_deployments(db)  # 容器丢失判 failed（含 infer_down 事件）
+                higress_sync.sync_routes(db)  # 模型路由 → 网关收敛（权重/容灾/孤儿清理）
+                cache_service.reconcile(db)   # 缓存服务实例 → 状态收敛（健康/进程退出/IP 漂移）
                 _admit_jobs(db)
                 _model_downloads(db)
                 inference_service.scrape_metrics(db)  # 引擎探活兜底（约 30s 一次，内部自节流）

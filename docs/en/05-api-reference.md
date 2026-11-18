@@ -182,9 +182,50 @@ Components (18, `upgrade_service.COMPONENTS` is the single source of truth, same
 | POST | /api/inference/deployments/batch-delete | Batch delete `{ids}` (running ones stopped first) |
 | POST | /api/inference/deployments/{did}/scale | Scale replicas `{replicas}` |
 | GET | /api/inference/deployments/{did}/logs | Engine logs |
+| PUT | /api/inference/deployments/{did} | Edit deployment (name/description/restart_on_error/backend apply immediately; engine/replicas/params/extended KV/cache association rebuild instances; null on FK fields clears the association) |
+| POST | /api/inference/deployments/{did}/scale-role | PD role scaling `{role, replicas}` (needs free GPUs) |
+| GET | /api/inference/deployments/{did}/instances | Instance view (per-instance role/index/name/alive/ip + auto-restart backoff info) |
+| POST | /api/inference/deployments/{did}/instances/rebuild | Rebuild one instance `{role, index}` (deployment status unchanged) |
 | GET | /api/inference/deployments/{did}/metrics | Engine metrics (QPS/latency/KV cache, via Prometheus) |
 | POST | /api/inference/deployments/{did}/adapters | LoRA hot-load `{name}` (attach adapter without restart) |
 | DELETE | /api/inference/deployments/{did}/adapters/{name} | LoRA hot-unload |
+
+### Model Routes /api/inference/routes (developer+, data plane served by the Higress gateway)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/inference/routes | Create `{project_id, name, description, targets:[{deployment_id, weight, is_fallback}]}` (name exclusive with deployment names; weights 1-100 relative) |
+| GET | /api/inference/routes | List (`?project_id=` filter; incl. targets and deployment status) |
+| GET | /api/inference/routes/{rid} | Detail (incl. sync_status/sync_message) |
+| PUT | /api/inference/routes/{rid} | Edit (description/enabled/targets full replace; route name immutable) |
+| DELETE | /api/inference/routes/{rid} | Delete (gateway residue removed by the scheduler's orphan cleanup) |
+| POST | /api/inference/routes/{rid}/targets | Add target `{deployment_id, weight, is_fallback}` |
+| PUT | /api/inference/routes/{rid}/targets/{tid} | Update target `{weight, is_fallback}` |
+| DELETE | /api/inference/routes/{rid}/targets/{tid} | Remove target |
+
+### Inference Backends /api/inference/backends (developer+)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/inference/backends | List (builtin/custom + nested versions + current_image) |
+| POST | /api/inference/backends | Create custom backend (name must end with `-custom`) |
+| PUT | /api/inference/backends/{bid} | Edit (description/health_check_path/default_env/default_params; name immutable) |
+| DELETE | /api/inference/backends/{bid} | Delete (builtin 403; referenced by a deployment 409) |
+| POST | /api/inference/backends/{bid}/versions | Add version `{version, image, run_command…}` (custom requires run_command; is_default is exclusive) |
+| PUT | /api/inference/backends/{bid}/versions/{vid} | Update version (referenced version numbers are rejected with 409) |
+| DELETE | /api/inference/backends/{bid}/versions/{vid} | Delete version (last one 400; referenced 409) |
+| POST | /api/inference/backends/import | YAML import (create-only, never overwrite; whole-batch validation) |
+
+### Cache Acceleration /api/cache/services (developer+)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/cache/services | List (incl. used_by deployments) |
+| POST | /api/cache/services | Create `{name, image, command, env, port}` |
+| PUT | /api/cache/services/{cid} | Edit (running services restart automatically; name immutable) |
+| DELETE | /api/cache/services/{cid} | Delete (referenced by a deployment 409) |
+| POST | /api/cache/services/{cid}/start | Start (wait for image → container → health convergence) |
+| POST | /api/cache/services/{cid}/stop | Stop |
 
 ### OpenAI-Compatible Proxy
 
