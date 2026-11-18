@@ -105,6 +105,44 @@ systemctl disable --now pmcd.service pcp.service 2>/dev/null || true
 pkill -x pmcd 2>/dev/null || true
 pkill -x pmlogger 2>/dev/null || true
 
+# 宿主安全加固（幂等可重跑，无需重启）：
+# ① fail2ban —— SSH 爆破防护。公网训练服务器装完即被持续扫描爆破（2026-11-18 实测
+#    123 服务器安装当天 auth.log 已有数百次失败登录），sshd jail：10 分钟 3 次失败
+#    → 拒绝 1 小时（24.04 上封禁动作落 nftables f2b-table，iptables-nft 封装自动适配）。
+#    ignoreip 默认仅回环；运维出口 IP 不同，首装后把办公出口 IP 追加进
+#    /etc/fail2ban/jail.local 的 ignoreip 行，防误锁自己（带 VerveDeck 标记不覆盖手工定制）。
+# ② 禁用 Ubuntu 自动更新 —— 驱动/内核/运行时与平台镜像是验证过的组合，自动升级可能在
+#    训练中途破坏环境。mask 两个 apt 定时器（mask 防依赖拉回复活）+ APT::Periodic 归零
+#    （双保险，部分路径不走 timer）。安全补丁人工执行: apt update && apt upgrade && 按需重启。
+apt-get install -y fail2ban >/dev/null 2>&1 || echo "    WARN: fail2ban 安装失败（检查 apt 源），跳过"
+if command -v fail2ban-client >/dev/null 2>&1; then
+  if ! grep -q "VerveDeck fail2ban" /etc/fail2ban/jail.local 2>/dev/null; then
+    cat > /etc/fail2ban/jail.local <<'F2B'
+# VerveDeck fail2ban 配置（deploy.sh 生成；运维出口 IP 请追加到 ignoreip 防误锁）
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1
+bantime  = 1h        # 封禁 1 小时
+findtime = 10m       # 10 分钟窗口
+maxretry = 3         # 3 次失败即封
+
+[sshd]
+enabled = true
+F2B
+  fi
+  systemctl enable --now fail2ban || echo "    WARN: fail2ban 启动失败（见 journalctl -u fail2ban）"
+  echo "    fail2ban 已启用（sshd jail：3 次失败/10min → 拒绝 1h；运维出口 IP 追加到 /etc/fail2ban/jail.local ignoreip）"
+fi
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTOUP'
+# VerveDeck: 禁用 Ubuntu 自动更新（训练服务器系统升级必须人工执行，见 deploy.sh 加固注释）
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Download-Upgradeable-Packages "0";
+APT::Periodic::AutocleanInterval "0";
+APT::Periodic::Unattended-Upgrade "0";
+AUTOUP
+echo "    已禁用 Ubuntu 自动更新（apt-daily/apt-daily-upgrade masked + APT::Periodic 归零）"
+
 # 自签 TLS 证书（Web 强制 HTTPS 443；已有则跳过，生产可替换为正式证书）
 mkdir -p tls
 if [ ! -f tls/vervedeck.crt ]; then
@@ -162,7 +200,9 @@ echo "  ---- 公网部署安全加固清单（详见 docs/11-安全加固.md）-
 echo "  [必做] 防火墙只放 80/443（22 建议限源 IP）: ufw allow from <办公IP> to any port 22; ufw allow 80,443; ufw enable"
 echo "  [必做] 核对端口暴露: ss -tlnp —— 仅 web 入口(80/443)与 22 对外，其余应为 127.0.0.1/内网（矩阵见 docs/11-安全加固.md §2）"
 echo "  [必做] 首登修改 admin 密码（强制）；系统管理→设置 开启登录 IP 白名单（办公出口 CIDR）"
-echo "  [建议] SSH 禁 root 直登+密码登录（PermitRootLogin no / PasswordAuthentication no），装 fail2ban"
+echo "  [已完成] fail2ban 防 SSH 爆破（10min 3 次失败 → 拒绝 1h）；运维出口 IP 追加到 /etc/fail2ban/jail.local ignoreip"
+echo "  [已完成] 禁用 Ubuntu 自动更新（apt 定时器 masked；系统升级请人工 apt update && apt upgrade）"
+echo "  [建议] SSH 禁 root 直登+密码登录（PermitRootLogin no / PasswordAuthentication no）"
 echo "  [建议] 自签证书替换为正式域名证书（deploy/tls/vervedeck.{crt,key}）"
 echo "  [可选] 公网可关 API 文档与 Grafana 匿名: .env 设 API_DOCS_ENABLED=false / GRAFANA_ANONYMOUS=false 后 compose up -d"
 echo "=========================================="
