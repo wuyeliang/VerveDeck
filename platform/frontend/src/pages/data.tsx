@@ -128,7 +128,7 @@ export default function DataCenter() {
           },
         ]} />
 
-      {/* 新建数据集（百炼风格：类型/场景/导入方式/模板下载） */}
+      {/* 新建数据集（类型/场景/导入方式/模板下载） */}
       <Modal title={t('data.newDataset')} open={createOpen} onCancel={() => setCreateOpen(false)}
         okText={t('common.create')} onOk={onCreate} width={640}
         afterClose={() => createForm.resetFields()}>

@@ -114,7 +114,7 @@ export default function EvalCenter() {
         </Row>
       )}
 
-      {/* 新建评测（百炼风格：基本信息 / 评测对象 / 评测数据 / 评测器） */}
+      {/* 新建评测（基本信息 / 评测对象 / 评测数据 / 评测器） */}
       <Modal title={t('evals.newEval')} open={open} onCancel={() => setOpen(false)} width={640}
         onOk={async () => {
           const v = await form.validateFields()
@@ -245,7 +245,7 @@ function Card_s({ children }: { children: React.ReactNode }) {
   return <div style={{ background: '#fafafa', padding: '10px 14px', borderRadius: 8 }}>{children}</div>
 }
 
-// 分区标题（百炼风格：蓝色竖条 + 加粗标题）
+// 分区标题（蓝色竖条 + 加粗标题）
 function EvalSection({ title, children }: { title: string, children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 16 }}>

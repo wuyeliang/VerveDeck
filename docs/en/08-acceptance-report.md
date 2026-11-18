@@ -55,10 +55,10 @@
 | 10 | Delete support: data center / model repo / training / evals | Delete endpoints + frontend entries across 4 modules | Per-module delete API cases pass | ✅ |
 | 11 | Training detail shows concrete params | Detail endpoint returns full hyperparams | `test_api_training` detail case pass | ✅ |
 | 12 | Login brute-force protection (lockout) | Dual thresholds (per-account 5 / per-IP 30) + 15-min lock; in-process memory | `test_api_auth` pass; threshold split removed test cascade | ✅ |
-| 13 | Dataset creation flow per reference image | Frontend new-dataset flow aligned (Aliyun Bailian style) | `data.tsx`; `test_api_datasets` pass | ✅ |
+| 13 | Dataset creation flow per reference image | Frontend new-dataset flow aligned (sectioned single-page form) | `data.tsx`; `test_api_datasets` pass | ✅ |
 | 14 | Training task wizard per reference image | Frontend training wizard aligned | Training wizard refactor | ✅ |
 | 15 | Model evaluation per reference image | Frontend evals page aligned | `evals.tsx`; TC08 pass | ✅ |
-| 16 | Reference material (Aliyun Bailian) | UI visual/interaction references Aliyun Bailian console | Overall frontend style aligned | ✅ (design baseline) |
+| 16 | Reference material (cloud console style) | UI visual/interaction follows generic cloud console design | Overall frontend style aligned | ✅ (design baseline) |
 | 17 | Left menu: add "Model Compression" | Sidebar menu + page entry (quantization/compression) | Frontend menu; `/api/quantize/methods` returns 4 methods | ✅ |
 | 18 | Evaluation report download | Report export/download endpoint | `test_api_evals` report case pass | ✅ |
 | 19 | Fix language-switch dropdown not selectable | Fixed timing issue (switch too fast) | i18n switch fix; 6 locales present | ✅ |

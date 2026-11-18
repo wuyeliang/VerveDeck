@@ -243,7 +243,7 @@ export default function TrainCenter() {
           )},
         ]} />
 
-      {/* 新建任务：百炼式单页表单（左侧分区 + 右侧实时摘要） */}
+      {/* 新建任务：单页表单（左侧分区 + 右侧实时摘要） */}
       <Modal title={t('train.newJob')} open={open} onCancel={() => setOpen(false)} width={1000}
         footer={[
           <Button key="c" onClick={() => setOpen(false)}>{t('common.cancel')}</Button>,

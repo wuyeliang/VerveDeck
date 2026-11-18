@@ -1,6 +1,6 @@
 """模型压缩（量化）服务：任务容器内执行 llamafactory-cli export 产出量化产物
 
-参照百炼模型压缩：仅支持量化；流程 = 选模型 → 选量化方式 → 创建任务 → 轮询 → 日志 → 产物入库可部署。
+仅支持量化；流程 = 选模型 → 选量化方式 → 创建任务 → 轮询 → 日志 → 产物入库可部署。
 
 实现：LF 0.9.3 的 export 以 quantization_bit/method 加载模型（量化态）后 save_pretrained 写出量化权重。
 训练镜像未预装量化后端（bitsandbytes/gptq/autoawq），任务启动时在容器内 pip 安装（阿里云镜像源）。

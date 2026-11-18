@@ -94,7 +94,7 @@ export default function QuantCenter() {
           },
         ]} />
 
-      {/* 新建压缩任务（百炼风格：基本信息 / 量化配置） */}
+      {/* 新建压缩任务（基本信息 / 量化配置） */}
       <Modal title={t('quant.newTask')} open={open} onCancel={() => setOpen(false)} width={640}
         onOk={async () => {
           const v = await form.validateFields()
@@ -159,7 +159,7 @@ export default function QuantCenter() {
   )
 }
 
-// 分区标题（百炼风格：蓝色竖条 + 加粗标题）
+// 分区标题（蓝色竖条 + 加粗标题）
 function QuantSection({ title, children }: { title: string, children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 16 }}>
