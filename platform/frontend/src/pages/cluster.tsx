@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs, Segmented, Modal, Form, Input, InputNumber, message } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs, Segmented, Modal, Form, Input, InputNumber, Steps, Tooltip, message } from 'antd'
+import { PlusOutlined, CopyOutlined, DeleteOutlined, ToolOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
@@ -86,22 +86,46 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
 }
 
 /** 计算节点：节点卡（含逐卡概览）+ 队列 + 运行中 */
+/** 节点状态 Tag：online / offline / maintenance（参照 GPUStack worker state 展示） */
+const nodeStatusTag = (n: any, t: any) => n.maintenance
+  ? <Tag color="warning">{t('cluster.nodeMaint')}</Tag>
+  : n.status === 'online'
+    ? <Tag color="success">{t('cluster.nodeOnline')}</Tag>
+    : <Tag color="error">{t('cluster.nodeOffline')}</Tag>
+
 function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () => void }) {
   const { t } = useTranslation()
   const [addOpen, setAddOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [form] = Form.useForm()
-  const submitNode = async () => {
+  const [maintOpen, setMaintOpen] = useState<any>(null)   // 维护弹窗目标节点
+  const [maintMsg, setMaintMsg] = useState('')
+  const [maintBusy, setMaintBusy] = useState(false)
+  const submitMaint = async () => {
+    const n = maintOpen
+    if (!n) return
+    setMaintBusy(true)
     try {
-      const v = await form.validateFields()
-      setBusy(true)
-      await api.post('/api/cluster/nodes', { name: v.name, gpu_count: v.gpu_count || 0, status: 'online' })
-      message.success(t('cluster.addNodeOk'))
-      setAddOpen(false); form.resetFields(); load()
+      await api.put(`/api/cluster/nodes/${n.id}`, { maintenance: !n.maintenance, maintenance_message: maintMsg })
+      message.success(n.maintenance ? t('cluster.maintOff') : t('cluster.maintOn'))
+      setMaintOpen(null); setMaintMsg(''); load()
     } catch (e: any) {
-      if (e?.errorFields) return
       message.error(e.response?.data?.detail || e?.message || t('api.requestFailed'))
-    } finally { setBusy(false) }
+    } finally { setMaintBusy(false) }
+  }
+  const delNode = (n: any) => {
+    Modal.confirm({
+      title: `${t('cluster.deleteNode')}: ${n.name}`,
+      content: t('cluster.deleteNodeConfirm', { name: n.name, gpus: n.gpu_count }),
+      okText: t('common.confirm'), okButtonProps: { danger: true }, cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          await api.delete(`/api/cluster/nodes/${n.id}`)
+          message.success(t('cluster.deleteNodeOk'))
+          load()
+        } catch (e: any) {
+          message.error(e.response?.data?.detail || e?.message || t('api.requestFailed'))
+        }
+      },
+    })
   }
   return (
     <div>
@@ -111,12 +135,34 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
       <Row gutter={16}>
         {nodes.map((n) => (
           <Col span={8} key={n.id}>
-            <Card size="small" title={<Space><span>{n.name}</span><Tag color={n.status === 'online' ? 'success' : 'error'}>{n.status}</Tag></Space>}
-              extra={<span style={{ color: '#888', fontSize: 12 }}>{t('cluster.heartbeat', { ts: n.last_heartbeat ? n.last_heartbeat.replace('T', ' ').slice(0, 19) : '-' })}</span>}>
+            <Card size="small"
+              title={<Space><span>{n.name}</span>{n.local && <Tag style={{ fontSize: 10 }}>{t('cluster.nodeLocal')}</Tag>}{nodeStatusTag(n, t)}</Space>}
+              extra={
+                <Space size={6}>
+                  <Tooltip title={t('cluster.maintHint')}>
+                    <Button size="small" type="text" icon={<ToolOutlined />}
+                      onClick={() => { setMaintOpen(n); setMaintMsg(n.maintenance_message || '') }} />
+                  </Tooltip>
+                  {!n.local && (
+                    <Tooltip title={t('cluster.deleteNode')}>
+                      <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => delNode(n)} />
+                    </Tooltip>
+                  )}
+                </Space>
+              }>
+              <div style={{ textAlign: 'right', color: '#aaa', fontSize: 11, marginTop: -18, marginBottom: 4 }}>
+                {t('cluster.heartbeat', { ts: n.last_heartbeat ? n.last_heartbeat.replace('T', ' ').slice(0, 19) : '-' })}
+              </div>
+              {n.maintenance && (
+                <div style={{ fontSize: 12, color: '#ad6800', background: 'rgba(250,173,20,0.1)',
+                  border: '1px solid rgba(250,173,20,0.4)', borderRadius: 6, padding: '4px 8px', marginBottom: 8 }}>
+                  {t('cluster.nodeMaint')}：{n.maintenance_message || '-'}
+                </div>
+              )}
               <Row gutter={8}>
                 <Col span={8}><Statistic title={t('cluster.gpuTotal')} value={n.gpu_count} /></Col>
-                <Col span={8}><Statistic title={t('cluster.gpuUsed')} value={n.gpu_in_use} valueStyle={{ color: '#cf1322' }} /></Col>
-                <Col span={8}><Statistic title={t('cluster.gpuFree')} value={Math.max(0, n.gpu_count - n.gpu_in_use)} valueStyle={{ color: '#3f8600' }} /></Col>
+                <Col span={8}><Statistic title={t('cluster.gpuUsed')} value={n.local ? n.gpu_in_use : 0} valueStyle={{ color: '#cf1322' }} /></Col>
+                <Col span={8}><Statistic title={t('cluster.gpuFree')} value={n.local ? Math.max(0, n.gpu_count - n.gpu_in_use) : (n.maintenance ? 0 : n.gpu_count)} valueStyle={{ color: '#3f8600' }} /></Col>
               </Row>
               {(n.driver || n.cuda) && (
                 <div style={{ fontSize: 11, color: '#999', margin: '6px 0 0' }}>
@@ -124,6 +170,11 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
                   {n.driver && n.cuda ? ' · ' : ''}
                   {n.cuda ? `${t('cluster.cuda')}: ${n.cuda}` : ''}
                 </div>
+              )}
+              {n.state_message && (
+                <div style={{ fontSize: 11, color: n.status === 'offline' && !n.maintenance ? '#cf1322' : '#ad6800',
+                  background: n.status === 'offline' && !n.maintenance ? 'rgba(255,77,79,0.08)' : 'rgba(250,173,20,0.08)',
+                  borderRadius: 6, padding: '4px 8px', marginTop: 6 }}>{n.state_message}</div>
               )}
               <HostMetrics host={n.host} t={t} />
               {(n.gpus || []).map((g: any) => (
@@ -158,19 +209,128 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
           <RunningTable queue={queue} t={t} />
         </Col>
       </Row>
-      <Modal title={t('cluster.addNode')} open={addOpen} onCancel={() => setAddOpen(false)}
-        onOk={submitNode} confirmLoading={busy} okText={t('common.confirm')} cancelText={t('common.cancel')}>
-        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
-          <Form.Item name="name" label={t('cluster.nodeName')} rules={[{ required: true, message: t('cluster.nodeName') }]}>
-            <Input placeholder="node-2" />
-          </Form.Item>
-          <Form.Item name="gpu_count" label={t('cluster.nodeGpuCount')} initialValue={0}>
-            <InputNumber min={0} max={128} style={{ width: '100%' }} />
-          </Form.Item>
-          <p style={{ color: '#999', fontSize: 12, margin: 0 }}>{t('cluster.addNodeHint')}</p>
-        </Form>
+
+      {/* 添加节点向导：节点信息 → 环境检查 → 接入命令（参照 GPUStack Add Worker 向导） */}
+      <AddNodeWizard open={addOpen} onClose={() => setAddOpen(false)} load={load} />
+
+      {/* 维护模式（参照 GPUStack maintenance） */}
+      <Modal title={maintOpen?.maintenance ? t('cluster.maintEnd') : t('cluster.maint')}
+        open={!!maintOpen} onCancel={() => setMaintOpen(null)} onOk={submitMaint} confirmLoading={maintBusy}
+        okText={t('common.confirm')} cancelText={t('common.cancel')}>
+        <p style={{ marginTop: 0, fontSize: 13 }}>{maintOpen?.maintenance
+          ? t('cluster.maintEndDesc')
+          : t('cluster.maintDesc')}</p>
+        {!maintOpen?.maintenance && (
+          <Input.TextArea rows={2} value={maintMsg} onChange={(e) => setMaintMsg(e.target.value)}
+            placeholder={t('cluster.maintPh')} style={{ marginBottom: 8 }} />
+        )}
       </Modal>
     </div>
+  )
+}
+
+/** 添加节点向导（参照 GPUStack Add Worker：Base Configuration → Check Environment → Run command）
+ *  ① 节点信息（名称/预期卡数）→ ② 环境检查（目标机跑检查脚本）→ ③ 接入命令（签发 24h 令牌，一键复制） */
+function AddNodeWizard({ open, onClose, load }: { open: boolean; onClose: () => void; load: () => void }) {
+  const { t } = useTranslation()
+  const [step, setStep] = useState(0)
+  const [name, setName] = useState('')
+  const [gpuCount, setGpuCount] = useState<number | null>(null)
+  const [tok, setTok] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const reset = () => { setStep(0); setName(''); setGpuCount(null); setTok(null); setErr('') }
+  const close = () => { reset(); onClose() }
+  const copy = (text: string) => {
+    navigator.clipboard?.writeText(text).then(
+      () => message.success(t('cluster.nzCopied')),
+      () => message.error(t('api.requestFailed')))
+  }
+  const issueToken = async () => {
+    if (!name.trim()) { setErr(t('cluster.nzNameReq')); return }
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post('/api/cluster/nodes/token', { node_name: name.trim(), gpu_count: gpuCount || 0 })
+      setTok(r.data)
+      setStep(2)
+    } catch (e: any) {
+      setErr(e.response?.data?.detail || e?.message || t('api.requestFailed'))
+    } finally { setBusy(false) }
+  }
+  const revokeAndReissue = async () => {
+    if (!tok) return
+    setBusy(true)
+    try {
+      const r = await api.post('/api/cluster/nodes/token',
+        { node_name: name.trim(), gpu_count: gpuCount || 0, force: true })
+      setTok(r.data)
+      message.success(t('cluster.nzReissued'))
+    } catch (e: any) {
+      setErr(e.response?.data?.detail || e?.message || t('api.requestFailed'))
+    } finally { setBusy(false) }
+  }
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const cmd = `VD_PLATFORM=${origin} VD_TOKEN=${tok?.token || 'vdk-****'} bash add-node.sh`
+  const envCheck = `# ${'在目标机器上运行（三项全部 OK 后点「下一步」）'}\ncommand -v nvidia-smi >/dev/null && echo "nvidia-smi OK" || echo "nvidia-smi MISSING"\nnvidia-smi -L\ncurl -sk -m 5 -o /dev/null ${origin}/api/auth/login && echo "platform reachable" || echo "platform UNREACHABLE"`
+  return (
+    <Modal title={t('cluster.addNode')} open={open} onCancel={close} width={640}
+      footer={
+        step === 0 ? [
+          <Button key="c" onClick={close}>{t('common.cancel')}</Button>,
+          <Button key="n" type="primary" loading={busy} onClick={() => { setErr(''); setStep(1) }}>{t('cluster.nzNext')}</Button>,
+        ]
+          : step === 1 ? [
+            <Button key="b" onClick={() => setStep(0)}>{t('cluster.nzPrev')}</Button>,
+            <Button key="n" type="primary" loading={busy} onClick={issueToken}>{t('cluster.nzNext')}</Button>,
+          ]
+            : [
+              <Button key="c" onClick={close}>{t('cluster.nzDone')}</Button>,
+              <Button key="r" danger loading={busy} onClick={revokeAndReissue}>{t('cluster.nzReissue')}</Button>,
+            ]
+      }>
+      <Steps size="small" current={step} style={{ margin: '8px 0 16px' }} items={[
+        { title: t('cluster.nzStepInfo') },
+        { title: t('cluster.nzStepEnv') },
+        { title: t('cluster.nzStepCmd') },
+      ]} />
+      {step === 0 && (
+        <div>
+          <div style={{ fontSize: 13, marginBottom: 8 }}>{t('cluster.nodeName')}</div>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="node-2"
+            addonBefore="" style={{ marginBottom: 12 }} />
+          <div style={{ fontSize: 13, marginBottom: 8 }}>{t('cluster.nzGpuCount')}</div>
+          <InputNumber value={gpuCount ?? undefined} min={1} max={128} style={{ width: '100%' }}
+            onChange={(v) => setGpuCount(typeof v === 'number' ? v : null)} />
+          <p style={{ color: '#999', fontSize: 12, margin: '12px 0 0' }}>{t('cluster.addNodeHint')}</p>
+          {err && <p style={{ color: '#cf1322', fontSize: 12, margin: 0 }}>{err}</p>}
+        </div>
+      )}
+      {step === 1 && (
+        <div>
+          <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('cluster.nzEnvDesc')}</p>
+          <pre style={{ background: 'rgba(0,0,0,0.04)', borderRadius: 6, padding: 10, fontSize: 12,
+            overflow: 'auto', maxHeight: 140, margin: 0 }}>{envCheck}</pre>
+          <Button size="small" icon={<CopyOutlined />} style={{ marginTop: 8 }} onClick={() => copy(envCheck)}>{t('cluster.nzCopyScript')}</Button>
+          {err && <p style={{ color: '#cf1322', fontSize: 12, margin: '8px 0 0' }}>{err}</p>}
+        </div>
+      )}
+      {step === 2 && tok && (
+        <div>
+          <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('cluster.nzCmdDesc')}</p>
+          <pre style={{ background: 'rgba(0,0,0,0.04)', borderRadius: 6, padding: 10, fontSize: 12,
+            overflow: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cmd}</pre>
+          <Space style={{ marginTop: 8 }}>
+            <Button size="small" type="primary" icon={<CopyOutlined />} onClick={() => copy(cmd)}>{t('cluster.nzCopyCmd')}</Button>
+            <span style={{ fontSize: 12, color: '#999' }}>
+              <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+              {t('cluster.nzCmdExpiry', { ts: (tok.expires_at || '').replace('T', ' ').slice(0, 19) })}
+            </span>
+          </Space>
+          <p style={{ color: '#999', fontSize: 12, margin: '12px 0 0' }}>{t('cluster.nzCmdHint')}</p>
+          {err && <p style={{ color: '#cf1322', fontSize: 12, margin: '8px 0 0' }}>{err}</p>}
+        </div>
+      )}
+    </Modal>
   )
 }
 

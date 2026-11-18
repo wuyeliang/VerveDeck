@@ -270,6 +270,24 @@ class GpuNode(Base):
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # 状态说明（参照 GPUStack state_message）：离线原因/最后心跳时间/排障指引；正常时空
+    state_message: Mapped[str] = mapped_column(String(512), default="")
+    # 维护模式（参照 GPUStack maintenance）：人工摘除服务——不判离线、不告警、调度不占容量
+    maintenance: Mapped[bool] = mapped_column(Boolean, default=False)
+    maintenance_message: Mapped[str] = mapped_column(String(256), default="")
+
+
+class NodeToken(Base):
+    """节点注册令牌（参照 GPUStack worker token）：服务端签发、绑定节点名、限时效。
+    节点端 add-node.sh 凭令牌注册/重注册/心跳；可重复使用（重启恢复幂等），
+    节点删除或到期后失效。"""
+    __tablename__ = "node_tokens"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    node_name: Mapped[str] = mapped_column(String(64))  # 绑定节点名（注册时以此为准）
+    expires_at: Mapped[datetime] = mapped_column(DateTime)  # 失效时间（签发 +24h）
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 最近一次使用
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class AlertRule(Base):

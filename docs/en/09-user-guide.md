@@ -102,17 +102,23 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
 
 **Compute Nodes**
 - Node cards: GPU total/in-use/free, driver, CUDA, host CPU/memory/disk/network, per-GPU utilization/memory/temp/power/clocks/ECC/Xid/throttling/health
+- State: Online / Offline / Maintenance + a state message (last heartbeat time + troubleshooting hint); offline/recovery raise alerts automatically
+- Maintenance mode: the wrench button on a node card → "Set maintenance" (optional reason) — removes the node from service: no offline detection, no alerts, its GPUs don't count toward scheduling capacity; "End maintenance" restores it
+- Delete node: the delete button on a card, with confirmation; deletion also revokes all of the node's registration tokens so the node-side heartbeat daemon can't re-register it ("resurrect" it)
 - Below: the task queue (priority +1/-1/promote-to-head) and the running-jobs list
-- Multi-node scaling: super_admin can register/remove nodes
+- Multi-node scaling: super_admin can add/remove nodes
 
-**Adding a Node** (two ways)
-1. **From the UI**: the "Add Node" button above the node list → enter a node name (e.g. `node-2`) + GPU count → OK. The local node needs no manual registration — gpu-agent's heartbeat registers it automatically; this entry is for remote nodes / resource records.
-2. **Via script** (recommended, auto-detection): on the *new machine*, run the repo's `deploy/add-node.sh`. It collects local GPU count/model/driver/CUDA and IB HCAs (stored in the node's meta for cross-node RDMA training reference), then registers:
+**Adding a Node** (3-step wizard, modeled on GPUStack's Add Worker)
+The local node needs no manual registration — gpu-agent's heartbeat manages it. For remote nodes:
+1. **Node info**: node name (e.g. `node-2`) + expected GPU count (optional; the node's own detection wins)
+2. **Environment check**: a check script (nvidia-smi / platform reachability) to run on the target machine; continue once all checks pass
+3. **Run command**: the server issues a 24h registration token (`vdk-` prefix) bound to the node name and renders a one-click copy command; "Revoke & reissue" is supported. On the target machine (scp the platform's `deploy/add-node.sh` there first):
    ```bash
-   VD_PLATFORM=https://<platform-IP> VD_USER=admin VD_PASS=<password> \
-   bash add-node.sh [node-name]    # defaults to the local hostname
+   VD_PLATFORM=https://<platform-IP>:8443 VD_TOKEN=vdk-xxxx bash add-node.sh
    ```
-   A duplicate node name exits with an error (delete the old node first or use a different name). If the new machine should actually run jobs, deploy a full platform stack there too (`sudo bash install-from-iso.sh`); its node is then managed via gpu-agent heartbeats. Hosts with IB/RoCE NICs get RDMA devices injected into containers automatically (NCCL multi-node training over IB).
+   The script auto-completes: environment check → token-authorized registration (auto-collects GPU count/model/driver/CUDA/IB; node name comes from the token binding; idempotent) → starts a **background heartbeat daemon** (reports a live GPU snapshot every 10s; the platform marks the node offline after 90s of silence and alerts). Re-run the same command after a reboot to recover.
+   Legacy mode: `VD_USER=admin VD_PASS=<password> bash add-node.sh [node-name]` (account login, no token).
+   If the new machine should actually run jobs, deploy a full platform stack there too (`sudo bash install-from-iso.sh`); its node is then managed via gpu-agent heartbeats. Hosts with IB/RoCE NICs get RDMA devices injected into containers automatically (NCCL multi-node training over IB).
 
 **GPU Devices**
 - Cluster-wide GPU detail table: memory progress bar, temperature, power & power limit, SM/memory clocks, ECC errors, Xid, throttle reasons, Remap, health

@@ -16,7 +16,8 @@ from . import alert_service
 
 log = logging.getLogger("gpu")
 
-STALE_SECONDS = 60
+STALE_SECONDS = 60          # 本机 gpu-agent 心跳宽限（agent 每 5s 写一次）
+REMOTE_GRACE_SECONDS = 90   # 远端节点心跳宽限（add-node.sh 守护每 10s 上报，~9 次丢失才判离线）
 _fail_count = 0
 
 HEARTBEAT_FILE = os.path.join(settings.data_dir, "gpu", "agent.ts")
@@ -82,7 +83,8 @@ def ensure_node(db) -> GpuNode:
 
 
 def tick():
-    """调度器每 tick 调用：更新节点心跳/在线状态，触发离线/恢复事件（指标不再入库）"""
+    """调度器每 tick 调用：本机 + 远端节点心跳状态机（参照 GPUStack compute_state），
+    触发离线/恢复事件；指标不再入库（Prometheus 采集）"""
     global _fail_count
     db = SessionLocal()
     try:
@@ -110,6 +112,7 @@ def tick():
                 alert_service.trigger_event(db, "node_online", node.name,
                                             f"计算节点 {node.name} 恢复在线")
             node.status = "online"
+            node.state_message = ""
         else:
             # 连续 2 次 tick 读不到有效心跳（~10s）且超过 STALE 才判离线，避免写入瞬间误判
             _fail_count += 1
@@ -121,9 +124,49 @@ def tick():
                                                 f"计算节点 {node.name} 离线",
                                                 "gpu-agent 心跳超时（60s），节点停止上报")
                 node.status = "offline"
+                last = node.last_heartbeat.strftime("%Y-%m-%d %H:%M:%S") if node.last_heartbeat else "无"
+                node.state_message = f"gpu-agent 心跳超时（{STALE_SECONDS}s），最后心跳 {last}；" \
+                                     f"检查节点 {node.name} 上 gpu-agent 容器与平台栈"
+        # 远端节点：心跳宽限状态机（维护模式豁免）
+        _tick_remote_nodes(db)
         db.commit()
     except Exception:
         db.rollback()
         log.exception("gpu_service.tick error")
     finally:
         db.close()
+
+
+def _tick_remote_nodes(db):
+    """远端节点状态机（name != 本机）：last_heartbeat 超过 REMOTE_GRACE_SECONDS → offline + 事件 +
+    state_message；心跳恢复 → online + 事件；maintenance 节点豁免（不判离线、不告警）。
+    存量"纯登记"节点（从未有心跳）不强制判离线，仅挂提示引导补跑接入命令。"""
+    now = datetime.now()
+    for n in db.query(GpuNode).filter(GpuNode.name != settings.node_name).all():
+        if n.maintenance:
+            continue
+        if n.last_heartbeat is None:
+            # 存量登记节点：保持原状态，挂引导提示（避免批量误判离线）
+            hint = "未上报心跳（存量登记节点）：在该机重跑 add-node.sh 接入命令即可启用实时状态"
+            if n.state_message != hint:
+                n.state_message = hint
+            continue
+        age = (now - n.last_heartbeat).total_seconds()
+        if age > REMOTE_GRACE_SECONDS:
+            if n.status != "offline":
+                log.warning("node %s marked OFFLINE (remote heartbeat stale %ds)", n.name, age)
+                alert_service.trigger_event(db, "node_offline", n.name,
+                                            f"计算节点 {n.name} 离线",
+                                            f"节点心跳超时（{REMOTE_GRACE_SECONDS}s）；"
+                                            f"检查节点端 vervedeck-node-agent 心跳进程（journalctl -u vervedeck-node-agent 或重跑接入命令）")
+            n.status = "offline"
+            last = n.last_heartbeat.strftime("%Y-%m-%d %H:%M:%S")
+            n.state_message = (f"心跳超时（>{REMOTE_GRACE_SECONDS}s），最后心跳 {last}；"
+                               f"节点端心跳进程可能已停止，重跑接入命令可恢复")
+        else:
+            if n.status != "online":
+                log.info("node %s back online (remote heartbeat)", n.name)
+                alert_service.trigger_event(db, "node_online", n.name,
+                                            f"计算节点 {n.name} 恢复在线")
+            n.status = "online"
+            n.state_message = ""

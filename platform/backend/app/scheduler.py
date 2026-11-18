@@ -57,10 +57,11 @@ def _free_gpus(db) -> int:
 
     单主机部署（仅 node-1 在线）即本节点空闲，行为与旧版一致；注册更多在线节点
     后自动扩容调度池。多机训练任务的 rank 容器当前均落在本地宿主（单主机），
-    故此池即其可用上限。
+    故此池即其可用上限。维护模式节点（人工摘除服务）不占容量。
     """
     total = sum((n.gpu_count or 0) for n in
-                db.query(GpuNode).filter(GpuNode.status == "online").all())
+                db.query(GpuNode)
+                .filter(GpuNode.status == "online", GpuNode.maintenance == False).all())  # noqa: E712
     return max(0, total - _gpu_in_use(db))
 
 

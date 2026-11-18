@@ -81,6 +81,12 @@ def _migrate_columns():
                 ("tags", f"{json_type} NOT NULL DEFAULT '[]'"),
             ],
             "audit_logs": [("action", "VARCHAR(64) NOT NULL DEFAULT ''")],
+            # 节点状态机（#105 添加节点重构）：状态说明 + 维护模式
+            "gpu_nodes": [
+                ("state_message", "VARCHAR(512) NOT NULL DEFAULT ''"),
+                ("maintenance", "BOOLEAN NOT NULL DEFAULT 'false'"),
+                ("maintenance_message", "VARCHAR(256) NOT NULL DEFAULT ''"),
+            ],
             "api_keys": [("model_ids", f"{json_type} NOT NULL DEFAULT '[]'")],
             # 告警规则分类 + 事件人工确认（存量库补列；新库由 create_all 建出）
             "alert_rules": [("category", "VARCHAR(64) NOT NULL DEFAULT ''")],
