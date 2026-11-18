@@ -158,7 +158,8 @@ def _tick_remote_nodes(db):
                 alert_service.trigger_event(db, "node_offline", n.name,
                                             f"计算节点 {n.name} 离线",
                                             f"节点心跳超时（{REMOTE_GRACE_SECONDS}s）；"
-                                            f"检查节点端 vervedeck-node-agent 心跳进程（journalctl -u vervedeck-node-agent 或重跑接入命令）")
+                                            f"检查节点端心跳进程（ps -ef | grep vervedeck-node-agent；日志 /var/log/vervedeck-node-agent.log 或 ~/.vervedeck-node-agent.log），"
+                                            f"或重跑接入命令恢复")
             n.status = "offline"
             last = n.last_heartbeat.strftime("%Y-%m-%d %H:%M:%S")
             n.state_message = (f"心跳超时（>{REMOTE_GRACE_SECONDS}s），最后心跳 {last}；"
