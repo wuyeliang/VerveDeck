@@ -92,13 +92,18 @@ def _normalize_weights(items: list) -> list:
 
 
 def _find_service(services: list, host: str, port: int) -> dict | None:
-    """服务源注册后的服务名发现（命名规则随版本可能变化，动态匹配最稳）。"""
-    for ep in (f"{_dns_domain(host)}:{port}", f"{host}:{port}"):
-        for s in services:
-            if ep in (s.get("endpoints") or []):
-                return s
+    """服务源注册后的服务名发现（命名规则随版本可能变化，动态匹配最稳）。
+
+    实测 Console 2.2.6：服务名 = <源名>.dns，endpoints 仅含域名（无端口），
+    端口在独立字段 —— 按 域名+端口 双条件匹配（catchall 与端口池服务共用
+    同一域名，仅端口不同，缺端口条件会张冠李戴）。
+    """
+    doms = {_dns_domain(host), host,
+            f"{_dns_domain(host)}:{port}", f"{host}:{port}"}
     for s in services:
-        if s.get("name") == host and (s.get("port") in (None, port)):
+        if s.get("port") not in (None, port):
+            continue
+        if set(s.get("endpoints") or []) & doms:
             return s
     return None
 
