@@ -25,7 +25,7 @@
     "changePassword": "パスワード変更"
   },
   "login": {
-    "subtitle": "LLM ファインチューニング＆トレーニングプラットフォーム",
+    "subtitle": "LLM ファインチューニング・トレーニング＆推論プラットフォーム",
     "username": "ユーザー名",
     "password": "パスワード",
     "loginBtn": "ログイン",

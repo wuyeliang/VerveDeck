@@ -2,9 +2,9 @@
   <img src="platform/frontend/public/logo.svg" width="84" alt="VerveDeck Logo" />
 </p>
 
-# VerveDeck — LLM Fine-Tuning & Training Platform
+# VerveDeck — LLM Fine-Tuning, Training & Inference Platform
 
-**Web full-stack rewrite + fully containerized** LLM fine-tuning & training platform: data engineering → fine-tuning → evaluation → inference publishing, a complete closed loop.
+**Web full-stack rewrite + fully containerized** LLM fine-tuning, training & inference platform: hardware resource management, dataset management, and the full fine-tuning → training → evaluation → inference serving loop.
 
 > 📄 English (this file) ｜ [简体中文](README.zh-CN.md)
 
@@ -12,7 +12,7 @@
 
 ### Overview
 
-VerveDeck is a ready-to-use, **fully containerized LLM fine-tuning & training platform** that closes the loop from raw documents to a production OpenAI-compatible inference service on single or multi-GPU nodes.
+VerveDeck is a ready-to-use, **fully containerized LLM fine-tuning, training & inference platform** that closes the loop from raw documents to a production OpenAI-compatible inference service on single or multi-GPU nodes.
 
 Key highlights:
 

@@ -25,7 +25,7 @@
     "changePassword": "Cambiar contraseña"
   },
   "login": {
-    "subtitle": "Plataforma de fine-tuning y entrenamiento de LLM",
+    "subtitle": "Plataforma de fine-tuning, entrenamiento e inferencia de LLM",
     "username": "Usuario",
     "password": "Contraseña",
     "loginBtn": "Iniciar sesión",

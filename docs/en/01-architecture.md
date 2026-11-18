@@ -2,7 +2,8 @@
 
 ## 1. System Overview
 
-VerveDeck is a containerized LLM fine-tuning platform covering the full pipeline
+VerveDeck is a containerized LLM fine-tuning, training & inference platform
+(hardware resource management + dataset management + fine-tuning/training/inference) covering the full pipeline
 **Data → Training → Evaluation → Deployment → API Serving**,
 closed-loop on a single machine (one GPU server), with 7 functional modules:
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VerveDeck 大模型微调训练平台 - 一键部署
+# VerveDeck 大模型微调训练推理平台 - 一键部署
 # 用法: sudo bash deploy/deploy.sh
 # 前置: 已安装 Docker + docker compose v2 + nvidia-container-toolkit（GPU 驱动由宿主机提供）
 set -euo pipefail

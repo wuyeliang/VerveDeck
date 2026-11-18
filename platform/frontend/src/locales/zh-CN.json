@@ -25,7 +25,7 @@
     "changePassword": "修改密码"
   },
   "login": {
-    "subtitle": "大模型微调训练平台",
+    "subtitle": "大模型微调训练推理平台",
     "username": "用户名",
     "password": "密码",
     "loginBtn": "登 录",

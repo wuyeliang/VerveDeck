@@ -1,4 +1,4 @@
-"""VerveDeck 大模型微调训练平台 - 后端入口"""
+"""VerveDeck 大模型微调训练推理平台 - 后端入口"""
 import logging
 import os
 
@@ -26,7 +26,7 @@ APP_GITHUB = "https://github.com/wuyeliang/VerveDeck"
 
 # 安全加固：公网部署可设 API_DOCS_ENABLED=false 关闭接口文档（防接口清单泄露）
 _DOCS = settings.api_docs_enabled
-app = FastAPI(title="VerveDeck 大模型微调训练平台", version=APP_VERSION,
+app = FastAPI(title="VerveDeck 大模型微调训练推理平台", version=APP_VERSION,
               docs_url="/docs" if _DOCS else None,
               redoc_url=None,
               openapi_url="/openapi.json" if _DOCS else None)

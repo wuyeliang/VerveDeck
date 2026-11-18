@@ -10,7 +10,7 @@
 
 | Item | Value |
 |---|---|
-| Project | VerveDeck LLM fine-tuning platform (renamed from OpenForge) |
+| Project | VerveDeck LLM fine-tuning, training & inference platform (renamed from OpenForge) |
 | Repository | `git@github.com:wuyeliang/VerveDeck.git` (main) |
 | Server | 100.100.33.86 (root passwordless SSH, KVM) |
 | GPU | Dev/verification: single GPU (RTX 3080 20GB modded); production plan: 8×RTX 4090 (192GB) |

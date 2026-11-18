@@ -6,7 +6,7 @@
 
 ## 1. Product Positioning
 
-VerveDeck is an **open-source, one-stop LLM engineering platform** for single-machine or multi-node GPU clusters, covering the full loop "data → training → evaluation → compression → deployment → operations", served to clients through an OpenAI-compatible API.
+VerveDeck is an **open-source, one-stop LLM fine-tuning, training & inference platform** for single-machine or multi-node GPU clusters, positioned around four capability domains — hardware resource management, dataset management, fine-tuning/training, and model inference — covering the full loop "data → training → evaluation → compression → deployment → operations", served to clients through an OpenAI-compatible API.
 
 Design goals:
 
