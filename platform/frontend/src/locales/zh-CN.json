@@ -662,6 +662,7 @@
     "monGpu": "GPU",
     "monNode": "节点",
     "monInfer": "推理",
+    "monTrain": "训练",
     "monHint": "数据由 Prometheus 采集、Grafana 呈现 · 告警规则与通知通道请在管理端配置",
     "monFull": "全屏",
     "monStorage": "存储 IO",

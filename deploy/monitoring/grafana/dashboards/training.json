@@ -1,0 +1,128 @@
+{
+  "uid": "vervedeck-train",
+  "title": "VerveDeck · 训练任务（LLaMA-Factory）",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["vervedeck", "training"],
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "训练容器（占卡）",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "count(count by (container) (DCGM_FI_DEV_GPU_UTIL{container=~\"ft-train-.*\"}))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "orange", "value": null }, { "color": "green", "value": 1 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "训练占用 GPU 数",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "count(DCGM_FI_DEV_FB_USED{container=~\"ft-train-.*\"})", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "orange", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "训练显存占用 (GB)",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum(DCGM_FI_DEV_FB_USED{container=~\"ft-train-.*\"}) / 1024", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "gbytes", "decimals": 1 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "量化/导出容器",
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "count(count by (container) (DCGM_FI_DEV_GPU_UTIL{container=~\"ft-quant-.*\"}))", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "id": 5, "type": "stat", "title": "训练卡最高利用率",
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "max(DCGM_FI_DEV_GPU_UTIL{container=~\"ft-train-.*\"})", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "orange", "value": null }, { "color": "green", "value": 50 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 6, "type": "stat", "title": "训练卡最高温度",
+      "gridPos": { "h": 4, "w": 4, "x": 18, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "max(DCGM_FI_DEV_GPU_TEMP{container=~\"ft-train-.*\"})", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "celsius", "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "GPU 利用率 (%)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container, gpu) (DCGM_FI_DEV_GPU_UTIL{container=~\"ft-train-.*\"})", "legendFormat": "{{container}} gpu{{gpu}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 15, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "显存占用 (GB)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container, gpu) (DCGM_FI_DEV_FB_USED{container=~\"ft-train-.*\"}) / 1024", "legendFormat": "{{container}} gpu{{gpu}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "gbytes", "min": 0, "custom": { "fillOpacity": 15, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "功耗 (W)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container, gpu) (DCGM_FI_DEV_POWER_USAGE{container=~\"ft-train-.*\"})", "legendFormat": "{{container}} gpu{{gpu}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "watt", "min": 0, "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "GPU 温度 (°C)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container, gpu) (DCGM_FI_DEV_GPU_TEMP{container=~\"ft-train-.*\"})", "legendFormat": "{{container}} gpu{{gpu}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "celsius", "custom": { "fillOpacity": 10, "lineWidth": 2 }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "SM 时钟 (MHz)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container, gpu) (DCGM_FI_DEV_SM_CLOCK{container=~\"ft-train-.*\"})", "legendFormat": "{{container}} gpu{{gpu}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "MHz", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "显存温度 (°C)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        { "refId": "A", "expr": "max by (container, gpu) (DCGM_FI_DEV_MEMORY_TEMP{container=~\"ft-train-.*\"})", "legendFormat": "{{container}} gpu{{gpu}}", "datasource": { "uid": "vervedeck-prom", "type": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "celsius", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] }
+    }
+  ]
+}

@@ -662,6 +662,7 @@
     "monGpu": "GPU",
     "monNode": "ノード",
     "monInfer": "推論",
+    "monTrain": "学習",
     "monHint": "Prometheus が収集し Grafana が表示 · アラートルールと通知チャネルは管理画面で設定",
     "monFull": "全画面",
     "monStorage": "ストレージ I/O",

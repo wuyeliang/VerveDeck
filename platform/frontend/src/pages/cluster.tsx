@@ -459,6 +459,7 @@ function MonitorView({ queue, util, alerts, t }: { queue: any; util: any; alerts
   const dashboards = [
     { key: 'vervedeck-gpu', label: t('cluster.monGpu') },
     { key: 'vervedeck-node', label: t('cluster.monNode') },
+    { key: 'vervedeck-train', label: t('cluster.monTrain') },
     { key: 'vervedeck-infer', label: t('cluster.monInfer') },
   ]
   return (

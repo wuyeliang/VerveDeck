@@ -662,6 +662,7 @@
     "monGpu": "GPU",
     "monNode": "Nodo",
     "monInfer": "Inferencia",
+    "monTrain": "Entrenamiento",
     "monHint": "Datos recogidos por Prometheus y mostrados en Grafana · Configure reglas de alertas y canales en Administrar",
     "monFull": "Pantalla completa",
     "monStorage": "E/S de almacenamiento",

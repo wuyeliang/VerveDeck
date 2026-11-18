@@ -662,6 +662,7 @@
     "monGpu": "GPU",
     "monNode": "Nœud",
     "monInfer": "Inférence",
+    "monTrain": "Entraînement",
     "monHint": "Données collectées par Prometheus, affichées par Grafana · Configurez les règles d'alerte et les canaux dans Administration",
     "monFull": "Plein écran",
     "monStorage": "Stockage I/O",
