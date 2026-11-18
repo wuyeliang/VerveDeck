@@ -70,6 +70,9 @@ class Dataset(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     kind: Mapped[str] = mapped_column(String(16), default="train")  # train/eval（训练集/评测集）
     scenario: Mapped[str] = mapped_column(String(16), default="text")  # text/vlm（文本生成/多模态）
+    # 存储位置：空=平台默认（本地 /data + 主对象存储 rustfs）；
+    # 指向 storage_backends.id（path 型落挂载点、object 型同步该桶；不设 DB 级 FK，API 层校验与引用检查）
+    storage_backend_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     __table_args__ = (Index("ix_ds_proj_name", "project_id", "name", unique=True),)
@@ -126,6 +129,9 @@ class ModelAsset(Base):
     job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 血缘: 来自哪个训练任务
     dataset_version_ids: Mapped[list] = mapped_column(JSON, default=list)  # 血缘: 用了哪些数据
     status: Mapped[str] = mapped_column(String(32), default="ready")  # pending_download/ready/failed
+    # 存储位置：空=平台默认（本地 /data/models）；指向 storage_backends.id
+    # （path 型后端下载/解压直接落挂载点、object 型本地+同步该桶；不设 DB 级 FK，API 层校验与引用检查）
+    storage_backend_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

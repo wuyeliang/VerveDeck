@@ -46,7 +46,8 @@ def _next_version(db, dsid: int) -> int:
 def _create_version(db, dset: Dataset, rows: list[dict], uid: int, fmt: str,
                     note: str, raw_md: str = "") -> DatasetVersion:
     # uid 为纯 int：后台线程里 ORM user 对象已过期（expire_on_commit），只能传值
-    repo = ds.dataset_repo_dir(dset.project_id, dset.name)
+    # 存储位置：path 型后端仓库直接建在挂载点下；object 型/未选择走默认本地仓库
+    repo = ds.dataset_repo_dir(dset.project_id, dset.name, dset=dset, db=db)
     ver_no = _next_version(db, dset.id)
     vdir = ds.version_dir(repo, ver_no)
     os.makedirs(vdir, exist_ok=True)
@@ -59,9 +60,10 @@ def _create_version(db, dset: Dataset, rows: list[dict], uid: int, fmt: str,
         sample_count=n, fmt=fmt, status="draft", note=note, created_by=uid)
     db.add(ver)
     db.commit()
-    # 主存储同步到 rustfs（本地缓存已写入，S3 未配置/失败时静默降级）
+    # 对象存储同步到所选存储位置（object 型后端→该桶；未选择→主存储 rustfs；
+    # path 型后端仓库已在挂载点上、无需同步；本地文件已写入，未配置/失败时静默降级）
     from ..services import storage
-    storage.put_dir(vdir)
+    storage.put_dir(vdir, ds._object_cfg(dset, db))
     db.refresh(ver)
     return ver
 
@@ -74,6 +76,7 @@ class DsReq(BaseModel):
     description: str = ""
     kind: str = "train"  # train/eval
     scenario: str = "text"  # text/vlm
+    storage_backend_id: int | None = None  # 存储位置（注册后端）；空=平台默认
 
 
 @router.get("")
@@ -88,6 +91,8 @@ def list_datasets(project_id: int | None = None, q: str = "", db=Depends(get_db)
         q = q.filter(Dataset.project_id.in_(pids or [0]))
     if kw:
         q = q.filter(Dataset.name.ilike(f"%{kw}%"))
+    from ..models import StorageBackend
+    bmap = {b.id: f"{b.name}（{b.type}）" for b in db.query(StorageBackend).all()}
     out = []
     for d in q.all():
         vers = db.query(DatasetVersion).filter_by(dataset_id=d.id).all()
@@ -96,6 +101,8 @@ def list_datasets(project_id: int | None = None, q: str = "", db=Depends(get_db)
         out.append({"id": d.id, "project_id": d.project_id, "name": d.name,
                     "description": d.description, "versions": len(vers),
                     "kind": d.kind, "scenario": d.scenario,
+                    "storage_backend_id": d.storage_backend_id,
+                    "storage_backend": bmap.get(d.storage_backend_id or 0, ""),
                     "latest_version": latest, "samples": sum(v.sample_count for v in vers),
                     "published": latest_status == "committed",
                     "created_at": str(d.created_at)})
@@ -109,21 +116,33 @@ def create_dataset(req: DsReq, db=Depends(get_db), user=Depends(get_current_user
         raise HTTPException(400, "kind 仅支持 train/eval")
     if req.scenario not in ("text", "vlm"):
         raise HTTPException(400, "scenario 仅支持 text/vlm")
+    from ..models import StorageBackend
+    from ..services import storage
+    if req.storage_backend_id:
+        b = db.get(StorageBackend, req.storage_backend_id)
+        if not b:
+            raise HTTPException(400, f"存储后端 #{req.storage_backend_id} 不存在")
+        # 可见性守卫：path 型后端挂载点须在 backend 容器内可见（FUSE 子挂载需同路径 bind，
+        # 内置 /data/juicefs 已在 compose 中预配），否则创建成功但写文件必失败
+        if b.type in storage.PATH_BASED_TYPES and not os.path.isdir(storage.backend_root(b)):
+            raise HTTPException(400, f"存储后端 {b.name} 的挂载点 {storage.backend_root(b)} "
+                                     "在平台后端容器内不可见（自定义挂载点需同路径 bind 进 backend 容器后重启）")
     if db.query(Dataset).filter_by(project_id=req.project_id, name=req.name).first():
         raise HTTPException(400, "数据集已存在")
     d = Dataset(project_id=req.project_id, name=req.name, description=req.description,
-                kind=req.kind, scenario=req.scenario, created_by=user.id)
+                kind=req.kind, scenario=req.scenario,
+                storage_backend_id=req.storage_backend_id, created_by=user.id)
     db.add(d)
     db.commit()
     db.refresh(d)
-    dvc_service.init_repo(ds.dataset_repo_dir(req.project_id, req.name))
+    dvc_service.init_repo(ds.dataset_repo_dir(req.project_id, req.name, dset=d, db=db))
     return d
 
 
 @router.delete("/{dsid}")
 def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("super_admin", "tenant_admin", "developer"))):
     d = _get_ds(db, dsid, user)
-    repo = ds.dataset_repo_dir(d.project_id, d.name)  # commit 后 ORM 属性过期，先捕获路径
+    repo = ds.dataset_repo_dir(d.project_id, d.name, dset=d, db=db)  # commit 后 ORM 属性过期，先捕获路径
     vids = {v.id for v in db.query(DatasetVersion).filter_by(dataset_id=dsid).all()}
     # 引用检查：训练任务（数据版本 / 由本数据集产物）与评测任务
     from ..models import TrainingJob, EvalTask
@@ -136,10 +155,10 @@ def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("sup
     db.query(DatasetVersion).filter_by(dataset_id=dsid).delete()
     db.delete(d)
     db.commit()
-    # 清理：对象存储 + 本地仓库目录 + 解析上传缓存
+    # 清理：所选存储位置的对象存储（object 型/默认）+ 本地仓库目录（path 型即挂载点）+ 解析上传缓存
     import shutil
     from ..services import storage
-    storage.delete_dir(repo)
+    storage.delete_dir(repo, ds._object_cfg(d, db))
     shutil.rmtree(repo, ignore_errors=True)
     shutil.rmtree(os.path.join(settings.data_dir, "uploads", str(dsid)), ignore_errors=True)
     return {"ok": True}
@@ -244,9 +263,13 @@ def import_s3(req: ImportS3Req, db=Depends(get_db), user=Depends(get_current_use
 def get_dataset(dsid: int, db=Depends(get_db), user=Depends(get_current_user)):
     d = _get_ds(db, dsid, user)
     vers = db.query(DatasetVersion).filter_by(dataset_id=dsid).order_by(DatasetVersion.version.desc()).all()
+    from ..models import StorageBackend
+    b = db.get(StorageBackend, d.storage_backend_id) if d.storage_backend_id else None
     return {**{
         "id": d.id, "project_id": d.project_id, "name": d.name, "description": d.description,
         "kind": d.kind, "scenario": d.scenario,
+        "storage_backend_id": d.storage_backend_id,
+        "storage_backend": f"{b.name}（{b.type}）" if b else "",
         "created_at": str(d.created_at)},
         "versions": [_ver_brief(v) for v in vers]}
 
@@ -271,7 +294,7 @@ def commit_version(dsid: int, vid: int, db=Depends(get_db), user=Depends(get_cur
     v = db.get(DatasetVersion, vid)
     if not v or v.dataset_id != dsid:
         raise HTTPException(404, "版本不存在")
-    repo = ds.dataset_repo_dir(d.project_id, d.name)
+    repo = ds.dataset_repo_dir(d.project_id, d.name, dset=d, db=db)
     rev = dvc_service.add_and_commit(repo, f"v{v.version}: {v.note[:80]}")
     v.dvc_rev = rev
     v.status = "committed"
@@ -285,7 +308,8 @@ def preview(dsid: int, vid: int, page: int = 1, size: int = 20, db=Depends(get_d
     v = db.get(DatasetVersion, vid)
     if not v or v.dataset_id != dsid:
         raise HTTPException(404, "版本不存在")
-    rows = ds.read_jsonl(ds.ensure_version_local(ds.dataset_repo_dir(d.project_id, d.name), v.version))
+    repo = ds.dataset_repo_dir(d.project_id, d.name, dset=d, db=db)
+    rows = ds.read_jsonl(ds.ensure_version_local(repo, v.version, dset=d, db=db))
     total = len(rows)
     start = (page - 1) * size
     return {"total": total, "page": page, "size": size, "items": rows[start:start + size]}
@@ -298,7 +322,7 @@ def raw_file(dsid: int, vid: int, db=Depends(get_db), user=Depends(get_current_u
     if not v or v.dataset_id != dsid:
         raise HTTPException(404, "版本不存在")
     from fastapi.responses import PlainTextResponse
-    p = ds.ensure_version_raw(ds.dataset_repo_dir(d.project_id, d.name), v.version)
+    p = ds.ensure_version_raw(ds.dataset_repo_dir(d.project_id, d.name, dset=d, db=db), v.version, dset=d, db=db)
     if not os.path.exists(p):
         raise HTTPException(404, "无原始文档")
     with open(p, encoding="utf-8", errors="ignore") as f:
@@ -308,7 +332,7 @@ def raw_file(dsid: int, vid: int, db=Depends(get_db), user=Depends(get_current_u
 @router.get("/{dsid}/dvc-log")
 def dvc_log(dsid: int, db=Depends(get_db), user=Depends(get_current_user)):
     d = _get_ds(db, dsid, user)
-    return dvc_service.log(ds.dataset_repo_dir(d.project_id, d.name), 30)
+    return dvc_service.log(ds.dataset_repo_dir(d.project_id, d.name, dset=d, db=db), 30)
 
 
 # ---------- 上传生成版本 ----------
@@ -438,7 +462,8 @@ def clean(req: CleanReq, db=Depends(get_db), user=Depends(get_current_user)):
             t.status = "running"
             db2.commit()
             dset = db2.get(Dataset, did)
-            rows = ds.read_jsonl(ds.ensure_version_local(ds.dataset_repo_dir(dset.project_id, dset.name), vversion))
+            repo = ds.dataset_repo_dir(dset.project_id, dset.name, dset=dset, db=db2)
+            rows = ds.read_jsonl(ds.ensure_version_local(repo, vversion, dset=dset, db=db2))
             out, stats = ds.clean_rows(rows, params)
             ver = _create_version(db2, dset, out, uid, vfmt, f"clean: {json.dumps(stats, ensure_ascii=False)}")
             t.output_version_id = ver.id
@@ -505,14 +530,14 @@ def synth(req: SynthReq, db=Depends(get_db), user=Depends(get_current_user)):
             t.status = "running"
             db2.commit()
             dset = db2.get(Dataset, did)
-            repo = ds.dataset_repo_dir(dset.project_id, dset.name)
+            repo = ds.dataset_repo_dir(dset.project_id, dset.name, dset=dset, db=db2)
             raw_md = ""
-            rawp = ds.ensure_version_raw(repo, vversion)
+            rawp = ds.ensure_version_raw(repo, vversion, dset=dset, db=db2)
             if os.path.exists(rawp):
                 with open(rawp, encoding="utf-8", errors="ignore") as f:
                     raw_md = f.read()
             if not raw_md:
-                rows0 = ds.read_jsonl(ds.ensure_version_local(repo, vversion))
+                rows0 = ds.read_jsonl(ds.ensure_version_local(repo, vversion, dset=dset, db=db2))
                 raw_md = "\n\n".join((r.get("instruction", "") or "")[:800] for r in rows0[:50])
             chunks = ds.chunk_markdown(raw_md)[: 200]
             if not chunks:
@@ -564,6 +589,7 @@ def annotate(dsid: int, req: AnnotateReq, db=Depends(get_db), user=Depends(get_c
     v = db.get(DatasetVersion, req.version_id)
     if not v or v.dataset_id != dsid:
         raise HTTPException(404, "版本不存在")
-    rows = ds.read_jsonl(ds.version_data_file(ds.dataset_repo_dir(d.project_id, d.name), v.version))
+    rows = ds.read_jsonl(ds.version_data_file(
+        ds.dataset_repo_dir(d.project_id, d.name, dset=d, db=db), v.version))
     url = ds.push_to_argilla(f"{d.name}-v{v.version}", rows, f"p{d.project_id}")
     return {"argilla_url": url, "samples": len(rows)}

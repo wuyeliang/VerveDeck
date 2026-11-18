@@ -16,7 +16,7 @@ function fmtBytes(n: number): string {
   return `${n.toFixed(i ? 1 : 0)} ${u[i]}`
 }
 
-const TYPE_COLOR: Record<string, string> = { object: 'blue', local: 'green', nfs: 'purple', block: 'orange' }
+const TYPE_COLOR: Record<string, string> = { object: 'blue', local: 'green', nfs: 'purple', block: 'orange', juicefs: 'cyan' }
 
 /** 存储管理（一级菜单 /storage）：多类型存储后端 + 主对象存储状态 + 对象浏览 */
 export default function StoragePage() {
@@ -73,6 +73,7 @@ export default function StoragePage() {
         Object.assign(cfg, { path: v.path })
         if (v.type === 'nfs') cfg.server = v.server || ''
         if (v.type === 'block') cfg.device = v.device || ''
+        if (v.type === 'juicefs') { cfg.meta_url = v.meta_url || ''; cfg.volume = v.volume || '' }
       }
       const r = await api.post('/api/storage/backends', { name: v.name, type: v.type, config: cfg })
       message.success(r.data.status === 'ok' ? t('storage.addOk') : `${t('storage.addOk')}: ${r.data.detail}`)
@@ -123,6 +124,7 @@ export default function StoragePage() {
                   render: (c: any) => <code style={{ fontSize: 11 }}>
                     {c?.endpoint ? `${c.endpoint}/${c.bucket}` : c?.path || ''}
                     {c?.server ? ` (${c.server})` : ''}{c?.device ? ` (${c.device})` : ''}
+                    {c?.volume ? ` [${c.volume}]` : ''}
                   </code>,
                 },
                 {
@@ -250,7 +252,7 @@ export default function StoragePage() {
           onValuesChange={(v) => { if (v.type) setBType(v.type) }}>
           <Form.Item name="name" label={t('common.name')} rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="type" label={t('storage.colType')} rules={[{ required: true }]}>
-            <Select options={['object', 'local', 'nfs', 'block'].map((x) => ({ value: x, label: t(`storage.type${x[0].toUpperCase()}${x.slice(1)}`, { defaultValue: x }) }))} />
+            <Select options={['object', 'local', 'nfs', 'block', 'juicefs'].map((x) => ({ value: x, label: t(`storage.type${x[0].toUpperCase()}${x.slice(1)}`, { defaultValue: x }) }))} />
           </Form.Item>
           {bType === 'object' && (
             <>
@@ -263,7 +265,15 @@ export default function StoragePage() {
             </>
           )}
           {bType !== 'object' && (
-            <Form.Item name="path" label={t('storage.pathHost')} rules={[{ required: true }]}><Input placeholder="/mnt/data" /></Form.Item>
+            <Form.Item name="path" label={t('storage.pathHost')} rules={[{ required: true }]}>
+              <Input placeholder={bType === 'juicefs' ? '/data/juicefs' : '/mnt/data'} />
+            </Form.Item>
+          )}
+          {bType === 'juicefs' && (
+            <>
+              <Form.Item name="volume" label={t('storage.jfsVolume')}><Input placeholder="vervedeck" /></Form.Item>
+              <Form.Item name="meta_url" label={t('storage.jfsMeta')}><Input placeholder="redis://redis:6379/1" /></Form.Item>
+            </>
           )}
           {bType === 'nfs' && (
             <Form.Item name="server" label="NFS Server" rules={[{ required: true }]}><Input placeholder="192.168.1.10:/export" /></Form.Item>

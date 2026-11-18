@@ -41,6 +41,12 @@ export default function ModelRepo() {
   const [upCat, setUpCat] = useState('')
   const [upTags, setUpTags] = useState('')
   const [upPct, setUpPct] = useState<number | null>(null)
+  const [upStorage, setUpStorage] = useState<number | ''>('')
+  // 存储位置选项（注册后端，仅 id/name/type；任意登录用户可读）
+  const [backends, setBackends] = useState<any[]>([])
+  useEffect(() => {
+    api.get('/api/storage/backends/options').then((r) => setBackends(r.data || [])).catch(() => setBackends([]))
+  }, [])
 
   const load = useCallback(() => {
     api.get('/api/models', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
@@ -82,13 +88,14 @@ export default function ModelRepo() {
 
   const submitManual = async () => {
     const v = await form.validateFields()
-    await api.post('/api/models/base', { project_id: projectId, ...v })
+    await api.post('/api/models/base', { project_id: projectId, ...v,
+      storage_backend_id: v.storage_backend_id || null })
     message.success(t('models.downloadSubmitted'))
     closeWizard()
   }
 
   const closeWizard = () => {
-    setOpen(false); setResults([]); setKw(''); setUpPct(null); setUpName(''); setUpNote(''); setUpCat(''); setUpTags('')
+    setOpen(false); setResults([]); setKw(''); setUpPct(null); setUpName(''); setUpNote(''); setUpCat(''); setUpTags(''); setUpStorage('')
   }
 
   const submitUpload = async (file: File) => {
@@ -99,6 +106,7 @@ export default function ModelRepo() {
     fd.append('note', upNote)
     fd.append('category', upCat)
     fd.append('tags', upTags)
+    if (upStorage) fd.append('storage_backend_id', String(upStorage))
     fd.append('file', file)
     setUpPct(0)
     try {
@@ -154,6 +162,10 @@ export default function ModelRepo() {
           },
           { title: t('common.type'), dataIndex: 'type', width: 90, render: (v: string) => <Tag color={TYPE_COLOR[v]}>{v}</Tag> },
           { title: t('models.colCategory'), dataIndex: 'category', width: 110, render: (v: string) => v ? <Tag color="cyan">{v}</Tag> : <span style={{ color: '#999' }}>{t('models.categoryNone')}</span> },
+          { title: t('models.colStorage'), dataIndex: 'storage_backend', width: 130, ellipsis: true,
+            render: (v: string) => v
+              ? <Tag color="geekblue" style={{ fontSize: 11 }}>{v}</Tag>
+              : <Tag style={{ fontSize: 11 }}>{t('models.storageDefault')}</Tag> },
           { title: t('models.colSource'), render: (_: any, r: any) => r.source || r.hf_id || '-', width: 200, ellipsis: true },
           {
             title: t('common.status'), dataIndex: 'status', width: 170,
@@ -265,6 +277,13 @@ export default function ModelRepo() {
                   </Form.Item>
                 </Space>
                 <Form.Item name="note" label={t('models.note')}><Input /></Form.Item>
+                <Form.Item name="storage_backend_id" label={t('models.storageLocation')}
+                  tooltip={t('models.storageLocationTip')}>
+                  <Select allowClear options={[
+                    { value: '', label: t('models.storageDefault') },
+                    ...backends.map((b) => ({ value: b.id, label: `${b.name}（${b.type}）` })),
+                  ]} />
+                </Form.Item>
                 <Button type="primary" htmlType="submit">{t('common.create')}</Button>
               </Form>
             ),
@@ -277,6 +296,11 @@ export default function ModelRepo() {
                   <Input value={upNote} onChange={(e) => setUpNote(e.target.value)} placeholder={t('models.note')} style={{ flex: 1 }} />
                   <Input value={upCat} onChange={(e) => setUpCat(e.target.value)} placeholder={t('models.categoryPh')} style={{ width: 180 }} />
                   <Input value={upTags} onChange={(e) => setUpTags(e.target.value)} placeholder={t('models.tagsPh') + '（逗号分隔）'} style={{ width: 180 }} />
+                  <Select value={upStorage} onChange={setUpStorage} style={{ width: 200 }}
+                    options={[
+                      { value: '', label: `${t('models.storageLocation')}: ${t('models.storageDefault')}` },
+                      ...backends.map((b) => ({ value: b.id, label: `${t('models.storageLocation')}: ${b.name}（${b.type}）` })),
+                    ]} />
                 </Space>
                 <Upload.Dragger accept=".zip" showUploadList={false} beforeUpload={submitUpload} disabled={upPct != null}>
                   <p className="ant-upload-drag-icon" style={{ margin: 0 }}><InboxOutlined /></p>

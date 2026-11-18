@@ -28,15 +28,15 @@ def test_list_components_shape(admin_tok):
 
 
 def test_list_full_platform_images(admin_tok):
-    """镜像管理页 = 平台全量镜像清单（18 项：5 引擎 + 3 自构 + 10 基础设施），
+    """镜像管理页 = 平台全量镜像清单（19 项：5 引擎 + 3 自构 + 11 基础设施），
     与集群升级页同一数据源（upgrade_service.COMPONENTS）"""
     r = requests.get(f"{BASE}/api/images", headers=H(admin_tok), timeout=30)
     assert r.status_code == 200
     rows = [x for x in r.json() if not x["key"].startswith("custom-")]
-    assert len(rows) == 18, f"平台镜像清单应为 18 项，实际 {len(rows)}: {[x['key'] for x in rows]}"
+    assert len(rows) == 19, f"平台镜像清单应为 19 项，实际 {len(rows)}: {[x['key'] for x in rows]}"
     for key in ("dcgm_exporter", "node_exporter", "prometheus", "alertmanager",
                 "grafana", "postgres", "redis", "opensearch", "argilla", "rustfs",
-                "mineru", "backend", "web", "evalscope"):
+                "juicefs", "mineru", "backend", "web", "evalscope"):
         assert any(x["key"] == key for x in rows), f"清单缺组件 {key}"
 
 

@@ -19,9 +19,41 @@ log = logging.getLogger("dataset")
 
 # ---------- 路径 ----------
 
-def dataset_repo_dir(project_id: int, name: str) -> str:
+def _backend_row(dset, db):
+    """数据集的存储后端行（未选择/未传 db/后端已删除 → None，按平台默认处理）"""
+    if dset is None or db is None:
+        return None
+    bid = getattr(dset, "storage_backend_id", None)
+    if not bid:
+        return None
+    from ..models import StorageBackend
+    return db.get(StorageBackend, bid)
+
+
+def dataset_repo_dir(project_id: int, name: str, dset=None, db=None) -> str:
+    """数据集仓库目录。
+
+    dset 选择了 path 型后端（local/nfs/block/juicefs）时建在该后端挂载点下
+    （<挂载点>/datasets/p{pid}/{name}）；否则（object 型/未选择）保持默认
+    {data_dir}/datasets/p{pid}/{name}（object 型走本地仓库 + 桶同步）。
+    """
     safe = re.sub(r"[^\w\-]", "_", name)
-    return os.path.join(settings.data_dir, "datasets", f"p{project_id}", safe)
+    base = os.path.join(settings.data_dir, "datasets")
+    from . import storage
+    b = _backend_row(dset, db)
+    if b is not None and b.type in storage.PATH_BASED_TYPES:
+        root = storage.backend_root(b)
+        if root:
+            base = os.path.join(root, "datasets")
+    return os.path.join(base, f"p{project_id}", safe)
+
+
+def _object_cfg(dset, db) -> dict | None:
+    """object 型后端 → 其对象存储 cfg（供 put/ensure/delete 定向该桶）；其他情况 None（主存储）"""
+    b = _backend_row(dset, db)
+    if b is not None and b.type == "object":
+        return b.config or {}
+    return None
 
 
 def version_dir(repo: str, version: int) -> str:
@@ -32,21 +64,21 @@ def version_data_file(repo: str, version: int) -> str:
     return os.path.join(version_dir(repo, version), "data.jsonl")
 
 
-def ensure_version_local(repo: str, version: int) -> str:
-    """保证版本数据文件本地缓存可用（主存储在 rustfs，未命中自动下载），返回本地路径"""
+def ensure_version_local(repo: str, version: int, dset=None, db=None) -> str:
+    """保证版本数据文件本地缓存可用（主存储/所选 object 后端未命中自动下载），返回本地路径"""
     from . import storage
     p = version_data_file(repo, version)
     if not os.path.exists(p):
-        storage.ensure_local(p)
+        storage.ensure_local(p, _object_cfg(dset, db))
     return p
 
 
-def ensure_version_raw(repo: str, version: int) -> str:
+def ensure_version_raw(repo: str, version: int, dset=None, db=None) -> str:
     """保证版本原始文档（raw.md）本地缓存可用，返回本地路径"""
     from . import storage
     p = os.path.join(version_dir(repo, version), "raw.md")
     if not os.path.exists(p):
-        storage.ensure_local(p)
+        storage.ensure_local(p, _object_cfg(dset, db))
     return p
 
 

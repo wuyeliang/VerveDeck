@@ -29,6 +29,11 @@ export default function DataCenter() {
   const [upFmt, setUpFmt] = useState('alpaca')
   const [s3Key, setS3Key] = useState('')
   const [s3Fmt, setS3Fmt] = useState('alpaca')
+  // 存储位置选项（注册后端，仅 id/name/type；任意登录用户可读）
+  const [backends, setBackends] = useState<any[]>([])
+  useEffect(() => {
+    api.get('/api/storage/backends/options').then((r) => setBackends(r.data || [])).catch(() => setBackends([]))
+  }, [])
 
   const load = useCallback(() => {
     api.get('/api/datasets', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
@@ -76,7 +81,8 @@ export default function DataCenter() {
   const onCreate = async () => {
     try { await createForm.validateFields() } catch { return }
     const v = createForm.getFieldsValue()
-    const r = await api.post('/api/datasets', { project_id: projectId, ...v })
+    const r = await api.post('/api/datasets', { project_id: projectId, ...v,
+      storage_backend_id: v.storage_backend_id || null })
     const did = r.data.id
     try {
       if (createTab === 'local' && upFile) {
@@ -109,6 +115,10 @@ export default function DataCenter() {
           { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true },
           { title: t('data.dsKind'), dataIndex: 'kind', width: 90,
             render: (v: string) => <Tag color={v === 'eval' ? 'purple' : 'blue'}>{v === 'eval' ? t('data.kindEval') : t('data.kindTrain')}</Tag> },
+          { title: t('data.colStorage'), dataIndex: 'storage_backend', width: 130, ellipsis: true,
+            render: (v: string) => v
+              ? <Tag color="cyan" style={{ fontSize: 11 }}>{v}</Tag>
+              : <Tag style={{ fontSize: 11 }}>{t('data.storageDefault')}</Tag> },
           { title: t('data.colLatest'), dataIndex: 'latest_version', width: 90, render: (v: number) => (v ? `v${v}` : '-') },
           { title: t('data.colVolume'), dataIndex: 'samples', width: 80 },
           { title: t('data.colPublished'), dataIndex: 'published', width: 100,
@@ -147,6 +157,13 @@ export default function DataCenter() {
               <Radio.Group options={[{ value: 'text', label: t('data.sceneText') }, { value: 'vlm', label: t('data.sceneVlm') }]} />
             </Form.Item></Col>
           </Row>
+          <Form.Item name="storage_backend_id" label={t('data.storageLocation')}
+            tooltip={t('data.storageLocationTip')}>
+            <Select allowClear options={[
+              { value: '', label: t('data.storageDefault') },
+              ...backends.map((b) => ({ value: b.id, label: `${b.name}（${b.type}）` })),
+            ]} />
+          </Form.Item>
           <Form.Item label={t('data.importMethod')} required style={{ marginBottom: 0 }}>
             <Tabs activeKey={createTab} onChange={setCreateTab} size="small" items={[
               {
@@ -191,6 +208,9 @@ export default function DataCenter() {
           <Space>
             <Tag color={cur.kind === 'eval' ? 'purple' : 'blue'}>{cur.kind === 'eval' ? t('data.kindEval') : t('data.kindTrain')}</Tag>
             <Tag>{cur.scenario === 'vlm' ? t('data.sceneVlm') : t('data.sceneText')}</Tag>
+            {cur.storage_backend
+              ? <Tag color="cyan">{t('data.colStorage')}: {cur.storage_backend}</Tag>
+              : <Tag>{t('data.storageDefault')}</Tag>}
           </Space>
         )}>
         {cur && (

@@ -19,8 +19,9 @@ Home summary: GPU utilization, running jobs (training/inference), queue length, 
 
 **Creating a dataset**
 1. Click "New", fill in name/description
-2. Choose a source: local upload (resumable) / import from object storage / file parsing (PDF, Office → text via MinerU)
-3. Versioning: every upload/commit creates a new version (managed by DVC); view version history, sample previews, and the DVC operation log
+2. **Storage location** (optional): pick a registered storage backend (object store / local / NFS / block / JuiceFS) — applies to the whole dataset; leave empty = platform default (local /data + primary object store). Path-based backends (local/NFS/block/JuiceFS) write straight to the mount point; object backends write locally and sync to the chosen bucket
+3. Choose a source: local upload (resumable) / import from object storage / file parsing (PDF, Office → text via MinerU)
+4. Versioning: every upload/commit creates a new version (managed by DVC); view version history, sample previews, and the DVC operation log
 
 **Data processing**
 - **Parse**: PDF/Office → structured text
@@ -37,6 +38,8 @@ Home summary: GPU utilization, running jobs (training/inference), queue length, 
 2. **Local upload** (multipart, resumable for large files)
 3. **Register a base model** pointing to an existing host path
 4. **Platform outputs**: merged training artifacts and quantized artifacts are registered automatically
+
+**Storage location** (optional, per-asset): when registering/uploading, pick a registered storage backend. Path-based backends (local/NFS/block/JuiceFS) place model files under the mount's `models/hub/`; object backends sync to the chosen bucket after upload; empty = platform default (`/data/models/hub` + primary object store).
 
 **Lineage**: asset detail → "Lineage" shows the full chain (base → LoRA training → merged/quantized artifact); every artifact traces back to its source model and training job.
 
@@ -184,8 +187,8 @@ The local node needs no manual registration — gpu-agent's heartbeat manages it
 - Pick a container service to tail live logs (line count adjustable)
 
 **Cluster Upgrade** (moved from System Management)
-- Full platform image inventory (18 items, identical to the Image Management page): per-component current/available versions (Docker Hub) / one-click upgrade
-- Upgrade modes: engines (vLLM/SGLang/LLaMA-Factory/evalscope) only update the runtime pin (new jobs pick it up); self-built (MinerU/backend/web) are rebuilt from the host source tree + blue-green container recreate; the other 11 monitoring/infrastructure components (DCGM Exporter, Node Exporter, Prometheus, Alertmanager, Grafana dark+light, PostgreSQL, Redis, OpenSearch, Argilla, RustFS) pull the new tag + blue-green recreate (impact shown in the UI)
+- Full platform image inventory (19 items, identical to the Image Management page): per-component current/available versions (Docker Hub) / one-click upgrade
+- Upgrade modes: engines (vLLM/SGLang/LLaMA-Factory/evalscope) only update the runtime pin (new jobs pick it up); self-built (MinerU/backend/web) are rebuilt from the host source tree + blue-green container recreate; the other 12 monitoring/infrastructure components (DCGM Exporter, Node Exporter, Prometheus, Alertmanager, Grafana dark+light, PostgreSQL, Redis, OpenSearch, Argilla, RustFS, JuiceFS) pull the new tag + blue-green recreate (impact shown in the UI; on JuiceFS recreate the mount unmounts for a few seconds — data in object storage is unaffected)
 
 ## 9. Tenants & Projects
 
@@ -196,16 +199,20 @@ The local node needs no manual registration — gpu-agent's heartbeat manages it
 
 ## 10. Storage Management
 
-- Backends: add an S3-compatible backend (endpoint/ak/sk/bucket) → connectivity test
+- Backends: add multi-type storage backends → connectivity test
+  - **Object store** (object): S3-compatible (endpoint/ak/sk/bucket); datasets/models using it = local work dir + bucket sync
+  - **Local / NFS / Block** (local/nfs/block): host directory/mount point (path); in-place read/write
+  - **JuiceFS** (juicefs): POSIX distributed file system at a FUSE mount point (path, e.g. `/data/juicefs`); the platform compose ships a built-in juicefs service (metadata in Redis + data in RustFS); the probe verifies the mount point is actually a FUSE mount. The built-in mount point `/data/juicefs` is pre-wired into the backend container; a custom mount point must be same-path bound into the backend container and restarted before use (validated automatically at create/register time)
 - Object browser: directory-style browsing, single-object delete (confirmed), **multi-select batch delete** (confirmed; selection clears when switching directory)
-- Platform datasets and model files live in object storage — confirm no platform references before deleting objects
+- **Storage-location selection**: dataset creation (whole-dataset) and model register/upload (per-asset) can both pick a registered backend; path-based write straight to the mount, object-based sync the chosen bucket, empty = platform default. A backend referenced by any dataset/model cannot be deleted (release the reference first)
+- Platform datasets and model files live in object storage or the chosen storage location — confirm no platform references before deleting objects
 
 ## 11. Image Management (super_admin)
 
-- Full platform image inventory (18 items, same data source and order as the cluster upgrade page):
+- Full platform image inventory (19 items, same data source and order as the cluster upgrade page):
   - Engines (5): vLLM / SGLang / LLaMA-Factory / GPU Agent / evalscope
   - Self-built (3): MinerU parsing / platform backend / web frontend
-  - Monitoring & infrastructure (10): DCGM Exporter / Node Exporter / Prometheus / Alertmanager / Grafana (dark + light, two containers) / PostgreSQL / Redis / OpenSearch / Argilla / RustFS
+  - Monitoring & infrastructure (11): DCGM Exporter / Node Exporter / Prometheus / Alertmanager / Grafana (dark + light, two containers) / PostgreSQL / Redis / OpenSearch / Argilla / RustFS / JuiceFS file system
 - Each row shows the image reference, source (official/self-built), local state, size, and version (auto-probed; first open shows "probing…" then fills in; images without a shell show the tag, self-built images show build info)
 - Actions: Pull (official images) / Rebuild (self-built images, using the host source tree /repo as build context) / Force probe
 - Custom images: register third-party images such as domestic accelerators (`name:tag` format, appended after the platform inventory) to extend deployment options

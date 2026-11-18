@@ -65,6 +65,10 @@ run_runner() {
   v=$(printf '%s\n' "$be_env" | sed -n 's/^S3_ACCESS_KEY=//p'); [ -n "$v" ] && S3_ACCESS_KEY="$v"
   v=$(printf '%s\n' "$be_env" | sed -n 's/^S3_SECRET_KEY=//p'); [ -n "$v" ] && S3_SECRET_KEY="$v"
   v=$(printf '%s\n' "$be_env" | sed -n 's/^S3_BUCKET=//p');     [ -n "$v" ] && S3_BUCKET="$v"
+  # JuiceFS FUSE 挂载点须显式同路径 bind（/data 的 rprivate 不传播宿主子挂载，
+  # 否则 runner 内 /data/juicefs 只是空目录，落盘断言会误判）。宿主无此目录则不挂。
+  local jfs_vol=()
+  [ -d /data/juicefs ] && jfs_vol=(-v /data/juicefs:/data/juicefs)
   docker rm -f "$RUNNER_NAME" 2>/dev/null
   docker run -d --name "$RUNNER_NAME" --network host \
     --add-host "postgres:$pg_ip" --add-host "rustfs:$rf_ip" \
@@ -74,7 +78,7 @@ run_runner() {
     -e S3_ACCESS_KEY="${S3_ACCESS_KEY:-rustfsadmin}" \
     -e S3_SECRET_KEY="${S3_SECRET_KEY:-rustfsadmin}" \
     -e S3_BUCKET="${S3_BUCKET:-vervedeck-datasets}" \
-    -v "$ROOT/tests":/tests -v /data:/data \
+    -v "$ROOT/tests":/tests -v /data:/data "${jfs_vol[@]}" \
     "$RUNNER_IMAGE" bash -c '
       cd /tests
       wait_healthy() {

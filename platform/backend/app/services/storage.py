@@ -1,4 +1,4 @@
-"""对象存储层：rustfs（S3 兼容）+ 本地缓存
+"""对象存储层：rustfs（S3 兼容）+ 本地缓存 + 多存储位置
 
 设计约定：
 - 数据集版本文件（data.jsonl / raw.md）主存储在 rustfs 对象存储；
@@ -7,6 +7,13 @@
 - 读：本地缓存命中直接用；未命中从 S3 下载后复用（ensure_local）。
 - S3 未配置（settings.s3_endpoint 为空）时自动降级为纯本地存储，全部调用点无感。
 - S3 key 与本地路径一一对应：{data_dir} 相对路径（datasets/p{pid}/{name}/v{N}/...）。
+
+存储位置选择（数据集/模型可选注册后端）：
+- object 型后端：本地工作目录不变，put/ensure/delete 通过 cfg 参数指向该桶
+  （cfg=None 时走平台主对象存储，行为与历史完全一致）。
+- path 型后端（local/nfs/block/juicefs）：文件直接建在挂载点下（backend_subdir），
+  读写即本地、无同步步骤；juicefs 的 FUSE 挂载点在宿主可见，backend 与 worker 容器
+  经 /data（或同路径 bind）直接访问。
 """
 import os
 import logging
@@ -65,74 +72,99 @@ def _key(local_path: str) -> str:
     return rel.replace(os.sep, "/")
 
 
-def put_file(local_path: str) -> bool:
-    """上传单个文件到 S3（失败不抛异常，仅告警：本地缓存仍完整可用）"""
-    if not enabled() or not os.path.exists(local_path):
+def _bucket_for(cfg: dict | None):
+    """解析对象存储目标：cfg=None → 平台主对象存储（settings）；否则注册后端的对象存储。
+
+    返回 (client, bucket)；主存储未启用时返回 (None, None)（调用点静默降级纯本地）。
+    """
+    if cfg:
+        bucket = cfg.get("bucket", "")
+        if not bucket:
+            raise ValueError("对象存储配置缺 bucket")
+        c = _minio_client(cfg.get("endpoint", ""), cfg.get("access_key", ""), cfg.get("secret_key", ""))
+        if not c.bucket_exists(bucket):
+            c.make_bucket(bucket)
+        return c, bucket
+    if not enabled():
+        return None, None
+    ensure_bucket()
+    return client(), settings.s3_bucket
+
+
+def put_file(local_path: str, cfg: dict | None = None) -> bool:
+    """上传单个文件到对象存储（主存储或 cfg 指定后端）。失败不抛异常，仅告警：本地缓存仍完整可用"""
+    try:
+        c, bucket = _bucket_for(cfg)
+    except Exception as e:
+        log.warning("s3 resolve bucket failed: %s", e)
+        return False
+    if c is None or not os.path.exists(local_path):
         return False
     try:
-        ensure_bucket()
-        c = client()
         key = _key(local_path)
         stat = os.stat(local_path)
-        c.fput_object(settings.s3_bucket, key, local_path)
-        log.info("s3 upload %s (%d bytes)", key, stat.st_size)
+        c.fput_object(bucket, key, local_path)
+        log.info("s3 upload %s (%d bytes) -> %s", key, stat.st_size, bucket)
         return True
     except Exception as e:
         log.warning("s3 upload %s failed: %s", local_path, e)
         return False
 
 
-def put_dir(local_dir: str) -> int:
+def put_dir(local_dir: str, cfg: dict | None = None) -> int:
     """上传目录下全部文件（版本目录：data.jsonl + raw.md 等），返回成功数"""
-    if not enabled() or not os.path.isdir(local_dir):
+    if not os.path.isdir(local_dir):
         return 0
     n = 0
     for root, _, files in os.walk(local_dir):
         for f in files:
-            p = os.path.join(root, f)
-            if put_file(p):
+            if put_file(os.path.join(root, f), cfg):
                 n += 1
     return n
 
 
-def ensure_local(local_path: str) -> bool:
-    """确保本地缓存存在：未命中则从 S3 下载。返回 True 表示文件可用。"""
+def ensure_local(local_path: str, cfg: dict | None = None) -> bool:
+    """确保本地缓存存在：未命中则从对象存储下载。返回 True 表示文件可用。"""
     if os.path.exists(local_path):
         return True
-    if not enabled():
-        return os.path.exists(local_path)
     try:
-        ensure_bucket()
-        c = client()
+        c, bucket = _bucket_for(cfg)
+    except Exception as e:
+        log.warning("s3 resolve bucket failed: %s", e)
+        return False
+    if c is None:
+        return False
+    try:
         key = _key(local_path)
-        if not c.stat_object(settings.s3_bucket, key):
+        if not c.stat_object(bucket, key):
             return False
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        c.fget_object(settings.s3_bucket, key, local_path)
-        log.info("s3 download %s -> %s", key, local_path)
+        c.fget_object(bucket, key, local_path)
+        log.info("s3 download %s -> %s (from %s)", key, local_path, bucket)
         return True
     except Exception as e:
         log.warning("s3 download %s failed: %s", local_path, e)
         return False
 
 
-def delete_dir(local_dir: str) -> None:
-    """删除 S3 上对应前缀（数据集删除时调用，失败仅告警）"""
-    if not enabled() or not os.path.isdir(local_dir):
+def delete_dir(local_dir: str, cfg: dict | None = None) -> None:
+    """删除对象存储上对应前缀（数据集删除时调用，失败仅告警）"""
+    if not os.path.isdir(local_dir):
         return
     prefix = ""
     try:
         prefix = _key(local_dir.rstrip(os.sep)) + "/"
-    except ValueError:
+        c, bucket = _bucket_for(cfg)
+    except Exception:
+        return
+    if c is None:
         return
     n = 0
     try:
-        ensure_bucket()
-        c = client()
-        for o in c.list_objects(settings.s3_bucket, prefix=prefix, recursive=True):
-            c.remove_object(settings.s3_bucket, o.object_name)
+        for o in c.list_objects(bucket, prefix=prefix, recursive=True):
+            c.remove_object(bucket, o.object_name)
             n += 1
-        log.info("s3 deleted prefix %s (%d objects)", prefix, n)
+        log.info("s3 deleted prefix %s (%d objects) from %s", prefix, n, bucket)
     except Exception as e:
         log.warning("s3 delete prefix %s failed: %s", local_dir, e)
 
@@ -279,10 +311,66 @@ def probe_path(path: str) -> dict:
         return {"ok": False, "detail": str(e)[:200]}
 
 
+def probe_juicefs(cfg: dict) -> dict:
+    """juicefs 探测：挂载点必须是 FUSE 挂载（df -T 的 fstype 含 fuse），防止把普通目录误报为 juicefs。
+
+    一次性容器**直接 bind 挂载点本身**（而非父目录）：容器 bind 默认 rprivate
+    不传播宿主子挂载，父目录挂进去只能看到底层空目录，FUSE 挂载不可见；直接
+    bind 挂载点路径则解析到 FUSE 挂载体本身，容器内可见。挂载点不存在时 docker
+    会自动补建空目录（非 FUSE），由 fstype 校验正确判错，不会误报。
+    """
+    cfg = cfg or {}
+    path = (cfg.get("path") or "").strip().rstrip("/")
+    if not path.startswith("/"):
+        return {"ok": False, "detail": "挂载点 path 需为绝对路径", "size_used": 0, "size_total": 0}
+    import docker
+    target = "/probe/juicefs"
+    try:
+        d = docker.from_env()
+        probe_img = "fintune/web:1.0"
+        try:
+            d.images.get(probe_img)
+        except Exception:
+            probe_img = "alpine:3.20"
+        ctr = d.containers.create(
+            probe_img,
+            entrypoint=["sh", "-c", f"test -d {target!r} && df -kPT {target!r} | tail -1"],
+            volumes={path: {"bind": target, "mode": "ro"}},
+        )
+        try:
+            ctr.start()
+            res = ctr.wait(timeout=60)
+            out = ctr.logs().decode("utf-8", "ignore").strip()
+        finally:
+            ctr.remove(force=True)
+        if res.get("StatusCode", 0) != 0 or not out or "No such file" in out:
+            return {"ok": False, "detail": f"挂载点 {path} 不存在或不可读", "size_used": 0, "size_total": 0}
+        p = out.split()
+        # df -kPT: Filesystem Type 1024-blocks Used Available Capacity Mounted-on
+        if len(p) >= 7:
+            fstype = p[1]
+            if "fuse" not in fstype.lower():
+                return {"ok": False,
+                        "detail": f"{path} 不是 FUSE 挂载（fstype={fstype}），请先挂载 JuiceFS 卷",
+                        "size_used": 0, "size_total": 0}
+            total = int(p[2]) * 1024
+            avail = int(p[4]) * 1024
+            return {"ok": True, "detail": f"FUSE 挂载正常（fstype={fstype}）",
+                    "size_total": total, "size_used": max(0, total - avail)}
+        return {"ok": False, "detail": out[:160], "size_used": 0, "size_total": 0}
+    except Exception as e:
+        return {"ok": False, "detail": str(e)[:200], "size_used": 0, "size_total": 0}
+
+
 def test_backend(btype: str, cfg: dict) -> dict:
     """统一入口：按类型分发探测，返回 {ok, detail, size_used, size_total, objects?, bytes?}"""
     if btype == "object":
         r = probe_object(cfg)
+        r.setdefault("size_used", 0)
+        r.setdefault("size_total", 0)
+        return r
+    if btype == "juicefs":
+        r = probe_juicefs(cfg)
         r.setdefault("size_used", 0)
         r.setdefault("size_total", 0)
         return r
@@ -293,6 +381,29 @@ def test_backend(btype: str, cfg: dict) -> dict:
     r.setdefault("size_used", 0)
     r.setdefault("size_total", 0)
     return r
+
+
+# ---------------------------------------------------------------------------
+# 存储位置选择：数据集/模型可选已注册的存储后端
+#   path 型（local/nfs/block/juicefs）：文件直接建在挂载点下（backend_subdir），无同步；
+#   object 型：本地工作目录 + 同步到该桶（put/ensure/delete 传 cfg）；
+#   未选择（None）：平台默认（本地 /data + 主对象存储 rustfs）。
+# ---------------------------------------------------------------------------
+
+PATH_BASED_TYPES = ("local", "nfs", "block", "juicefs")
+
+
+def backend_root(backend) -> str:
+    """path 型后端的宿主挂载/根目录（未配置返回空串）"""
+    return ((backend.config or {}).get("path") or "").strip().rstrip("/")
+
+
+def backend_subdir(backend, *subdirs: str) -> str:
+    """path 型后端根目录下的子目录（如 datasets/p{pid}/{name}）"""
+    root = backend_root(backend)
+    if not root:
+        raise ValueError(f"存储后端 #{backend.id} 未配置 path")
+    return os.path.join(root, *subdirs)
 
 
 def list_objects_cfg(cfg: dict, prefix: str = "", limit: int = 200) -> list[dict]:

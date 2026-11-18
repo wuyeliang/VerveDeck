@@ -84,22 +84,22 @@ Complete REST API route table of the VerveDeck platform backend, one-to-one with
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/admin/upgrade/status | Full platform image inventory (18 components) upgrade state (current image / local image / runtime version / running task) |
+| GET | /api/admin/upgrade/status | Full platform image inventory (19 components) upgrade state (current image / local image / runtime version / running task) |
 | POST | /api/admin/upgrade/check | `{target, force?}` → available versions from Docker Hub (10min cache) |
 | POST | /api/admin/upgrade/execute | `{target, to_version}` create upgrade task (pull new tag / rebuild + blue-green container switch) |
 | GET | /api/admin/upgrade/tasks | Upgrade task history `{limit}` |
 
-Components (18, `upgrade_service.COMPONENTS` is the single source of truth, same order as the Image Management page):
+Components (19, `upgrade_service.COMPONENTS` is the single source of truth, same order as the Image Management page):
 - Engines (pull + runtime pin, new jobs only): vllm / sglang / llamafactory / evalscope
-- Containers (pull + blue-green recreate): gpu_agent / dcgm_exporter / node_exporter / prometheus / alertmanager / grafana (dark + light, two containers) / postgres / redis / opensearch / argilla / rustfs / mineru
+- Containers (pull + blue-green recreate): gpu_agent / dcgm_exporter / node_exporter / prometheus / alertmanager / grafana (dark + light, two containers) / postgres / redis / opensearch / argilla / rustfs / juicefs / mineru
 - Self-built (rebuild from host /repo + blue-green recreate; self-upgrade converges via the scheduler): backend / web
 
 ## Datasets /api/datasets (developer+, tenant-scoped)
 
 | Method | Path | Description |
 |---|---|---|
-| GET/POST | /api/datasets | List (search/paging) / create |
-| DELETE | /api/datasets/{dsid} | Delete (409 when referenced) |
+| GET/POST | /api/datasets | List (search/paging, incl. `storage_backend_id`/`storage_backend` storage-location fields) / create (`{project_id, name, description?, kind?, scenario?, storage_backend_id?}`; storage location = whole-dataset) |
+| DELETE | /api/datasets/{dsid} | Delete (409 when referenced; objects/dirs under the chosen storage location are cleaned up) |
 | POST | /api/datasets/batch-delete | Batch delete `{ids}` |
 | GET | /api/datasets/tasks | Background dataset task status |
 | GET | /api/datasets/template | Template download |
@@ -120,10 +120,10 @@ Components (18, `upgrade_service.COMPONENTS` is the single source of truth, same
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/models | Asset list (search/category/lineage filters) |
-| POST | /api/models/base | Register base model (local path / download) |
+| GET | /api/models | Asset list (search/category/lineage filters, incl. `storage_backend_id`/`storage_backend` fields) |
+| POST | /api/models/base | Register base model (local path / download; `storage_backend_id?` to pick a storage location — path-based backends land under the mount's `models/hub/`) |
 | GET | /api/models/search | Search HF / ModelScope |
-| POST | /api/models/upload | Local upload (multipart, resumable) |
+| POST | /api/models/upload | Local upload (multipart, resumable; form may carry `storage_backend_id` — object backends sync to that bucket after upload) |
 | POST | /api/models | Create asset record |
 | PUT | /api/models/{aid}/meta | Update metadata (category/notes) |
 | GET | /api/models/{aid} | Detail |
@@ -269,18 +269,33 @@ Components (18, `upgrade_service.COMPONENTS` is the single source of truth, same
 | GET | /api/storage/objects | Object browse `{prefix, backend}` (S3 directory-style) |
 | POST | /api/storage/objects/batch-delete | Batch delete `{names, backend}` (S3 idempotent semantics) |
 | DELETE | /api/storage/objects | Delete single object `{name, backend}` |
-| GET/POST | /api/storage/backends | Backend list / add (S3-compatible: endpoint/ak/sk/bucket) |
+| GET/POST | /api/storage/backends | Backend list / add `{name, type, config}` (types below) |
+| GET | /api/storage/backends/options | **Storage-location dropdown**: readable by any logged-in user; returns only id/name/type/status (no config credentials) |
 | POST | /api/storage/backends/{bid}/test | Connectivity test |
-| DELETE | /api/storage/backends/{bid} | Delete backend |
+| DELETE | /api/storage/backends/{bid} | Delete backend (400 if referenced by datasets/models) |
+
+Storage backend types and config (POST /api/storage/backends):
+
+| type | config fields | Description |
+|---|---|---|
+| `object` | `endpoint, access_key, secret_key, bucket` | S3-compatible object store (rustfs/MinIO, etc.); datasets/models using it = local work dir + bucket sync |
+| `local` | `path` | Host local directory (read/write in place, no sync) |
+| `nfs` | `path, server` | Host NFS mount point |
+| `block` | `path, device` | Mount point of a formatted block device |
+| `juicefs` | `path` (required, host FUSE mount point, e.g. `/data/juicefs`), `meta_url`/`volume` (optional display) | JuiceFS POSIX distributed file system (FUSE mount; the platform compose ships a built-in juicefs service); the probe runs `df -T` and requires the fstype to contain `fuse` to prevent a plain directory from being reported as JuiceFS |
+
+**Storage-location selection**: dataset creation (`storage_backend_id` on `POST /api/datasets`, whole-dataset level) and model registration/upload (`storage_backend_id` on `POST /api/models/base` / `POST /api/models/upload`, per-asset level) may both pick a registered backend. Path-based backends write files directly under the mount point (`<mount>/datasets|models/hub/...`) with in-place read/write; object backends use a local dir + sync to that bucket; leaving it empty = platform default (local /data + primary object store). List/detail responses both return `storage_backend_id` and the display name `storage_backend`.
+
+Container visibility: a container's default rprivate bind of `/data` does **not** propagate host submounts (a FUSE mount point shows up as an invisible empty directory inside the container — verified empirically). The built-in JuiceFS mount point `/data/juicefs` is pre-wired in compose (static same-path bind on the backend + dynamic same-path bind for workers via `taskcontainer._storage_extra_paths()`). A custom path-based mount point must be same-path bound into the backend container and restarted before it can be used as a storage location (create/register performs a visibility check and returns 400 when invisible).
 
 ## Image Management /api/images (super_admin)
 
 | Method | Path | Description |
 |---|---|---|
-| GET | /api/images | Full platform image inventory (18 items = 5 engines + 3 self-built + 10 monitoring/infra; same source & order as the cluster upgrade page; version probe 5min cache + stale fallback, non-blocking; custom images appended; pull/build status) |
+| GET | /api/images | Full platform image inventory (19 items = 5 engines + 3 self-built + 11 monitoring/infra; same source & order as the cluster upgrade page; version probe 5min cache + stale fallback, non-blocking; custom images appended; pull/build status) |
 | GET | /api/images/custom | Custom image list |
 | POST | /api/images/custom | Register custom image `{name: tag, note}` (domestic accelerators etc.) |
 | DELETE | /api/images/custom/{cid} | Remove registration |
 | POST | /api/images/custom/batch-delete | Batch remove `{ids}` |
-| POST | /api/images/{key}/probe | Force version probe (synchronous; key = any of the 18 component keys; components without a probe command return the current runtime version) |
+| POST | /api/images/{key}/probe | Force version probe (synchronous; key = any of the 19 component keys; components without a probe command return the current runtime version) |
 | POST | /api/images/{key}/refresh | Background pull/rebuild `{force?}` (async, status polled via GET /api/images) |

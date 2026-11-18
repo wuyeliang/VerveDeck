@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..security import get_current_user, can_access_project, require_role
-from ..models import ModelAsset, Project, TrainingJob, DatasetVersion, User
+from ..models import ModelAsset, Project, TrainingJob, DatasetVersion, User, StorageBackend
+from ..services import storage
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -21,14 +22,42 @@ def _check_project(db, pid: int, user: User):
     return p
 
 
+def _resolve_backend(db, storage_backend_id: int | None):
+    """存储位置后端：空 → None（平台默认）；非空必须存在且（path 型）挂载点在
+    backend 容器内可见（FUSE 子挂载需同路径 bind，内置 /data/juicefs 已预配）"""
+    if not storage_backend_id:
+        return None
+    b = db.get(StorageBackend, storage_backend_id)
+    if not b:
+        raise HTTPException(400, f"存储后端 #{storage_backend_id} 不存在")
+    if b.type in storage.PATH_BASED_TYPES and not os.path.isdir(storage.backend_root(b)):
+        raise HTTPException(400, f"存储后端 {b.name} 的挂载点 {storage.backend_root(b)} "
+                                 "在平台后端容器内不可见（自定义挂载点需同路径 bind 进 backend 容器后重启）")
+    return b
+
+
+def _model_hub_root(db: Session, storage_backend_id: int | None) -> str:
+    """模型仓库根目录：path 型后端 → <挂载点>/models/hub（与默认布局对齐）；
+    object 型/未选择 → 默认 {data_dir}/models/hub（object 型本地下载后再同步该桶）"""
+    b = _resolve_backend(db, storage_backend_id)
+    if b is not None and b.type in storage.PATH_BASED_TYPES:
+        root = storage.backend_root(b)
+        if root:
+            return os.path.join(root, "models", "hub")
+    return os.path.join(settings.data_dir, "models", "hub")
+
+
 def _brief(a: ModelAsset, db: Session) -> dict:
     base = db.get(ModelAsset, a.parent_asset_id) if a.parent_asset_id else None
+    b = db.get(StorageBackend, a.storage_backend_id) if a.storage_backend_id else None
     return {
         "id": a.id, "project_id": a.project_id, "name": a.name, "type": a.type,
         "category": a.category or "", "tags": a.tags or [],
         "path": a.path, "source": a.source, "hf_id": a.hf_id,
         "size_bytes": a.size_bytes, "status": a.status,
         "parent_name": base.name if base else "",
+        "storage_backend_id": a.storage_backend_id,
+        "storage_backend": f"{b.name}（{b.type}）" if b else "",
         "job_id": a.job_id, "dataset_version_ids": a.dataset_version_ids or [],
         "note": a.note, "created_at": str(a.created_at),
     }
@@ -88,17 +117,20 @@ class BaseReq(BaseModel):
     note: str = ""
     category: str = ""
     tags: list[str] = []
+    storage_backend_id: int | None = None  # 存储位置（注册后端）；空=平台默认
 
 
 @router.post("/base")
 def register_base(req: BaseReq, db=Depends(get_db), user=Depends(get_current_user)):
     _check_project(db, req.project_id, user)
+    _resolve_backend(db, req.storage_backend_id)
     if db.query(ModelAsset).filter_by(project_id=req.project_id, name=req.name).first():
         raise HTTPException(400, "同名模型已存在")
-    path = os.path.join(settings.data_dir, "models", "hub", req.name)
+    path = os.path.join(_model_hub_root(db, req.storage_backend_id), req.name)
     a = ModelAsset(project_id=req.project_id, name=req.name, type="base", path=path,
                    source=f"hf:{req.hf_id}", hf_id=req.hf_id,
                    category=req.category or "", tags=req.tags or [],
+                   storage_backend_id=req.storage_backend_id,
                    status="pending_download" if not os.path.exists(path) else "ready",
                    note=req.note, created_by=user.id)
     if os.path.exists(path):
@@ -158,13 +190,20 @@ def search_models(source: str = "hf", q: str = "", limit: int = 20,
 async def upload_model(project_id: int = Form(...), name: str = Form(...),
                        note: str = Form(""), category: str = Form(""),
                        tags: str = Form(""),
+                       storage_backend_id: int = Form(0),
                        file: UploadFile = File(...),
                        db=Depends(get_db), user=Depends(get_current_user)):
-    """本地上传：zip 包（含 config.json / *.safetensors 的完整模型目录）→ 解压入仓"""
+    """本地上传：zip 包（含 config.json / *.safetensors 的完整模型目录）→ 解压入仓
+
+    storage_backend_id>0 且为 path 型后端时解压到该后端挂载点下；
+    object 型后端解压到本地默认仓库后再同步该桶。
+    """
     import io
     import re
     import zipfile
     _check_project(db, project_id, user)
+    sbid = int(storage_backend_id) if storage_backend_id else None
+    b = _resolve_backend(db, sbid)
     if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$", name or ""):
         raise HTTPException(400, "模型名仅允许字母数字 . _ -（1-80 位）")
     if db.query(ModelAsset).filter_by(project_id=project_id, name=name).first():
@@ -174,7 +213,7 @@ async def upload_model(project_id: int = Form(...), name: str = Form(...),
         zf = zipfile.ZipFile(io.BytesIO(content))
     except zipfile.BadZipFile:
         raise HTTPException(400, "需上传 zip 包（将模型目录压缩为 .zip 后上传）")
-    dest = os.path.realpath(os.path.join(settings.data_dir, "models", "hub", name))
+    dest = os.path.realpath(os.path.join(_model_hub_root(db, sbid), name))
     if os.path.exists(dest):
         raise HTTPException(400, "目标目录已存在")
     os.makedirs(dest, exist_ok=True)
@@ -203,9 +242,13 @@ async def upload_model(project_id: int = Form(...), name: str = Form(...),
                    source="upload", status="ready", size_bytes=_size(dest),
                    category=category or "",
                    tags=[t.strip() for t in tags.split(",") if t.strip()],
+                   storage_backend_id=sbid,
                    note=note or f"local upload: {file.filename}", created_by=user.id)
     db.add(a)
     db.commit()
+    # object 型后端：本地解压完成后同步该桶（path 型已直接在挂载点上，无需同步）
+    if b is not None and b.type == "object":
+        storage.put_dir(dest, b.config or {})
     db.refresh(a)
     return _brief(a, db)
 
@@ -219,6 +262,7 @@ class ArtifactReq(BaseModel):
     note: str = ""
     category: str = ""
     tags: list[str] = []
+    storage_backend_id: int | None = None  # 存储位置（path 型后端产物须在该挂载点下）
 
 
 @router.post("")
@@ -226,8 +270,13 @@ def register_artifact(req: ArtifactReq, db=Depends(get_db), user=Depends(get_cur
     _check_project(db, req.project_id, user)
     if req.type not in ("lora", "merged"):
         raise HTTPException(400, "type 需为 lora/merged")
+    b = _resolve_backend(db, req.storage_backend_id)
     if not os.path.exists(req.path):
         raise HTTPException(400, f"路径不存在: {req.path}")
+    if b is not None and b.type in storage.PATH_BASED_TYPES:
+        root = os.path.realpath(storage.backend_root(b))
+        if not os.path.realpath(req.path).startswith(root + os.sep):
+            raise HTTPException(400, f"产物路径不在存储后端 {b.name} 的挂载点（{root}）内")
     if db.query(ModelAsset).filter_by(project_id=req.project_id, name=req.name).first():
         raise HTTPException(400, "同名模型已存在")
     parent = None
@@ -236,6 +285,7 @@ def register_artifact(req: ArtifactReq, db=Depends(get_db), user=Depends(get_cur
     a = ModelAsset(project_id=req.project_id, name=req.name, type=req.type, path=req.path,
                    source=req.base_model_name, parent_asset_id=parent.id if parent else None,
                    category=req.category or "", tags=req.tags or [],
+                   storage_backend_id=req.storage_backend_id,
                    note=req.note, created_by=user.id)
     a.size_bytes = _size(req.path)
     db.add(a)
@@ -335,14 +385,20 @@ def delete_model(aid: int, db=Depends(get_db), user=Depends(require_role("super_
     if children:
         raise HTTPException(400, f"模型有 {children} 个子模型（血缘依赖），请先删除子模型")
     path = a.path
+    bid = a.storage_backend_id
+    b = db.get(StorageBackend, bid) if bid else None
     db.delete(a)
     db.commit()
-    # 磁盘清理：仅限平台数据目录内的路径
-    import os, shutil
+    # 清理：所选 object 型后端的桶对象 + 本地目录（限平台数据目录或 path 型后端挂载点内）
+    import shutil
     try:
-        data_root = os.path.realpath(settings.data_dir)
+        if b is not None and b.type == "object":
+            storage.delete_dir(path, b.config or {})
+        allowed_roots = [os.path.realpath(settings.data_dir)]
+        if b is not None and b.type in storage.PATH_BASED_TYPES:
+            allowed_roots.append(os.path.realpath(storage.backend_root(b)))
         rp = os.path.realpath(path)
-        if rp.startswith(data_root + os.sep) and os.path.isdir(rp):
+        if any(rp.startswith(r + os.sep) for r in allowed_roots) and os.path.isdir(rp):
             shutil.rmtree(rp, ignore_errors=True)
     except Exception:
         pass

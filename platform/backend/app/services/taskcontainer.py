@@ -34,9 +34,39 @@ RUNNERS: dict[str, dict] = {}
 _lock = threading.Lock()
 
 
+def _storage_extra_paths() -> dict:
+    """已注册 path 型存储后端根目录 → 同路径 bind（worker 容器可直接访问选在这些
+    后端上的数据集/模型文件）。
+
+    注意：/data 内的挂载点（如 JuiceFS 的 /data/juicefs FUSE 子挂载）**必须**显式
+    同路径 bind——容器 /data 的默认 rprivate bind 不传播宿主子挂载（已实测：宿主
+    /data 下的 bind/FUSE 子挂载在容器内是空目录）。仅挂宿主上已存在的路径。"""
+    vols = {}
+    try:
+        from ..models import StorageBackend
+        from ..database import SessionLocal
+        from . import storage
+        db = SessionLocal()
+        try:
+            rows = db.query(StorageBackend).filter(
+                StorageBackend.type.in_(storage.PATH_BASED_TYPES)).all()
+            for b in rows:
+                p = storage.backend_root(b)
+                if not p or not os.path.exists(p):
+                    continue
+                rp = os.path.realpath(p)
+                vols[rp] = {"bind": rp, "mode": "rw"}
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning("storage extra paths: %s", e)
+    return vols
+
+
 def _volumes(base: dict):
-    """统一挂载 /data 到容器内 /data"""
+    """统一挂载 /data 到容器内 /data（+ 存储后端根同路径 bind，覆盖 FUSE 子挂载）"""
     vols = {f"{settings.data_dir}": {"bind": "/data", "mode": "rw"}}
+    vols.update(_storage_extra_paths())
     vols.update(base or {})
     return vols
 

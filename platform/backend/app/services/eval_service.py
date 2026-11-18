@@ -42,7 +42,8 @@ def build_test_file(task: EvalTask, db) -> str:
     """把测试集版本转成 {prompt, reference} jsonl"""
     ver = db.get(DatasetVersion, task.dataset_version_id)
     dset = db.get(Dataset, ver.dataset_id)
-    rows = ds.read_jsonl(ds.ensure_version_local(ds.dataset_repo_dir(dset.project_id, dset.name), ver.version))
+    repo = ds.dataset_repo_dir(dset.project_id, dset.name, dset=dset, db=db)
+    rows = ds.read_jsonl(ds.ensure_version_local(repo, ver.version, dset=dset, db=db))
     out = os.path.join(eval_dir(task.id), "test.jsonl")
     os.makedirs(eval_dir(task.id), exist_ok=True)
     lines = []

@@ -61,6 +61,8 @@ def _migrate_columns():
             "datasets": [
                 ("kind", "VARCHAR(16) NOT NULL DEFAULT 'train'"),
                 ("scenario", "VARCHAR(16) NOT NULL DEFAULT 'text'"),
+                # 存储位置选择：空=平台默认；指向 storage_backends.id（可空，不设约束）
+                ("storage_backend_id", "INTEGER"),
             ],
             "deployments": [
                 ("description", "TEXT NOT NULL DEFAULT ''"),
@@ -90,6 +92,8 @@ def _migrate_columns():
             "model_assets": [
                 ("category", "VARCHAR(64) NOT NULL DEFAULT ''"),
                 ("tags", f"{json_type} NOT NULL DEFAULT '[]'"),
+                # 存储位置选择：空=平台默认；指向 storage_backends.id（可空，不设约束）
+                ("storage_backend_id", "INTEGER"),
             ],
             "audit_logs": [("action", "VARCHAR(64) NOT NULL DEFAULT ''")],
             # 节点状态机（#105 添加节点重构）：状态说明 + 维护模式

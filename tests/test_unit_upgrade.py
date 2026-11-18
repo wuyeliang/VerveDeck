@@ -374,6 +374,7 @@ def test_service_aliases(pin_dir):
     ("mineru", "MinerU 文档解析容器将以新镜像重建"),
     ("postgres", "该组件容器将以新镜像蓝绿重建"),
     ("grafana", "该组件容器将以新镜像蓝绿重建"),
+    ("juicefs", "该组件容器将以新镜像蓝绿重建，JuiceFS 挂载短暂卸载数秒"),
     ("backend", "该服务将以新镜像重建"),
     ("nope", ""),
 ])
@@ -382,9 +383,9 @@ def test_impact_hint(target, hint):
 
 
 def test_components_full_platform_list(pin_dir):
-    """COMPONENTS = 平台全量镜像清单（18 项：5 引擎 + 3 自构 + 10 监控/基础设施），
+    """COMPONENTS = 平台全量镜像清单（19 项：5 引擎 + 3 自构 + 11 监控/基础设施），
     镜像管理页与集群升级页共用此唯一数据源"""
-    assert len(us.COMPONENTS) == 18
+    assert len(us.COMPONENTS) == 19
     for k, c in us.COMPONENTS.items():
         assert c.get("label") and c.get("desc"), f"{k} 缺 label/desc"
         assert c["kind"] in ("pull", "build")

@@ -554,7 +554,8 @@ def build_config(job: TrainingJob, db) -> dict:
             continue
         dset = db.get(Dataset, ver.dataset_id)
         name = f"ds{ver.id}"
-        src = ds.ensure_version_local(ds.dataset_repo_dir(dset.project_id, dset.name), ver.version)
+        repo = ds.dataset_repo_dir(dset.project_id, dset.name, dset=dset, db=db)
+        src = ds.ensure_version_local(repo, ver.version, dset=dset, db=db)
         link = f"{job_dir(job.id)}/{name}.jsonl"
         if not os.path.exists(link):
             if os.path.exists(src):

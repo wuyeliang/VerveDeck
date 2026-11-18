@@ -98,6 +98,45 @@ services:
       start_period: 15s
     networks: [fintune]
 
+  # ---- JuiceFS（POSIX 分布式文件系统）：数据集/模型可选存储位置（存储管理 → juicefs 类型）
+  # 元数据用 redis DB1（与 argilla 的 DB0 隔离）；数据块存 rustfs 的 juicefs 桶
+  # （需先建桶：docker run --rm --network fintune_net minio/mc sh -c
+  #   "mc alias set rs http://rustfs:9000 $RUSTFS_ACCESS_KEY $RUSTFS_SECRET_KEY && mc mb -p rs/juicefs"）。
+  # FUSE 挂载宿主 /data/juicefs。注意：容器 /data 的 rprivate bind 不传播宿主子挂载
+  # （实测 FUSE 挂载点在容器内为不可见的空目录），故 backend 服务显式同路径 bind
+  # /data/juicefs，worker 容器由 taskcontainer._storage_extra_paths() 动态补挂；
+  # format 幂等（已格式化不重做）；升级镜像时挂载短暂卸载数秒。
+  # 需 apparmor:unconfined：docker-default profile enforce 下 fusermount3 报
+  # Permission denied（dmesg 无 DENIED 记录），unconfined 后挂载成功（实测）。
+  juicefs:
+    image: juicedata/mount:ce
+    restart: unless-stopped
+    command: >
+      sh -c "juicefs format --storage s3 --bucket http://rustfs:9000/juicefs
+      --access-key ${RUSTFS_ACCESS_KEY:-rustfsadmin} --secret-key ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      redis://redis:6379/1 vervedeck;
+      exec juicefs mount redis://redis:6379/1 /mnt"
+    volumes:
+      - /data/juicefs:/mnt:rw,rshared
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    depends_on:
+      rustfs:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "cat /mnt/.control >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [fintune]
+
   mineru:
     image: fintune/mineru:1.0
     build: ../images/mineru
@@ -163,6 +202,10 @@ services:
       ALERTMANAGER_URL: http://alertmanager:9093
     volumes:
       - /data:/data
+      # JuiceFS 挂载点同路径 bind：容器 /data 的默认 rprivate bind 不传播宿主子挂载
+      # （FUSE 挂载在容器内是空目录，已实测），须显式 bind 挂载点本身 backend 才可见；
+      # 未挂载时 docker 自动建空目录，无副作用。worker 容器由 taskcontainer 动态补挂
+      - /data/juicefs:/data/juicefs
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/vervedeck:/repo:ro
       # 宿主 IB/RDMA 设备（只读探测；backend 据此判断宿主有无 RDMA 并向任务容器注入
@@ -279,6 +322,15 @@ services:
       - --path.procfs=/host/proc
       - --path.sysfs=/host/sys
       - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|tmp)($$|/)
+      # 指标右尺寸化（2026-11-18 用户要求：4000+ series 太多，缩减到行业平均水平）：
+      #  - netdev 流量计数器只保留真网卡（device-include）；/sys 接口状态指标的 veth 残留由 Prometheus 抓取侧 relabel 丢弃
+      #  - 禁用按核/非必需采集器 softnet/schedstat/thermal_zone(含cooling)/pressure/hwmon（GPU 平台用不到）
+      - "--collector.netdev.device-include=^(en|eth|nvidia|bond|wl|ib).*"
+      - --no-collector.softnet
+      - --no-collector.schedstat
+      - --no-collector.thermal_zone
+      - --no-collector.pressure
+      - --no-collector.hwmon
     pid: host
     ports:
       # 同 dcgm-exporter：默认仅本机；集群模式主节点 Prometheus 经内网 scrape 本节点宿主指标

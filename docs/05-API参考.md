@@ -84,22 +84,22 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/admin/upgrade/status | 平台全量镜像清单（18 组件）升级状态（当前镜像 / 本地镜像 / 运行时版本 / 进行中任务） |
+| GET | /api/admin/upgrade/status | 平台全量镜像清单（19 组件）升级状态（当前镜像 / 本地镜像 / 运行时版本 / 进行中任务） |
 | POST | /api/admin/upgrade/check | `{target, force?}` → Docker Hub 可用版本列表（10min 缓存） |
 | POST | /api/admin/upgrade/execute | `{target, to_version}` 创建升级任务（pull 换 tag / build 重建 + 蓝绿切容器） |
 | GET | /api/admin/upgrade/tasks | 升级任务历史 `{limit}` |
 
-组件（18 项，`upgrade_service.COMPONENTS` 为唯一数据源，与镜像管理页同序一致）：
+组件（19 项，`upgrade_service.COMPONENTS` 为唯一数据源，与镜像管理页同序一致）：
 - 引擎（pull 换 tag + 运行时 pin，仅新任务生效）：vllm / sglang / llamafactory / evalscope
-- 容器（pull 换 tag + 蓝绿重建容器）：gpu_agent / dcgm_exporter / node_exporter / prometheus / alertmanager / grafana（深色+浅色双容器）/ postgres / redis / opensearch / argilla / rustfs / mineru
+- 容器（pull 换 tag + 蓝绿重建容器）：gpu_agent / dcgm_exporter / node_exporter / prometheus / alertmanager / grafana（深色+浅色双容器）/ postgres / redis / opensearch / argilla / rustfs / juicefs / mineru
 - 自构（build 以宿主 /repo 重建 + 蓝绿重建容器，自升级由调度器 converge 兜底）：backend / web
 
 ## 数据集 /api/datasets（developer+，租户内数据）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET/POST | /api/datasets | 列表（搜索/分页）/ 创建 |
-| DELETE | /api/datasets/{dsid} | 删除（被引用时 409） |
+| GET/POST | /api/datasets | 列表（搜索/分页，含 `storage_backend_id`/`storage_backend` 存储位置字段）/ 创建（`{project_id, name, description?, kind?, scenario?, storage_backend_id?}`，存储位置=数据集级整库） |
+| DELETE | /api/datasets/{dsid} | 删除（被引用时 409；所选存储位置的对象/挂载点目录一并清理） |
 | POST | /api/datasets/batch-delete | 批量删除 `{ids}` |
 | GET | /api/datasets/tasks | 数据集后台任务状态 |
 | GET | /api/datasets/template | 模板下载 |
@@ -120,10 +120,10 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/models | 资产列表（搜索/分类/血缘过滤） |
-| POST | /api/models/base | 登记基座模型（本地路径/下载） |
+| GET | /api/models | 资产列表（搜索/分类/血缘过滤，含 `storage_backend_id`/`storage_backend` 字段） |
+| POST | /api/models/base | 登记基座模型（本地路径/下载；`storage_backend_id?` 选存储位置，path 型后端落挂载点 `models/hub/` 下） |
 | GET | /api/models/search | HF / ModelScope 搜索 |
-| POST | /api/models/upload | 本地上传（multipart，断点续传） |
+| POST | /api/models/upload | 本地上传（multipart，断点续传；表单可带 `storage_backend_id`，object 型后端上传后同步该桶） |
 | POST | /api/models | 创建资产记录 |
 | PUT | /api/models/{aid}/meta | 修改元数据（分类/说明） |
 | GET | /api/models/{aid} | 详情 |
@@ -269,18 +269,41 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 | GET | /api/storage/objects | 对象浏览 `{prefix, backend}`（S3 目录式） |
 | POST | /api/storage/objects/batch-delete | 批量删除 `{names, backend}`（S3 幂等语义） |
 | DELETE | /api/storage/objects | 单对象删除 `{name, backend}` |
-| GET/POST | /api/storage/backends | 后端列表 / 添加（S3 兼容：endpoint/ak/sk/bucket） |
+| GET/POST | /api/storage/backends | 后端列表 / 添加 `{name, type, config}`（类型见下） |
+| GET | /api/storage/backends/options | **存储位置下拉**：任意登录用户可读，仅 id/name/type/status（不含 config 凭证） |
 | POST | /api/storage/backends/{bid}/test | 连通性测试 |
-| DELETE | /api/storage/backends/{bid} | 删除后端 |
+| DELETE | /api/storage/backends/{bid} | 删除后端（被数据集/模型引用时 400） |
+
+存储后端类型与 config（POST /api/storage/backends）：
+
+| type | config 字段 | 说明 |
+|---|---|---|
+| `object` | `endpoint, access_key, secret_key, bucket` | S3 兼容对象存储（rustfs/MinIO 等），数据集/模型选它 = 本地工作目录 + 桶同步 |
+| `local` | `path` | 宿主本地目录（读写即本地，无同步） |
+| `nfs` | `path, server` | 宿主 NFS 挂载点 |
+| `block` | `path, device` | 块设备格式化后的挂载点 |
+| `juicefs` | `path`（必填，宿主 FUSE 挂载点，如 `/data/juicefs`）、`meta_url`/`volume`（可选展示） | JuiceFS POSIX 分布式文件系统（FUSE 挂载，compose 内置 juicefs 服务）；探测用 `df -T` 校验 fstype 必须含 `fuse`，防止普通目录误报 |
+
+**存储位置选择**：数据集创建（`POST /api/datasets` 的 `storage_backend_id`，数据集级整库）与模型
+登记/上传（`POST /api/models/base`、`POST /api/models/upload` 的 `storage_backend_id`，资产级）
+均可选已注册后端。path 型后端文件直接建在挂载点下（`<挂载点>/datasets|models/hub/...`），
+读写即本地；object 型走本地目录 + 该桶同步；不选（空）= 平台默认（本地 /data + 主对象存储）。
+列表/详情均回传 `storage_backend_id` 与显示名 `storage_backend`。
+
+容器可见性：容器 `/data` 的默认 rprivate bind **不传播宿主子挂载**（FUSE 挂载点在容器内
+为不可见的空目录，已实测）。内置 JuiceFS 挂载点 `/data/juicefs` 已在 compose 中预配
+（backend 静态同路径 bind + worker 由 `taskcontainer._storage_extra_paths()` 动态补挂）；
+自定义 path 型挂载点须同路径 bind 进 backend 容器并重启后方可作为存储位置
+（创建/登记时做可见性校验，不可见返回 400）。
 
 ## 镜像管理 /api/images（super_admin）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/images | 平台全量镜像清单（18 项 = 5 引擎 + 3 自构 + 10 监控/基础设施，与集群升级页同一数据源同序；版本探测 5min 缓存 + stale 兜底非阻塞；自定义镜像追加末尾；pull/build 状态） |
+| GET | /api/images | 平台全量镜像清单（19 项 = 5 引擎 + 3 自构 + 11 监控/基础设施，与集群升级页同一数据源同序；版本探测 5min 缓存 + stale 兜底非阻塞；自定义镜像追加末尾；pull/build 状态） |
 | GET | /api/images/custom | 自定义镜像列表 |
 | POST | /api/images/custom | 登记自定义镜像 `{name: tag, note}`（国产芯片等） |
 | DELETE | /api/images/custom/{cid} | 移除登记 |
 | POST | /api/images/custom/batch-delete | 批量移除 `{ids}` |
-| POST | /api/images/{key}/probe | 强制版本探测（同步；key 为 18 组件键；无探测命令的组件返回当前运行时版本） |
+| POST | /api/images/{key}/probe | 强制版本探测（同步；key 为 19 组件键；无探测命令的组件返回当前运行时版本） |
 | POST | /api/images/{key}/refresh | 后台拉取/重建 `{force?}`（异步，状态经 GET /api/images 轮询） |

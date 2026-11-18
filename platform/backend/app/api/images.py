@@ -1,7 +1,7 @@
 """镜像管理：平台全量镜像清单 + 版本探测 + 拉取/重建 + 自定义镜像（国产芯片等）
 
-清单唯一数据源是 upgrade_service.COMPONENTS（18 项 = 5 引擎 + 3 自构 +
-10 监控/基础设施），本页面与集群升级页按同一顺序渲染，两页清单完全一致。
+清单唯一数据源是 upgrade_service.COMPONENTS（19 项 = 5 引擎 + 3 自构 +
+11 监控/基础设施），本页面与集群升级页按同一顺序渲染，两页清单完全一致。
 
 - 官方开源镜像（pull 类）：refresh = docker pull
 - 自构镜像（fintune/*）：refresh = 以 compose 挂载的 /repo（宿主源码树，只读）
@@ -118,7 +118,7 @@ def _probe(key: str, image: str, cmd: str, force: bool = False) -> str:
 
 @router.get("")
 def list_images(user=Depends(_admin)):
-    """平台全量镜像清单（与集群升级页同一数据源、同序，18 项）+ 自定义镜像"""
+    """平台全量镜像清单（与集群升级页同一数据源、同序，19 项）+ 自定义镜像"""
     items = []
     for key, c in upgrade_service.COMPONENTS.items():
         image = upgrade_service.component_image(key)

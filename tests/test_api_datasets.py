@@ -8,7 +8,8 @@ import json
 import pytest
 import requests
 
-from conftest import BASE, H, SUF, poll, retry_call, DEFAULT_PROJECT, ALPACA_ROWS, DPO_ROWS
+from conftest import (BASE, H, SUF, poll, retry_call, DEFAULT_PROJECT,
+                      ALPACA_ROWS, DPO_ROWS, DEPLOY_NAME)
 
 
 def _mk_ds(tok, name, proj=None):
@@ -126,6 +127,73 @@ def test_dataset_description_stored(admin_tok):
     body = requests.get(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=15).json()
     assert body["description"] == ""
     requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=15)
+
+
+# ---------- 存储位置选择 ----------
+
+@pytest.fixture()
+def ds_loc_backend(admin_tok):
+    """存储位置测试用 juicefs 后端（名称与 test_api_storage 的 jfs-* 区分，避免唯一名冲突）"""
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=60,
+                      json={"name": f"dsloc-{SUF}", "type": "juicefs",
+                            "config": {"path": "/data/juicefs"}})
+    r.raise_for_status()
+    bid = r.json()["id"]
+    yield bid
+    requests.delete(f"{BASE}/api/storage/backends/{bid}", headers=H(admin_tok), timeout=30)
+
+
+def test_create_with_storage_location(admin_tok, ds_loc_backend):
+    dsid = None
+    try:
+        r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
+                          json={"project_id": DEFAULT_PROJECT, "name": f"dslocd-{SUF}",
+                                "storage_backend_id": ds_loc_backend})
+        r.raise_for_status()
+        dsid = r.json()["id"]
+        rows = requests.get(f"{BASE}/api/datasets",
+                            params={"project_id": DEFAULT_PROJECT},
+                            headers=H(admin_tok), timeout=15).json()
+        d = next(x for x in rows if x["id"] == dsid)
+        assert d["storage_backend_id"] == ds_loc_backend
+        assert d["storage_backend"]  # 非空显示名（名称（类型））
+    finally:
+        if dsid:
+            requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+
+
+def test_upload_version_repo_under_mount(admin_tok, ds_loc_backend):
+    """path 型存储位置：版本仓库直接建在挂载点下；删除数据集后仓库目录一并清理"""
+    import os
+    import re
+    name = f"dslocrepo-{SUF}"
+    safe = re.sub(r"[^\w\-]", "_", name)
+    r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": name,
+                            "storage_backend_id": ds_loc_backend})
+    r.raise_for_status()
+    dsid = r.json()["id"]
+    try:
+        _upload(admin_tok, dsid, ALPACA_ROWS[:2])
+        p = f"/data/juicefs/datasets/p{DEFAULT_PROJECT}/{safe}/v1/data.jsonl"
+        assert os.path.exists(p), f"版本文件应落在挂载点下: {p}"
+    finally:
+        requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+    repo = f"/data/juicefs/datasets/p{DEFAULT_PROJECT}/{safe}"
+    assert not os.path.exists(repo), "删除数据集后挂载点下仓库目录应清理"
+
+
+def test_default_dataset_stays_in_datadir(admin_tok):
+    """未选存储位置 → 仓库仍在平台默认 data_dir 下（历史行为不变）"""
+    import os
+    data_dir = os.environ.get("DATA_DIR", "/data")
+    name = f"dslocreg-{SUF}"
+    dsid = _mk_ds(admin_tok, name)
+    try:
+        _upload(admin_tok, dsid, ALPACA_ROWS[:1])
+        assert os.path.exists(f"{data_dir}/datasets/p{DEFAULT_PROJECT}/{name}/v1/data.jsonl")
+    finally:
+        requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
 
 
 # ---------- 上传 / 版本 ----------
@@ -465,14 +533,21 @@ def test_clean_cross_ds_version_404(admin_tok, dctx):
 # ---------- 合成（真实任务，1 次 LLM 调用） ----------
 
 def test_synth_real(admin_tok, dctx):
-    # flaky 对策（#80）：synth 依赖常驻部署 1 的真实 LLM 调用，全量运行窗口内上游
+    # flaky 对策（#80）：synth 依赖常驻部署的真实 LLM 调用，全量运行窗口内上游
     # 偶发超时/重启会致任务 failed（单跑均过、全量偶发失败）。整段重试 3 次：
     # 每次提交全新合成任务（输出为新版本，互不污染）。
+    # 部署按名解析（原硬编码 deployment_id=1，部署重建后 ID 漂移会误判 400）。
+    deps = requests.get(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                        timeout=15).json()
+    dep = next((d for d in deps if d.get("name") == DEPLOY_NAME
+                and d.get("status") == "running"), None)
+    assert dep, f"常驻部署 {DEPLOY_NAME} 未运行（synth 需真实 LLM 部署）"
+
     def synth_once():
         r = requests.post(f"{BASE}/api/datasets/synth", headers=H(admin_tok), timeout=30,
                           json={"dataset_id": dctx["alpaca_ds"],
                                 "source_version_id": dctx["alpaca_ver"],
-                                "mode": "qa", "n_per_chunk": 1, "deployment_id": 1})
+                                "mode": "qa", "n_per_chunk": 1, "deployment_id": dep["id"]})
         assert r.status_code == 200, r.text
         t = _wait_task(admin_tok, r.json()["task_id"], timeout=600)
         assert t["status"] == "done", f"synth 失败: {t['error']}"

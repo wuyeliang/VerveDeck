@@ -364,8 +364,16 @@ def _model_downloads(db):
         if st["known"] and st["done"]:
             ok = st["code"] == 0
             asset.status = "ready" if ok else "failed"
-            if ok and not asset.size_bytes:
-                asset.size_bytes = _dir_size(asset.path)
+            if ok:
+                if not asset.size_bytes:
+                    asset.size_bytes = _dir_size(asset.path)
+                # 存储位置：object 型后端下载完成后同步该桶（path 型已直接落在挂载点）
+                if asset.storage_backend_id:
+                    from .models import StorageBackend
+                    from .services import storage as st2
+                    b = db.get(StorageBackend, asset.storage_backend_id)
+                    if b is not None and b.type == "object":
+                        st2.put_dir(asset.path, b.config or {})
             db.commit()
             continue
         if st["known"]:

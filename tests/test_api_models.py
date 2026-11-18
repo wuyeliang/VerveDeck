@@ -250,6 +250,54 @@ def test_register_base_same_name_other_project_ok(admin_tok, tenant_a, mctx):
     assert r.status_code == 200, "同名模型跨项目应允许"
 
 
+# ---------- 存储位置选择 ----------
+
+@pytest.fixture()
+def mdl_loc_backend(admin_tok):
+    """存储位置测试用 juicefs 后端（名称与 storage/datasets 测试文件的后端区分）"""
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=60,
+                      json={"name": f"mdlloc-{SUF}", "type": "juicefs",
+                            "config": {"path": "/data/juicefs"}})
+    r.raise_for_status()
+    bid = r.json()["id"]
+    yield bid
+    requests.delete(f"{BASE}/api/storage/backends/{bid}", headers=H(admin_tok), timeout=30)
+
+
+def test_register_base_unknown_backend_400(admin_tok):
+    r = requests.post(f"{BASE}/api/models/base", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": f"500mlocbad-{SUF}",
+                            "hf_id": "local/x", "storage_backend_id": 99999999})
+    assert r.status_code == 400
+    assert "不存在" in r.json()["detail"]
+
+
+def test_register_base_on_path_backend(admin_tok, mdl_loc_backend):
+    """path 型存储位置：模型文件落挂载点 models/hub 下；列表显示位置；删除后目录清理"""
+    name = f"500mloc-{SUF}"
+    mpath = f"/data/juicefs/models/hub/{name}"
+    os.makedirs(mpath, exist_ok=True)
+    with open(os.path.join(mpath, "w.txt"), "w") as f:
+        f.write("w")
+    r = requests.post(f"{BASE}/api/models/base", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": name,
+                            "hf_id": "local/x", "storage_backend_id": mdl_loc_backend})
+    assert r.status_code == 200, r.text
+    a = r.json()
+    try:
+        assert a["storage_backend_id"] == mdl_loc_backend
+        assert a["path"] == mpath
+        rows = requests.get(f"{BASE}/api/models",
+                            params={"project_id": DEFAULT_PROJECT},
+                            headers=H(admin_tok), timeout=15).json()
+        row = next(x for x in rows if x["id"] == a["id"])
+        assert row["storage_backend_id"] == mdl_loc_backend
+        assert row["storage_backend"]  # 非空显示名
+    finally:
+        requests.delete(f"{BASE}/api/models/{a['id']}", headers=H(admin_tok), timeout=30)
+    assert not os.path.exists(mpath), "删除模型后挂载点下目录应清理"
+
+
 # ---------- 产物注册 ----------
 
 def test_register_artifact_lora(admin_tok):

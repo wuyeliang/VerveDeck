@@ -17,19 +17,19 @@ def _status(admin_tok):
 
 # ---------- 状态 ----------
 
-# 平台全量镜像清单（与 upgrade_service.COMPONENTS 一致，18 项）
+# 平台全量镜像清单（与 upgrade_service.COMPONENTS 一致，19 项）
 ALL_COMPONENT_KEYS = {
     "vllm", "sglang", "llamafactory", "gpu_agent", "evalscope", "mineru",
     "backend", "web", "dcgm_exporter", "node_exporter", "prometheus",
     "alertmanager", "grafana", "postgres", "redis", "opensearch", "argilla",
-    "rustfs",
+    "rustfs", "juicefs",
 }
 
 
 def test_upgrade_status_shape(admin_tok):
     rows = _status(admin_tok)
     assert {x["key"] for x in rows} == ALL_COMPONENT_KEYS
-    assert len(rows) == 18
+    assert len(rows) == 19
     for x in rows:
         assert {"key", "label", "image", "kind", "impact", "exists", "size",
                 "runtime", "impact_hint", "running_task"} <= set(x)
@@ -47,7 +47,7 @@ def test_two_pages_image_list_identical(admin_tok):
     imgs = [(x["key"], x["image"]) for x in r.json()
             if not x["key"].startswith("custom-")]
     assert [(x["key"], x["image"]) for x in rows] == imgs
-    assert len(rows) == 18
+    assert len(rows) == 19
 
 
 def test_upgrade_status_selfbuilt_images_fintune(admin_tok):

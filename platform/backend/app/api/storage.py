@@ -1,7 +1,9 @@
-"""存储管理：多类型存储后端注册（对象/本地/NFS/块存储）+ 对象浏览/删除
+"""存储管理：多类型存储后端注册（对象/本地/NFS/块存储/JuiceFS）+ 对象浏览/删除
 
 对象存储同步队列已整体移除（前端 UI、API 端点、StorageQueue 模型、同步留痕均不再保留）。
-local/object 类型真实可用；nfs/block 为注册 + 状态占位（探测宿主挂载点路径）。
+object/local 类型真实可用；juicefs = FUSE 挂载点（探测校验 fstype 必须为 fuse）；
+nfs/block 为注册 + 状态占位（探测宿主挂载点路径）。
+数据集/模型创建时可选注册后端作为存储位置（path 型落挂载点、object 型同步该桶）。
 """
 import os
 import shutil
@@ -12,13 +14,13 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db, SessionLocal
-from ..security import require_role
+from ..security import get_current_user, require_role
 from ..models import StorageBackend, User
 from ..services import storage
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
-BACKEND_TYPES = ("object", "local", "nfs", "block")
+BACKEND_TYPES = ("object", "local", "nfs", "block", "juicefs")
 
 
 def _admin(user: User = Depends(require_role("super_admin", "tenant_admin"))):
@@ -140,7 +142,7 @@ def delete_objects(prefix: str, backend: int = 0, user=Depends(_admin)):
 
 class BackendReq(BaseModel):
     name: str
-    type: str  # object/local/nfs/block
+    type: str  # object/local/nfs/block/juicefs
     config: dict = {}
 
 
@@ -149,6 +151,13 @@ def _validate(type_: str, cfg: dict) -> None:
         for k in ("endpoint", "bucket"):
             if not (cfg or {}).get(k):
                 raise HTTPException(400, f"对象存储必须提供 {k}")
+    elif type_ == "juicefs":
+        # config: {path(挂载点,必填,如 /data/juicefs), meta_url(可选,展示), volume(可选,展示)}
+        p = (cfg or {}).get("path", "")
+        if not p:
+            raise HTTPException(400, "JuiceFS 必须提供 path（宿主 FUSE 挂载点，如 /data/juicefs）")
+        if not p.startswith("/"):
+            raise HTTPException(400, "JuiceFS 挂载点 path 需为绝对路径")
     elif type_ in ("local", "nfs", "block"):
         if not (cfg or {}).get("path"):
             raise HTTPException(400, f"{type_} 必须提供 path（宿主机上的目录）")
@@ -162,6 +171,13 @@ def _validate(type_: str, cfg: dict) -> None:
 def list_backends(db: Session = Depends(get_db), user=Depends(_admin)):
     rows = db.query(StorageBackend).order_by(StorageBackend.id.asc()).all()
     return [_row(b) for b in rows]
+
+
+@router.get("/backends/options")
+def backend_options(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """数据集/模型创建页的「存储位置」下拉：任意登录用户可读，仅 id/name/type（不含 config 凭证）"""
+    rows = db.query(StorageBackend).order_by(StorageBackend.id.asc()).all()
+    return [{"id": b.id, "name": b.name, "type": b.type, "status": b.status} for b in rows]
 
 
 @router.post("/backends")
@@ -200,6 +216,12 @@ def test_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
 @router.delete("/backends/{bid}")
 def delete_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
     b = _get_backend_or_404(bid, db)
+    # 引用检查：被数据集/模型选为存储位置的后端不可删除（避免存量文件"失联"）
+    from ..models import Dataset, ModelAsset
+    n_ds = db.query(Dataset).filter(Dataset.storage_backend_id == bid).count()
+    n_md = db.query(ModelAsset).filter(ModelAsset.storage_backend_id == bid).count()
+    if n_ds or n_md:
+        raise HTTPException(400, f"后端被 {n_ds} 个数据集 / {n_md} 个模型引用，不可删除")
     db.delete(b)
     db.commit()
     return {"ok": True}

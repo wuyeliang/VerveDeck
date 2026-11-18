@@ -152,3 +152,151 @@ def test_delete_dataset_removes_s3_prefix(s3, s3_dataset, admin_tok):
     r = requests.delete(f"{BASE}/api/datasets/{s3_dataset['id']}", headers=H(admin_tok), timeout=30)
     assert r.status_code == 200, r.text
     assert not _exists(s3, key), "删除数据集后 S3 对象应已清理"
+
+
+# ---------------------------------------------------------------------------
+# 存储后端注册：JuiceFS（FUSE 挂载）+ 存储位置选择
+#
+# 探测与断言均自适应环境：/data/juicefs 是真实 FUSE 挂载时 status=ok，
+# 未挂载（或挂载未传播到本容器命名空间）时 status=error——注册本身恒成功。
+# ---------------------------------------------------------------------------
+
+JFS_PATH = "/data/juicefs"
+
+
+def _is_fuse_mount(path: str) -> bool:
+    """/proc/mounts 判定 path 是否为 FUSE 挂载（与 probe_juicefs 的 df -T 视图同源）"""
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                f_ = line.split()
+                if len(f_) >= 3 and f_[1] == path and "fuse" in f_[2].lower():
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def _mk_jfs_backend(tok: str, name: str) -> dict:
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(tok), timeout=60,
+                      json={"name": name, "type": "juicefs",
+                            "config": {"path": JFS_PATH, "volume": "vervedeck",
+                                       "meta_url": "redis://redis:6379/1"}})
+    r.raise_for_status()
+    return r.json()
+
+
+@pytest.fixture()
+def jfs_backend(admin_tok):
+    b = _mk_jfs_backend(admin_tok, f"jfs-{SUF}")
+    yield {"id": b["id"], "name": b["name"], "status": b["status"]}
+    requests.delete(f"{BASE}/api/storage/backends/{b['id']}", headers=H(admin_tok), timeout=30)
+
+
+# ---------- 注册校验 ----------
+
+def test_juicefs_missing_path_400(admin_tok):
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=30,
+                      json={"name": f"jfsnp-{SUF}", "type": "juicefs", "config": {}})
+    assert r.status_code == 400
+    assert "path" in r.json()["detail"]
+
+
+def test_juicefs_relative_path_400(admin_tok):
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=30,
+                      json={"name": f"jfsrp-{SUF}", "type": "juicefs",
+                            "config": {"path": "data/juicefs"}})
+    assert r.status_code == 400
+    assert "绝对路径" in r.json()["detail"]
+
+
+def test_juicefs_unknown_type_400(admin_tok):
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=30,
+                      json={"name": f"jfsu-{SUF}", "type": "cos", "config": {"path": "/x"}})
+    assert r.status_code == 400
+
+
+def test_juicefs_duplicate_name_400(admin_tok, jfs_backend):
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=30,
+                      json={"name": jfs_backend["name"], "type": "juicefs",
+                            "config": {"path": JFS_PATH}})
+    assert r.status_code == 400
+    assert "已存在" in r.json()["detail"]
+
+
+def test_juicefs_register_status_matches_mount(admin_tok):
+    """注册恒成功；status 与 /data/juicefs 的实际 FUSE 挂载状态一致"""
+    b = _mk_jfs_backend(admin_tok, f"jfsst-{SUF}")
+    try:
+        assert b["type"] == "juicefs"
+        if _is_fuse_mount(JFS_PATH):
+            assert b["status"] == "ok", f"FUSE 挂载存在但探测未 ok: {b}"
+            assert b["size_total"] > 0
+        else:
+            assert b["status"] == "error", f"无 FUSE 挂载但探测误报 ok: {b}"
+            assert "FUSE" in b["detail"]
+    finally:
+        requests.delete(f"{BASE}/api/storage/backends/{b['id']}", headers=H(admin_tok), timeout=30)
+
+
+# ---------- options 端点（下拉数据源） ----------
+
+def test_backends_options_shape_no_credentials(admin_tok):
+    r = requests.get(f"{BASE}/api/storage/backends/options", headers=H(admin_tok), timeout=15)
+    assert r.status_code == 200
+    rows = r.json()
+    assert isinstance(rows, list)
+    for row in rows:
+        assert set(row.keys()) == {"id", "name", "type", "status"}
+        assert "config" not in row  # 不泄露 endpoint/密钥等凭证
+
+
+def test_backends_options_requires_login():
+    r = requests.get(f"{BASE}/api/storage/backends/options", timeout=15)
+    assert r.status_code in (401, 403)
+
+
+def test_backends_options_dev_readable(roles):
+    """任意登录用户可读（数据集/模型创建页下拉），developer 即可"""
+    r = requests.get(f"{BASE}/api/storage/backends/options",
+                     headers=H(roles["developer"]), timeout=15)
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+# ---------- 存储位置选择：数据集引用 + 删除引用检查 ----------
+
+def test_juicefs_backend_lifecycle_and_refcheck(admin_tok, jfs_backend):
+    bid, bname = jfs_backend["id"], jfs_backend["name"]
+    dsname = f"jfsds-{SUF}"
+    r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": dsname,
+                            "storage_backend_id": bid})
+    assert r.status_code == 200, r.text
+    dsid = r.json()["id"]
+    try:
+        rows = requests.get(f"{BASE}/api/datasets", params={"project_id": DEFAULT_PROJECT},
+                            headers=H(admin_tok), timeout=15).json()
+        d = next(x for x in rows if x["id"] == dsid)
+        assert d["storage_backend_id"] == bid
+        assert bname in d["storage_backend"]
+        # 详情同字段
+        det = requests.get(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=15).json()
+        assert det["storage_backend_id"] == bid
+        # 被数据集引用 → 后端不可删除
+        r = requests.delete(f"{BASE}/api/storage/backends/{bid}", headers=H(admin_tok), timeout=30)
+        assert r.status_code == 400
+        assert "引用" in r.json()["detail"]
+    finally:
+        requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+    # 引用解除后可删除
+    r = requests.delete(f"{BASE}/api/storage/backends/{bid}", headers=H(admin_tok), timeout=30)
+    assert r.status_code == 200
+
+
+def test_dataset_unknown_backend_400(admin_tok):
+    r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": f"jfsbad-{SUF}",
+                            "storage_backend_id": 99999999})
+    assert r.status_code == 400
+    assert "不存在" in r.json()["detail"]

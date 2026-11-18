@@ -151,6 +151,13 @@ COMPONENTS: dict[str, dict] = {
                "container": "fintune-rustfs-1",
                "desc": "S3 兼容对象存储（模型/数据集文件）",
                "probe": "rustfs --version 2>&1 | head -1"},
+    "juicefs": {"label": "文件系统 (JuiceFS)", "kind": "pull",
+                "hub": "juicedata/mount", "image": "juicedata/mount:ce",
+                "tag_re": r"^ce(-v[\d.]+)?$", "impact": "agent",
+                "container": "fintune-juicefs-1",
+                "desc": "POSIX 分布式文件系统（数据集/模型可选存储位置，FUSE 挂载 /data/juicefs）",
+                "hint": "该组件容器将以新镜像蓝绿重建，JuiceFS 挂载短暂卸载数秒（数据在对象存储中，不受影响）",
+                "probe": "juicefs version 2>&1 | head -1"},
 }
 
 
@@ -208,7 +215,7 @@ def _containers(c: dict) -> list[str]:
 
 
 def component_image(key: str) -> str:
-    """组件当前生效镜像（18 项全量清单统一入口，镜像页与升级页共用）：
+    """组件当前生效镜像（19 项全量清单统一入口，镜像页与升级页共用）：
     - 引擎组件（有运行时 pin）：pin 覆盖或基础镜像
     - 容器组件（agent/self）：优先取运行中容器的实际镜像
       （升级成功后页面自动反映新 tag，无需改 compose/静态定义）
