@@ -2,8 +2,10 @@
 
 架构：每个训练任务 = 每个节点一个独立 pause 占位容器，exec 拉起训练进程。
 - 单机单卡：单容器 + 原生 llamafactory-cli（与旧版一致）
-- 单机多卡 / 多机多卡：每节点一个容器（共享 /data），torchrun 分布式；
-  rank0 为主节点（MASTER），跨节点经容器网络互达，NCCL 支持 IB/RDMA
+- 单机多卡 / 多机多卡：每节点一个容器（共享 /data），统一走原生
+  llamafactory-cli，由镜像内 launcher 读取 rendezvous 环境变量自启 torchrun
+  （rank0 为主节点 MASTER，跨节点经容器网络互达，NCCL 支持 IB/RDMA）
+- export（合并 LoRA）：恒单进程 `llamafactory-cli export`（非分布式任务）
 - 训练框架：原生 DDP / DeepSpeed ZeRO-2/3 / PyTorch FSDP（job.deepspeed 字段）
 - GPU 设备在容器创建时按每节点卡数独占绑定（资源隔离）
 - 配置/日志/tensorboard 全部落在 /data/jobs/<id>/
@@ -68,10 +70,11 @@ def job_dir(jid: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 分布式训练编排（单机多卡 / 多机多卡，torchrun + LLaMA-Factory 原生框架）
+# 分布式训练编排（单机多卡 / 多机多卡，LLaMA-Factory 原生 launcher + torchrun）
 #   - 每节点一个任务容器（共享 /data），rank0 为主节点（MASTER）
-#   - 单卡回退：node_count==1 且 nproc_per_node==1 时 = 原生 llamafactory-cli
-#     （命令/容器/env 与旧版字节级一致，保证单卡回归不变）
+#   - 统一命令 llamafactory-cli <sub> cfg；多卡/多机由镜像内 launcher 读
+#     rank_launch_env 注入的 rendezvous 环境变量自启 torchrun（见 training_cmd）
+#   - 单卡/export：单进程，命令/容器/env 与旧版字节级一致（保证回归不变）
 # ---------------------------------------------------------------------------
 MASTER_PORT_BASE = 29500
 
@@ -138,17 +141,42 @@ def training_cmd(job, cfg: str, rank: int, nnodes: int, nproc: int,
                  master_addr: str, port: int) -> list:
     """构造单 rank 容器内的启动命令。
 
-    单卡回退：nnodes==1 且 nproc==1 → 原生 llamafactory-cli（与旧版一致）。
-    多卡/多机：torchrun 分布式——torchrun 自动为每进程注入 RANK/WORLD_SIZE/
-    LOCAL_RANK，MASTER_ADDR/MASTER_PORT 经命令行注入（跨节点经容器网络互达）。
+    统一走原生 `llamafactory-cli <sub> {cfg}`：
+    - export 恒单进程（合并模型不是分布式任务，多进程并发写同一 export_dir 不合法）；
+    - 多卡/多机训练不再由平台外层自套 torchrun：镜像内 launcher（llamafactory-cli
+      train）读取 NNODES/NODE_RANK/NPROC_PER_NODE/MASTER_ADDR/MASTER_PORT 环境变量
+      （见 rank_launch_env）自行编排 torchrun（LF 原生多机契约，worker 经
+      `python launcher.py` 的 __main__ 守卫直达 run_exp，不会二次重入）。
+      平台若另套 `torchrun -m llamafactory.cli train`，worker 会重入 launcher 的
+      train 分支再启一层 torchrun，与外层争抢同一 MASTER_PORT → EADDRINUSE
+      （2026-11-18 双卡 ZeRO-2 e2e 实测踩中）。
+    - 单卡/单进程场景与旧版命令字节级一致。
     """
+    sub = "export" if job.stage == "export" else "train"
+    return ["bash", "-lc", f"cd /data && llamafactory-cli {sub} {cfg} 2>&1"]
+
+
+def rank_launch_env(job, rank: int, master_addr: str, port: int) -> dict:
+    """每 rank 的 exec 级环境变量：镜像内 launcher 消费的分布式 rendezvous 参数。
+
+    - export / 单机单卡：空（走单进程路径，与旧版 env 一致）；
+    - 多卡/多机：注入 5 个 rendezvous 变量，launcher 据此自启 torchrun
+      （--nnodes/--node_rank/--nproc_per_node/--master_addr/--master_port）；
+    - 多机×每节点单卡：get_device_count()==1 不会进入 launcher 的自动分布式
+      分支，需 FORCE_TORCHRUN=1 强制（launcher 自身对 USE_MCA 也是此写法）。
+    """
+    if job.stage == "export":
+        return {}
+    nnodes = max(1, int(job.node_count or 1))
+    nproc = max(1, int(job.nproc_per_node or 1))
     if nnodes == 1 and nproc == 1:
-        return ["bash", "-lc", f"cd /data && llamafactory-cli train {cfg} 2>&1"]
-    return ["bash", "-lc",
-            f"cd /data && torchrun "
-            f"--nproc_per_node={nproc} --nnodes={nnodes} --node_rank={rank} "
-            f"--master_addr={master_addr} --master_port={port} "
-            f"-m llamafactory.cli train {cfg} 2>&1"]
+        return {}
+    env = {"NNODES": str(nnodes), "NODE_RANK": str(rank),
+           "NPROC_PER_NODE": str(nproc), "MASTER_ADDR": master_addr,
+           "MASTER_PORT": str(port)}
+    if nproc == 1:
+        env["FORCE_TORCHRUN"] = "1"
+    return env
 
 
 def resolve_master_addr(cids: list, nnodes: int) -> str:
@@ -346,6 +374,30 @@ INTERNAL_KEYS = {
 # extra_args 透传残留导致训练容器启动即失败。
 UNSUPPORTED_LF_KEYS = {
     "bias", "early_stopping_patience", "early_stopping_threshold", "lazy_tokenize",
+}
+
+# export（合并模型）专用剥离集：LF 的 export 解析器只接受
+# Model/Data/Finetuning/Generating 四个 dataclass（无 TrainingArguments），
+# 训练键残留会触发 "Some keys are not used by the HfArgumentParser" 直接失败
+# （2026-11-18 export e2e 实测踩中）。plot_loss/neftune_noise_alpha 属
+# Finetuning/Model dataclass，export 合法，不剥离。
+EXPORT_STRIP_KEYS = {
+    # 平台基础装配（训练输出/上报相关）
+    "output_dir", "logging_dir", "overwrite_output_dir", "report_to",
+    "ddp_timeout", "deepspeed",
+    # 训练超参
+    "learning_rate", "optim", "lr_scheduler_type", "warmup_ratio", "warmup_steps",
+    "weight_decay", "max_grad_norm", "adam_beta1", "adam_beta2", "adam_epsilon",
+    "per_device_train_batch_size", "per_device_eval_batch_size",
+    "gradient_accumulation_steps", "gradient_checkpointing",
+    "logging_steps", "save_steps", "save_strategy", "save_total_limit",
+    "save_only_model", "eval_strategy", "max_steps", "num_train_epochs", "seed",
+    # 精度（bf16/fp16 属 TrainingArguments；pure_bf16 属 ModelArguments，保留）
+    "fp16", "bf16",
+    # dataloader / FSDP
+    "dataloader_num_workers", "dataloader_persistent_workers",
+    "dataloader_pin_memory", "dataloader_prefetch_factor",
+    "fsdp", "fsdp_use_orig_params", "fsdp_transformer_layer_cls_to_wrap",
 }
 
 
@@ -556,6 +608,11 @@ def build_config(job: TrainingJob, db) -> dict:
     # 剥离镜像 LF 0.9.3 不支持的键（旧 hyperparams / extra_args 兜底）
     for k in UNSUPPORTED_LF_KEYS:
         d.pop(k, None)
+    # export：剥离全部训练专用键——必须在「内部键兜底」之后（兜底会重塞
+    # output_dir/logging_dir/report_to/ddp_timeout/overwrite_output_dir）
+    if stage == "export":
+        for k in EXPORT_STRIP_KEYS:
+            d.pop(k, None)
     return {k: v for k, v in d.items() if v is not None}
 
 
@@ -577,9 +634,10 @@ def write_config(job: TrainingJob, db) -> str:
 def launch(job: TrainingJob) -> None:
     """创建任务容器并 exec 启动训练（单机单卡 / 单机多卡 / 多机多卡）。
 
-    - 单机单卡：单容器 + 原生 llamafactory-cli（与旧版字节级一致）
+    - 单机单卡/export：单容器 + 原生 llamafactory-cli 单进程（与旧版字节级一致）
     - 单机多卡/多机多卡：每节点一个任务容器（共享 /data，各自独占 nproc 张卡），
-      torchrun 分布式；rank0 为主节点，MASTER_ADDR 取其容器 IP（容器网络互达）
+      rendezvous 参数经 exec env 注入，镜像内 launcher 自启 torchrun；
+      rank0 为主节点，MASTER_ADDR 取其容器 IP（容器网络互达）
     """
     db = SessionLocal()
     try:
@@ -611,12 +669,15 @@ def launch(job: TrainingJob) -> None:
 
     master_addr = resolve_master_addr(cids, nnodes)
 
-    # 每容器 exec 拉起对应 rank 的启动命令（单卡回退为原生 llamafactory-cli）
+    # 每容器 exec 拉起对应 rank 的启动命令；多卡/多机的 rendezvous 参数
+    # （NNODES/NODE_RANK/NPROC_PER_NODE/MASTER_ADDR/MASTER_PORT）经 exec 级 env 注入，
+    # 由镜像内 launcher 自启 torchrun（export/单卡不注入，单进程路径）
     keys = rank_task_keys(job)
     logs = rank_log_paths(job)
     for r in range(nnodes):
-        tc.start_task(keys[r], cids[r], training_cmd(job, cfg, r, nnodes, nproc,
-                                                     master_addr, port), logs[r])
+        tc.start_task(keys[r], cids[r],
+                      training_cmd(job, cfg, r, nnodes, nproc, master_addr, port),
+                      logs[r], env=rank_launch_env(job, r, master_addr, port))
 
     db = SessionLocal()
     try:
@@ -659,6 +720,18 @@ def checkpoints(job: TrainingJob) -> list[dict]:
     return sorted(out, key=lambda x: x["step"], reverse=True)
 
 
+def dir_size(path: str) -> int:
+    """目录递归大小（字节）。注册产物时立即计量，不等调度器惰性回填。"""
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
 def register_artifact(job: TrainingJob) -> ModelAsset | None:
     """训练成功后注册 LoRA/合并产物到模型仓库（含血缘）"""
     db = SessionLocal()
@@ -673,9 +746,13 @@ def register_artifact(job: TrainingJob) -> ModelAsset | None:
             if not ckpts:
                 return None
             path = ckpts[0]["path"]
-            mtype = "lora"
+            # 产物类型按微调方式区分：LoRA 检查点才是 adapter；全参/freeze 检查点
+            # 是完整模型，注册为 base 类（推理侧仅 lora 型走 vLLM adapter 路径，
+            # 误标 lora 会导致部署时加载 adapter_config.json 失败）
+            lora = job.finetuning_type == "lora"
+            mtype = "lora" if lora else "base"
             parent_id = job.base_model_id
-            name_base = f"lora-{job.name}-s{ckpts[0]['step']}"
+            name_base = f"{'lora' if lora else 'full'}-{job.name}-s{ckpts[0]['step']}"
         if not os.path.exists(path):
             return None
         base_asset = db.get(ModelAsset, job.base_model_id) if job.base_model_id else None
@@ -691,6 +768,7 @@ def register_artifact(job: TrainingJob) -> ModelAsset | None:
             source=base_asset.name if base_asset else "",
             note=f"stage={job.stage}, finetune={job.finetuning_type}, auto-registered",
             created_by=job.submitted_by,
+            size_bytes=dir_size(path),
         )
         db.add(asset)
         db.commit()

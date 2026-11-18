@@ -77,7 +77,12 @@ def _discover_env() -> tuple[int, int, int]:
     # API 测试套件会在默认项目注册 1 字节假模型（500m* 前缀），按体积过滤出真实
     # 基座（真实模型 ≥ 数百 MB；假资产 size_bytes ≤ 几 KB），防止误选假资产训练
     real = [a for a in ready if (a.get("size_bytes") or 0) >= 10_000_000]
-    pick = (real or ready or rows)
+    pick = real or ready or rows
+    # 全参训练产物也注册为 base 型（完整模型，本就可再作基座）；优先选无血缘的
+    # 「根基座」，避免把中间微调产物当测试基座（血缘链断言会因此多出一级）
+    roots = [a for a in pick if not a.get("parent_name")]
+    if roots:
+        pick = roots
     if not pick:
         raise RuntimeError("默认项目缺少基座模型资产，请先完成基座初始化"
                            "（POST /api/models/base 并等待下载 ready）")

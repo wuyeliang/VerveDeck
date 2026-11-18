@@ -2,7 +2,9 @@
 """分布式训练编排单测（任务 #60：多机多卡/单机多卡）
 
 覆盖：
-- training_cmd：单卡回退（与旧版字节级一致）/ 单机多卡 / 多机多机 torchrun
+- training_cmd：统一原生 llamafactory-cli（train/export 子命令按 stage 区分）
+- rank_launch_env：单机单卡/export 空注入；多卡/多机 5 个 rendezvous 变量；
+  多机×单卡 FORCE_TORCHRUN 强制
 - container_env：NCCL 默认注入（多卡 P2P_DISABLE）+ IB/RDMA 用户覆盖优先级
 - rank 命名 / 日志路径 / master_port / job_gpu_need（含旧任务兼容）
 - build_config：FSDP 分支（fsdp / fsdp auto_wrap）、none 不写额外配置
@@ -25,40 +27,66 @@ from app import scheduler as sched
 
 
 class J:
-    """轻量 fake job：纯函数测试只需要 id/拓扑/nccl_env 字段"""
+    """轻量 fake job：纯函数测试只需要 id/拓扑/nccl_env/stage 字段"""
 
-    def __init__(self, id=1, node_count=1, nproc_per_node=1, gpu_count=1, nccl_env=None):
+    def __init__(self, id=1, node_count=1, nproc_per_node=1, gpu_count=1,
+                 nccl_env=None, stage="sft"):
         self.id = id
         self.node_count = node_count
         self.nproc_per_node = nproc_per_node
         self.gpu_count = gpu_count
         self.nccl_env = nccl_env or {}
+        self.stage = stage
 
 
 # ---------------- training_cmd：启动命令构造 ----------------
 
 def test_cmd_single_card_fallback_byte_identical():
-    """单卡回退：nnodes==1 且 nproc==1 → 原生 llamafactory-cli，与旧版命令完全一致"""
+    """单卡：原生 llamafactory-cli train，与旧版命令完全一致"""
     cmd = ts.training_cmd(J(7), "config.yaml", 0, 1, 1, "127.0.0.1", 29507)
     assert cmd == ["bash", "-lc", "cd /data && llamafactory-cli train config.yaml 2>&1"]
+    assert ts.rank_launch_env(J(7), 0, "127.0.0.1", 29507) == {}
 
 
-def test_cmd_single_node_multigpu_torchrun():
-    cmd = ts.training_cmd(J(7), "config.yaml", 0, 1, 4, "127.0.0.1", 29507)
-    assert cmd[0] == "bash" and cmd[1] == "-lc"
-    c = cmd[2]
-    assert "torchrun --nproc_per_node=4 --nnodes=1 --node_rank=0" in c
-    assert "--master_addr=127.0.0.1 --master_port=29507" in c
-    assert "-m llamafactory.cli train config.yaml 2>&1" in c
-    assert "llamafactory-cli" not in c
+def test_cmd_multigpu_native_cli_env_carries_rendezvous():
+    """多卡不再外层套 torchrun：命令仍是原生 cli，rendezvous 参数走 env"""
+    j = J(7, nproc_per_node=4, gpu_count=4)
+    cmd = ts.training_cmd(j, "config.yaml", 0, 1, 4, "127.0.0.1", 29507)
+    assert cmd == ["bash", "-lc", "cd /data && llamafactory-cli train config.yaml 2>&1"]
+    assert "torchrun" not in cmd[2]
+    env = ts.rank_launch_env(j, 0, "127.0.0.1", 29507)
+    assert env == {"NNODES": "1", "NODE_RANK": "0", "NPROC_PER_NODE": "4",
+                   "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": "29507"}
+    assert "FORCE_TORCHRUN" not in env   # 多卡自动分支无需强制
 
 
-def test_cmd_multinode_node_rank_and_master_addr():
-    c0 = ts.training_cmd(J(8), "config.yaml", 0, 2, 2, "10.1.2.3", 29508)[2]
-    c1 = ts.training_cmd(J(8), "config.yaml", 1, 2, 2, "10.1.2.3", 29508)[2]
-    assert "--nnodes=2 --node_rank=0 --master_addr=10.1.2.3" in c0
-    assert "--nnodes=2 --node_rank=1 --master_addr=10.1.2.3" in c1
-    assert "--nproc_per_node=2" in c0 and "--nproc_per_node=2" in c1
+def test_cmd_multinode_env_node_rank_and_master_addr():
+    j = J(8, node_count=2, nproc_per_node=2, gpu_count=4)
+    e0 = ts.rank_launch_env(j, 0, "10.1.2.3", 29508)
+    e1 = ts.rank_launch_env(j, 1, "10.1.2.3", 29508)
+    assert e0["NNODES"] == "2" and e1["NNODES"] == "2"
+    assert e0["NODE_RANK"] == "0" and e1["NODE_RANK"] == "1"
+    assert e0["MASTER_ADDR"] == "10.1.2.3" and e1["MASTER_ADDR"] == "10.1.2.3"
+    assert e0["NPROC_PER_NODE"] == "2" and e1["NPROC_PER_NODE"] == "2"
+    assert e0["MASTER_PORT"] == "29508"
+
+
+def test_env_multinode_single_gpu_per_node_forces_torchrun():
+    """多机×每节点单卡：device_count==1 不进 launcher 自动分支，需 FORCE_TORCHRUN"""
+    env = ts.rank_launch_env(J(9, node_count=2, nproc_per_node=1), 1, "10.1.2.3", 29509)
+    assert env["FORCE_TORCHRUN"] == "1"
+    assert env["NNODES"] == "2" and env["NPROC_PER_NODE"] == "1"
+
+
+def test_cmd_export_always_native_export_subcommand():
+    """export：恒单进程 llamafactory-cli export（train 分支会报 Unknown task: export）"""
+    cmd = ts.training_cmd(J(7, stage="export"), "config.yaml", 0, 1, 1,
+                          "127.0.0.1", 29507)
+    assert cmd == ["bash", "-lc", "cd /data && llamafactory-cli export config.yaml 2>&1"]
+    assert ts.rank_launch_env(J(7, stage="export"), 0, "127.0.0.1", 29507) == {}
+    # 多卡 export 也不注入分布式 env（合并是单进程任务）
+    assert ts.rank_launch_env(J(7, stage="export", nproc_per_node=4,
+                                gpu_count=4), 0, "127.0.0.1", 29507) == {}
 
 
 # ---------------- container_env：NCCL / IB-RDMA ----------------
@@ -214,6 +242,38 @@ def test_build_config_zero2_writes_ds_json(sdb):
     assert json.load(open(d["deepspeed"]))["zero_optimization"]["stage"] == 2
 
 
+def test_build_config_export_strips_training_keys(sdb):
+    """export 配置必须剥离全部 TrainingArguments 键（export 解析器不接受，
+    残留即 'Some keys are not used' 启动失败）"""
+    adapter = M.ModelAsset(id=2, project_id=1, name="lora-a", type="lora",
+                           path="/data/jobs/1/ckpt/checkpoint-10", source="train:1",
+                           status="ready", created_by=1)
+    sdb.add(adapter)
+    sdb.commit()
+    job = M.TrainingJob(id=993, project_id=1, name="exp", stage="export",
+                        finetuning_type="lora", base_model_id=1,
+                        dataset_version_ids=[], adapter_asset_id=2,
+                        hyperparams={"export_size": 1, "export_device": "cpu"},
+                        deepspeed="none", gpu_count=1, priority=5,
+                        status="queued", submitted_by=1)
+    sdb.add(job)
+    sdb.commit()
+    d = ts.build_config(job, sdb)
+    assert d["stage"] == "export"
+    assert d["adapter_name_or_path"] == adapter.path
+    assert d["export_dir"].endswith("/merged")
+    assert d["export_size"] == 1 and d["export_device"] == "cpu"
+    # 训练专用键（含内部兜底块会重塞的 output_dir/report_to/ddp_timeout）全部剥离
+    for k in ("learning_rate", "optim", "bf16", "fp16", "num_train_epochs",
+              "per_device_train_batch_size", "output_dir", "logging_dir",
+              "report_to", "ddp_timeout", "gradient_checkpointing", "deepspeed",
+              "save_steps", "logging_steps", "seed", "weight_decay", "do_train"):
+        assert k not in d, k
+    # export 合法键保留
+    assert d["finetuning_type"] == "lora"
+    assert d["trust_remote_code"] is True
+
+
 # ---------------- launch：编排（docker 全 mock） ----------------
 
 @pytest.fixture()
@@ -238,9 +298,10 @@ def launch_env(sdb, monkeypatch):
 
     monkeypatch.setattr(ts.tc, "create_container", _create)
     monkeypatch.setattr(ts.tc, "start_task",
-                        lambda key, cid, cmd, log:
+                        lambda key, cid, cmd, log, env=None:
                         rec["started"].append({"key": key, "cid": cid,
-                                               "cmd": cmd, "log": log}))
+                                               "cmd": cmd, "log": log,
+                                               "env": env or {}}))
     return rec
 
 
@@ -257,6 +318,7 @@ def test_launch_single_card_regression(launch_env):
     assert rec["started"][0]["cmd"] == [
         "bash", "-lc",
         f"cd /data && llamafactory-cli train {ts.job_dir(901)}/config.yaml 2>&1"]
+    assert rec["started"][0]["env"] == {}      # 单卡不注入任何 rendezvous 变量
     assert rec["started"][0]["log"].endswith("run.log")
     j = s.get(M.TrainingJob, 901)
     assert j.status == "running"
@@ -275,10 +337,14 @@ def test_launch_single_node_multigpu(launch_env):
     assert rec["created"][0]["gpus"] == 4
     assert rec["created"][0]["env"]["NCCL_P2P_DISABLE"] == "1"
     assert os.path.exists(f"{ts.job_dir(902)}/ds_zero2.json")
-    cmd = rec["started"][0]["cmd"][2]
-    assert "torchrun --nproc_per_node=4 --nnodes=1 --node_rank=0" in cmd
-    assert f"--master_port={ts.master_port(job)}" in cmd
-    assert "-m llamafactory.cli train" in cmd
+    # 命令仍是原生 cli（torchrun 由镜像内 launcher 自启），rendezvous 走 exec env
+    assert "llamafactory-cli train" in rec["started"][0]["cmd"][2]
+    assert "torchrun" not in rec["started"][0]["cmd"][2]
+    env = rec["started"][0]["env"]
+    assert env["NPROC_PER_NODE"] == "4" and env["NNODES"] == "1"
+    assert env["MASTER_ADDR"] == "127.0.0.1"
+    assert env["MASTER_PORT"] == str(ts.master_port(job))
+    assert "FORCE_TORCHRUN" not in env
 
 
 def test_launch_multinode(launch_env, monkeypatch):
@@ -299,12 +365,13 @@ def test_launch_multinode(launch_env, monkeypatch):
     assert env["NCCL_SOCKET_IFNAME"] == "eth0"
     assert rec["created"][0]["labels"]["fintune.rank"] == "0"
     assert rec["created"][1]["labels"]["fintune.rank"] == "1"
-    # 每 rank 的 torchrun 命令：node_rank 区分、MASTER_ADDR=主容器 IP
+    # 每 rank：node_rank 区分、MASTER_ADDR=主容器 IP（经 exec env 注入）
     assert [st["key"] for st in rec["started"]] == ["train-903", "train-903-r1"]
-    c0, c1 = rec["started"][0]["cmd"][2], rec["started"][1]["cmd"][2]
-    assert "--nnodes=2 --node_rank=0 --master_addr=10.88.0.11" in c0
-    assert "--nnodes=2 --node_rank=1 --master_addr=10.88.0.11" in c1
-    assert "--nproc_per_node=2" in c0
+    e0, e1 = rec["started"][0]["env"], rec["started"][1]["env"]
+    assert e0["NODE_RANK"] == "0" and e1["NODE_RANK"] == "1"
+    assert e0["MASTER_ADDR"] == "10.88.0.11" and e1["MASTER_ADDR"] == "10.88.0.11"
+    assert e0["NNODES"] == "2" and e0["NPROC_PER_NODE"] == "2"
+    assert "llamafactory-cli train" in rec["started"][0]["cmd"][2]
     # 每 rank 独立日志（rank0=run.log 主日志）
     assert rec["started"][0]["log"].endswith("run.log")
     assert rec["started"][1]["log"].endswith("run_r1.log")

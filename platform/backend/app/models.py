@@ -81,7 +81,7 @@ class DatasetVersion(Base):
     dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
     version: Mapped[int] = mapped_column(Integer)
     dvc_rev: Mapped[str] = mapped_column(String(64), default="")
-    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)  # BIGINT：>2GB 数据集不溢出
     sample_count: Mapped[int] = mapped_column(Integer, default=0)
     fmt: Mapped[str] = mapped_column(String(32), default="alpaca")  # alpaca/sharegpt/dpo
     status: Mapped[str] = mapped_column(String(32), default="draft")  # draft/committed
@@ -121,7 +121,7 @@ class ModelAsset(Base):
     path: Mapped[str] = mapped_column(String(512), default="")
     source: Mapped[str] = mapped_column(String(512), default="")  # hf:org/repo 或 本地路径
     hf_id: Mapped[str] = mapped_column(String(255), default="")
-    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)  # BIGINT：>2GB 模型产物不溢出
     parent_asset_id: Mapped[int | None] = mapped_column(ForeignKey("model_assets.id"), nullable=True)  # 血缘: 基于哪个模型
     job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 血缘: 来自哪个训练任务
     dataset_version_ids: Mapped[list] = mapped_column(JSON, default=list)  # 血缘: 用了哪些数据

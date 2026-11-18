@@ -103,6 +103,19 @@ def _migrate_columns():
                     if name not in have:
                         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {decl}"))
                         log.info("migration: %s.%s column added", table, name)
+            # 存量列类型升级：size_bytes 32 位整型在 >2GB 模型/数据集产物上溢出
+            # （2026-11-18 全参检查点 2.9GB 注册即 integer out of range 实测）。
+            # 仅 postgres 需要（sqlite 的 INTEGER 本身任意精度）
+            if engine.dialect.name != "sqlite":
+                for table, col in (("model_assets", "size_bytes"),
+                                   ("dataset_versions", "size_bytes")):
+                    tnames = {c["name"]: str(c["type"]).upper()
+                              for c in insp.get_columns(table)}
+                    if tnames.get(col, "").startswith("INT") and \
+                            not tnames.get(col, "").startswith("BIGINT"):
+                        conn.execute(text(
+                            f"ALTER TABLE {table} ALTER COLUMN {col} TYPE BIGINT"))
+                        log.info("migration: %s.%s widened to BIGINT", table, col)
     except Exception as e:
         log.warning("migration check failed: %s", e)
 

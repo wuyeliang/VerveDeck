@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-VerveDeck 端到端测试（10 个用例）
+VerveDeck 端到端测试（13 个用例）
 
 覆盖七大模块：
   TC01 认证与权限基础              安全治理
@@ -13,6 +13,9 @@ VerveDeck 端到端测试（10 个用例）
   TC08 自动化评测(规则匹配)         评测
   TC09 LoRA 热加载                 推理
   TC10 内容护栏 + 审计日志          安全治理
+  TC11 SFT LoRA + 2卡 ZeRO-2 + 高级超参（extra_args 透传）  微调引擎
+  TC12 SFT 全参微调 + 高级超参      微调引擎
+  TC13 export 合并 LoRA + export 高级参数  微调引擎/模型资产
 
 前置条件：
   - 常驻栈（docker compose）已启动，backend 正常
@@ -25,6 +28,7 @@ VerveDeck 端到端测试（10 个用例）
     "cd /app/tests && python -m pytest test_e2e.py -v --tb=short -p no:cacheprovider"
 """
 import json
+import os
 import time
 import uuid
 
@@ -441,3 +445,205 @@ def test_tc10_guard_audit():
                      headers=H(tok), timeout=15)
     dev_items = r.json()["items"]
     assert any(i["status_code"] == 403 for i in dev_items), "审计日志缺少开发者的 403 拒绝记录"
+
+
+# ---------------- TC11-13 训练场景 × 高级参数（真实 GPU 全链路） ----------------
+# 与 TC07 的差异：TC07 只覆盖基础超参（lr/epochs/lora_rank 等）；本节覆盖
+# ① extra_args JSON 透传（最高优先级注入通道）② deepspeed ZeRO-2 多卡 ③
+# 精度/优化器/调度器/lora 组高级超参 ④ finetuning_type=full 分支 ⑤ export 合并
+# 高级参数。关键断言逻辑：LLaMA-Factory 的 HfArgumentParser 遇到不支持/拼错的
+# 键会直接使任务失败（"Some specified arguments were not used"），因此
+# "任务 succeeded" 本身即证明所有高级参数被训练框架真实接受。
+
+ADV_HP = {
+    # 基础控制（小样本快速跑完）
+    "cutoff_len": 256,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 1,
+    "num_train_epochs": 1,
+    "logging_steps": 2,
+    "save_steps": 10,
+    # 高级超参（train / lora / precision 组）
+    "learning_rate": 5e-5,
+    "lora_rank": 8,
+    "lora_alpha": 16,
+    "lora_dropout": 0.05,
+    "compute_type": "pure_bf16",   # 精度组：派生 bf16+pure_bf16
+    "optim": "adamw_torch",        # 训练组：优化器
+    "lr_scheduler_type": "cosine", # 训练组：调度器
+    "warmup_ratio": 0.05,          # 训练组
+    "weight_decay": 0.01,          # 训练组
+    # extra_args：用户 JSON 透传（最高优先级）。neftune 为 LF 真实高级参数，
+    # 走透传通道注入；任务成功即证明其被 LLaMA-Factory 接受
+    "extra_args": json.dumps({"neftune_noise_alpha": 5.0}),
+}
+
+
+def _ensure_dataset_version() -> int:
+    """复用 TC05 的数据集版本；独立运行本组用例（-k）时现造最小 alpaca 数据集。"""
+    if STATE.get("ver"):
+        return STATE["ver"]["id"]
+    tok = STATE["admin"]
+    r = requests.post(f"{BASE}/api/datasets",
+                      json={"project_id": DEFAULT_PROJECT,
+                            "name": f"e2e-adv-ds-{SUFFIX}"},
+                      headers=H(tok), timeout=15)
+    r.raise_for_status()
+    dsid = r.json()["id"]
+    files = {"file": ("samples.json",
+                      json.dumps(SAMPLES, ensure_ascii=False).encode("utf-8"),
+                      "application/json")}
+    r = requests.post(f"{BASE}/api/datasets/{dsid}/versions/upload",
+                      params={"fmt": "alpaca"}, files=files,
+                      headers=H(tok), timeout=30)
+    r.raise_for_status()
+    STATE["ver"] = r.json()
+    r = requests.post(f"{BASE}/api/datasets/{dsid}/versions/{STATE['ver']['id']}/commit",
+                      headers=H(tok), timeout=60)
+    r.raise_for_status()
+    return STATE["ver"]["id"]
+
+
+def _wait_job(jid: int, timeout: float = 1800) -> dict:
+    def check():
+        j = requests.get(f"{BASE}/api/training/jobs/{jid}",
+                         headers=H(STATE["admin"]), timeout=15).json()
+        return j if j["status"] in ("succeeded", "failed") else None
+    return poll(check, timeout=timeout, interval=10, desc=f"训练任务 {jid} 完成")
+
+
+def _assert_job_ok(jid: int, j: dict):
+    if j["status"] != "succeeded":
+        lg = requests.get(f"{BASE}/api/training/jobs/{jid}/logs",
+                          headers=H(STATE["admin"]), timeout=15).json()
+        pytest.fail(f"训练失败: {j.get('error')}\n--- run.log 尾部 ---\n"
+                    f"{str(lg.get('logs', lg))[-2500:]}")
+
+
+def _wait_artifact(jid: int, timeout: float = 180):
+    """轮询任务产物归档到模型仓库（归档可能滞后于 succeeded）"""
+    def check():
+        r = requests.get(f"{BASE}/api/models",
+                         params={"project_id": DEFAULT_PROJECT},
+                         headers=H(STATE["admin"]), timeout=15)
+        art = [a for a in r.json() if a.get("job_id") == jid]
+        return art[0] if art else None
+    return poll(check, timeout=timeout, interval=5, desc=f"任务 {jid} 产物归档")
+
+
+def test_tc11_sft_lora_2gpu_zer2_advanced():
+    """SFT+LoRA + 2 卡 DeepSpeed ZeRO-2 + 高级超参（精度/优化器/调度器/lora 组
+    /extra_args 透传 neftune）。先停常驻部署释放双卡（TC13 末尾恢复）。"""
+    tok = STATE["admin"]
+    if _deploy().get("status") == "running":
+        requests.post(f"{BASE}/api/inference/deployments/{DEPLOY_ID}/stop",
+                      headers=H(tok), timeout=30).raise_for_status()
+        poll(lambda: _deploy().get("status") == "stopped" or None,
+             timeout=120, desc="等待部署停止")
+
+    r = requests.post(f"{BASE}/api/training/jobs", headers=H(tok), timeout=30, json={
+        "project_id": DEFAULT_PROJECT,
+        "name": f"e2e-adv-lora-{SUFFIX}",
+        "stage": "sft",
+        "finetuning_type": "lora",
+        "base_model_id": BASE_MODEL_ASSET_ID,
+        "dataset_version_ids": [_ensure_dataset_version()],
+        "hyperparams": dict(ADV_HP),
+        "deepspeed": "zero2",
+        "gpu_count": 2,
+        "priority": 5,
+    })
+    assert r.status_code == 200, r.text
+    jid = r.json()["id"]
+
+    _assert_job_ok(jid, _wait_job(jid))
+
+    r = requests.get(f"{BASE}/api/training/jobs/{jid}/metrics",
+                     headers=H(tok), timeout=15)
+    assert r.status_code == 200, r.text
+
+    art = _wait_artifact(jid)
+    assert art, "训练产物未注册到模型仓库"
+    STATE["adv_lora_asset"] = art
+
+
+def test_tc12_sft_full_advanced():
+    """SFT + 全参微调（finetuning_type=full 分支，TC07 未覆盖）+ 高级超参。
+    0.5B 全参单卡即可；验证无 lora 组的配置路径 + 精度/优化器/调度器高级参数。"""
+    tok = STATE["admin"]
+    hp = {k: v for k, v in ADV_HP.items()
+          if k not in ("lora_rank", "lora_alpha", "lora_dropout")}
+    r = requests.post(f"{BASE}/api/training/jobs", headers=H(tok), timeout=30, json={
+        "project_id": DEFAULT_PROJECT,
+        "name": f"e2e-adv-full-{SUFFIX}",
+        "stage": "sft",
+        "finetuning_type": "full",
+        "base_model_id": BASE_MODEL_ASSET_ID,
+        "dataset_version_ids": [_ensure_dataset_version()],
+        "hyperparams": hp,
+        "deepspeed": "none",
+        "gpu_count": 1,
+        "priority": 5,
+    })
+    assert r.status_code == 200, r.text
+    jid = r.json()["id"]
+
+    _assert_job_ok(jid, _wait_job(jid, timeout=2400))
+
+    r = requests.get(f"{BASE}/api/training/jobs/{jid}/metrics",
+                     headers=H(tok), timeout=15)
+    assert r.status_code == 200, r.text
+
+    art = _wait_artifact(jid, timeout=300)
+    assert art, "全参训练产物未注册到模型仓库"
+    STATE["adv_full_asset"] = art
+
+
+def test_tc13_export_merge_advanced():
+    """export 阶段：合并 LoRA → 完整模型 + export 组高级参数
+    （export_size/export_device=cpu）。复用 TC11 的 LoRA 产物（独立运行时
+    回退 TC07 产物或仓库中现成 LoRA）。完成后恢复常驻部署 running。"""
+    tok = STATE["admin"]
+    adapter = STATE.get("adv_lora_asset") or STATE.get("lora_asset")
+    if not adapter:
+        r = requests.get(f"{BASE}/api/models",
+                         params={"project_id": DEFAULT_PROJECT, "mtype": "lora"},
+                         headers=H(tok), timeout=15)
+        # 取真正含 adapter_config.json 的 LoRA（历史全参检查点曾被误标 lora，
+        # 误取会让 export 加载 adapter 失败）
+        adapter = next((a for a in r.json()
+                        if os.path.exists(f"{a.get('path', '')}/adapter_config.json")),
+                       None)
+    if not adapter:
+        pytest.skip("无可用 LoRA 产物，跳过 export 场景")
+    try:
+        r = requests.post(f"{BASE}/api/training/jobs", headers=H(tok),
+                          timeout=30, json={
+                              "project_id": DEFAULT_PROJECT,
+                              "name": f"e2e-adv-export-{SUFFIX}",
+                              "stage": "export",
+                              "finetuning_type": "lora",
+                              "base_model_id": BASE_MODEL_ASSET_ID,
+                              "adapter_asset_id": adapter["id"],
+                              "hyperparams": {"export_size": 1,
+                                              "export_device": "cpu"},
+                              "gpu_count": 1,
+                              "priority": 5,
+                          })
+        assert r.status_code == 200, r.text
+        jid = r.json()["id"]
+
+        _assert_job_ok(jid, _wait_job(jid, timeout=1200))
+
+        # 合并模型：已注册、体积与基座同量级（0.5B ≈ 1GB，绝非空壳）
+        art = _wait_artifact(jid, timeout=300)
+        assert art, "合并模型产物未注册到模型仓库"
+        assert (art.get("size_bytes") or 0) > 50_000_000, \
+            f"合并模型体积异常（应≈1GB）: {art.get('size_bytes')}"
+    finally:
+        # 恢复常驻部署（TC11 停掉了），保持环境状态与测试前一致
+        d = _deploy()
+        if d.get("status") != "running":
+            requests.post(f"{BASE}/api/inference/deployments/{DEPLOY_ID}/start",
+                          headers=H(tok), timeout=30)
+            _wait_deploy_ready(timeout=900)

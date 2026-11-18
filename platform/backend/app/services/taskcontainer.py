@@ -267,6 +267,12 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
             docker.types.DeviceRequest(device_ids=[str(i) for i in gpu_ids],
                                        capabilities=[["gpu"]])
         ]
+        # NCCL SHM 传输：Docker 默认 /dev/shm 仅 64MB，多卡/TP 训练与推理在
+        # NCCL 初始化时即报 "Error while creating shared memory segment
+        # /dev/shm/nccl-*"（2026-11-18 双卡 ZeRO-2 e2e 实测）。显式 16GB——
+        # tmpfs 预留不等于实际占用（按真实分配计费），单卡容器同样受益
+        # （多机单卡的 NCCL 本地 staging 也走 SHM）。
+        kwargs["shm_size"] = 16 * 1024 ** 3
     rdma = _rdma_devices()
     if rdma:
         # RDMA/IB：注入 HCA 字符设备；ipc=host 供 NCCL 共享内存；
