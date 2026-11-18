@@ -51,9 +51,20 @@ def _source_name(dep_id: int) -> str:
     return f"{hc.NAME_PREFIX}dp{dep_id}"
 
 
+def _dns_domain(host: str) -> str:
+    """网关服务源域名 = <docker 服务名>.local。
+
+    Console 的域名格式校验不接受裸主机名（backend）与含下划线的标签
+    （fintune_net），而 docker 服务名/网络名恰属这两类；`<name>.local`
+    作为 compose 网络别名（backend 服务 aliases）注册后，内置 DNS 可
+    解析到服务容器，Envoy 端 DNS 解析同路径。
+    """
+    return f"{host}.local"
+
+
 def _dns_source(name: str, host: str, port: int) -> dict:
-    """DNS 类型服务源：docker 服务名即主机名，Envoy 内 DNS 解析（容器重建换 IP 无感）。"""
-    return {"name": name, "type": "dns", "domain": host,
+    """DNS 类型服务源：域名解析走 docker 内置 DNS（容器重建换 IP 无感）。"""
+    return {"name": name, "type": "dns", "domain": _dns_domain(host),
             "port": port, "protocol": "http"}
 
 
@@ -82,11 +93,10 @@ def _normalize_weights(items: list) -> list:
 
 def _find_service(services: list, host: str, port: int) -> dict | None:
     """服务源注册后的服务名发现（命名规则随版本可能变化，动态匹配最稳）。"""
-    ep = f"{host}:{port}"
-    for s in services:
-        eps = s.get("endpoints") or []
-        if ep in eps:
-            return s
+    for ep in (f"{_dns_domain(host)}:{port}", f"{host}:{port}"):
+        for s in services:
+            if ep in (s.get("endpoints") or []):
+                return s
     for s in services:
         if s.get("name") == host and (s.get("port") in (None, port)):
             return s

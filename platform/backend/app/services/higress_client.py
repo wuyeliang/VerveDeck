@@ -96,21 +96,23 @@ class HigressClient:
             with httpx.Client(timeout=8.0) as c:
                 r = c.post(self.base_url + "/session/login", json={
                     "username": self.username, "password": self.password})
-            try:
-                payload = r.json()
-            except Exception:
-                raise HigressError(r.status_code, r.text[:120])
-            if r.status_code == 200 and payload.get("success", False):
+            # 成功 = 200/201 且下发会话 cookie（成功响应体为裸用户对象，
+            # 无 success 包裹；201 为实测状态码）
+            if r.status_code in (200, 201):
                 cookie = r.cookies.get(_SESSION_COOKIE)
                 if cookie:
                     return cookie
-                raise HigressError(0, "login ok but no session cookie")
+            try:
+                payload = r.json()
+            except Exception:
+                payload = {}
             msg = str(payload.get("message") or "")
             if "No valid admin config" in msg:
                 raise _NotInitialized()
             if "Too many failed login attempts" in msg:
                 raise HigressError(429, "console login rate-limited")
-            raise HigressError(401, "console auth failed: " + msg[:80])
+            raise HigressError(
+                401, "console auth failed: " + (msg[:80] or r.text[:80]))
 
         try:
             cookie = _do_login()

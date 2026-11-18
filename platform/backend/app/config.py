@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     higress_console_url: str = "http://higress:8001"
     higress_console_username: str = "admin"
     higress_console_password: str = "admin"
-    # 路由上游解析目标（docker 服务名，Envoy 内 DNS 解析）：backend 主端口 + 端口池
+    # 路由上游解析目标（docker 服务名，Envoy 内 DNS 解析）：backend 主端口 + 端口池。
+    # 网关服务源域名取 <服务名>.local（Console 域名校验限制），compose 须为该服务
+    # 注册同名网络别名（backend: aliases [backend.local]）
     higress_upstream_host: str = "backend"
     # 内部目标代理端口池（每部署一个端口，承载认证+护栏+PD 转发的完整代理）
     gateway_port_min: int = 3100

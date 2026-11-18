@@ -1,4 +1,4 @@
-# VerveDeck 大模型微调训练平台 - 容器编排
+# VerveDeck 大模型微调训练推理平台 - 容器编排
 # 数据根目录: /data (models/datasets/jobs/gpu/argilla/postgres/redis/uploads)
 name: fintune
 
@@ -183,7 +183,12 @@ services:
         condition: service_started
       rustfs:
         condition: service_healthy
-    networks: [fintune]
+    networks:
+      fintune:
+        aliases:
+          # 网关 DNS 服务源域名：Console 域名校验拒绝裸主机名与下划线标签，
+          # backend 经此别名（<服务名>.local）注册为服务源，内置 DNS 解析到本容器
+          - backend.local
 
   # 推理网关（Higress All-in-One）：模型路由的加权/容灾/重试数据面，控制面由 backend
   # 经 Console API（Basic Auth）同步。MODE=full = 网关(8080) + Console(8001) + 控制面同容器。
