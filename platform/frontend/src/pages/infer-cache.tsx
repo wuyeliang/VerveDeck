@@ -243,9 +243,9 @@ export default function InferCache() {
               },
             },
             {
-              title: t('common.actions'), key: 'ops', width: 52, align: 'center',
+              title: t('common.actions'), key: 'ops', width: 100, align: 'center',
               render: (_: any, r: any) => (
-                <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openKvEdit(r)}>
+                <Button size="small" icon={<EditOutlined />} onClick={() => openKvEdit(r)}>
                   {t('cache.editKv')}
                 </Button>
               ),
