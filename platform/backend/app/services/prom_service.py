@@ -293,7 +293,14 @@ def metrics_catalog() -> dict:
     （数百指标名，数据量小）；对齐行业采集面（GPU 关键字段 + 宿主 + 推理引擎）。
     """
     try:
-        names = _prom("/api/v1/label/__name__/values", {})
+        # 注意：label values 端点返回 {"data": [裸数组]}，与 /api/v1/query 的
+        # {"data": {"result": [...]}} 不同形，不能走 _prom 的 data.result 解析
+        r = requests.get(settings.prometheus_url + "/api/v1/label/__name__/values", timeout=10)
+        r.raise_for_status()
+        body = r.json()
+        if body.get("status") != "success":
+            raise RuntimeError(f"prometheus label values: {body.get('error', 'unknown error')}")
+        names = body["data"]
     except Exception:
         return {"ok": False, "error": "prometheus unreachable"}
     names = [n for n in names if n]
