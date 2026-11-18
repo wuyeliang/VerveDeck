@@ -124,7 +124,7 @@ class NodeReq(BaseModel):
 class TokenReq(BaseModel):
     node_name: str = ""
     gpu_count: int = 0     # 预期卡数（参考信息；实际以节点端采集为准）
-    force: bool = False    # True=撤销该节点全部旧令牌并重新签发（页面「重新签发」）
+    force: bool = False    # True=撤销该节点全部旧令牌并重新签发（页面「重新签发」；已注册节点也放行）
 
 
 class HeartbeatReq(BaseModel):
@@ -162,14 +162,18 @@ def _valid_token(db, token: str, node_name: str | None = None) -> NodeToken:
 @router.post("/nodes/token")
 def issue_node_token(req: TokenReq, db=Depends(get_db), user=Depends(get_current_user)):
     """签发节点注册令牌（参照 GPUStack worker token）：绑定节点名、24h 有效、可重复使用。
-    返回 token + 过期时间；接入命令由前端拼 window.location.origin 组装。"""
+    返回 token + 过期时间；接入命令由前端拼 window.location.origin 组装。
+    已注册节点普通签发被拒（防令牌堆积）；force=True 时放行——撤销旧令牌发新令牌，
+    供节点端重跑 add-node.sh 换令牌。"""
     name = (req.node_name or "").strip()
     if not name:
         raise HTTPException(400, "节点名不能为空")
     if name == settings.node_name:
         raise HTTPException(400, "本节点由 gpu-agent 自动纳管，无需签发令牌")
-    if db.query(GpuNode).filter_by(name=name).first():
-        raise HTTPException(400, f"节点 {name} 已存在（无需重复注册）")
+    if not req.force and db.query(GpuNode).filter_by(name=name).first():
+        # 已注册节点：普通签发拒绝（防令牌堆积）；force=True 是"撤销并重签"，
+        # 专门服务节点端重跑 add-node.sh 的场景，必须放行
+        raise HTTPException(400, f"节点 {name} 已存在（如需重签请使用 force 重签）")
     now = datetime.now()
     if req.force:
         # 重新签发：撤销全部旧令牌（旧接入命令立即失效），发新令牌
