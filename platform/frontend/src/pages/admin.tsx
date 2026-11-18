@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   Tabs, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Card,
   Switch, Row, Col, Tooltip,
@@ -247,19 +247,23 @@ function TimeConfigCard() {
   const [saving, setSaving] = useState(false)
   const [probing, setProbing] = useState(false)
   const [probeRes, setProbeRes] = useState<any[]>([])
-  const [drift, setDrift] = useState(0)      // 服务器时钟 - 本地时钟（ms），用于本地外推宿主时间
   const [clock, setClock] = useState(() => Date.now())
   const [restartHint, setRestartHint] = useState('')
+  // 时钟差值放 ref 不放 state（2026-11-18 修复 NTP 输入框无法输入/整卡狂刷）：
+  // 旧实现 setDrift 在 load() 里、drift 又在下方 useEffect 依赖数组里，而
+  // drift=整秒epoch*1000-毫秒now 每次计算必得不同值 → effect 反复重跑 load() →
+  // 每网络往返一次 setFieldsValue 覆盖 NTP 输入 + setState 整卡重渲染，形成死循环
+  const driftRef = useRef(0)                 // 服务器时钟 - 本地时钟（ms），用于本地外推宿主时间
   const load = () => api.get('/api/admin/time-config').then((r) => {
     setState(r.data)
-    setDrift((r.data.epoch || 0) * 1000 - Date.now())
+    driftRef.current = (r.data.epoch || 0) * 1000 - Date.now()
     form.setFieldsValue({ timezone: r.data.timezone, ntp_servers: (r.data.ntp_servers || []).join(' ') })
   }).catch(() => {})
   useEffect(() => {
     load()
-    const x = setInterval(() => setClock(Date.now() + drift), 1000)
+    const x = setInterval(() => setClock(Date.now() + driftRef.current), 1000)
     return () => clearInterval(x)
-  }, [drift])
+  }, [])
   const probe = async () => {
     const v = form.getFieldValue('ntp_servers') || ''
     if (!v.trim()) { message.warning(t('admin.tcNtpPh')); return }
