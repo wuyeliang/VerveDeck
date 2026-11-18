@@ -25,6 +25,7 @@ import AdminPanel from './pages/admin'
 import AlertRulesPage from './pages/alert-rules'
 import AlertEventsPage from './pages/alert-events'
 import MetricsCatalogPage from './pages/metrics-catalog'
+import ClusterUpgradePage from './pages/cluster-upgrade'
 import OrgPage from './pages/org'
 import StoragePage from './pages/storage'
 import ImagesPage from './pages/images'
@@ -119,11 +120,12 @@ function Shell({ children }: { children: React.ReactNode }) {
         { key: '/cluster/gpus', label: t('cluster.tabGpus') },
         { key: '/cluster/monitor', label: t('cluster.tabMonitor') },
         { key: '/cluster/metrics', label: t('cluster.tabMetrics') },
-        // 告警规则 / 告警事件（两独立页）+ 日志中心统一归入集群运维（仅超管可见，API 侧仍有角色校验）
+        // 告警规则 / 告警事件（两独立页）+ 日志中心 + 集群升级统一归入集群运维（仅超管可见，API 侧仍有角色校验）
         ...(isSuper ? [
           { key: '/cluster/alert-rules', label: t('admin.tabAlertRules') },
           { key: '/cluster/alert-events', label: t('admin.tabAlertEvents') },
           { key: '/cluster/logs', label: t('nav.logs') },
+          { key: '/cluster/upgrade', label: t('admin.tabUpgrade') },
         ] : []),
       ],
     },
@@ -230,6 +232,7 @@ function AppRoutes() {
       <Route path="/cluster/alert-events" element={hasToken ? <Shell><AlertEventsPage /></Shell> : <Navigate to="/login" />} />
       <Route path="/cluster/alerts" element={<Navigate to="/cluster/alert-rules" replace />} />
       <Route path="/cluster/logs" element={hasToken ? <Shell><LogsPage /></Shell> : <Navigate to="/login" />} />
+      <Route path="/cluster/upgrade" element={hasToken ? <Shell><ClusterUpgradePage /></Shell> : <Navigate to="/login" />} />
       <Route path="/org" element={hasToken ? <Shell><OrgPage /></Shell> : <Navigate to="/login" />} />
       <Route path="/storage" element={hasToken ? <Shell><StoragePage /></Shell> : <Navigate to="/login" />} />
       <Route path="/images" element={hasToken ? <Shell><ImagesPage /></Shell> : <Navigate to="/login" />} />
