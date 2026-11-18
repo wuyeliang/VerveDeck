@@ -58,7 +58,6 @@ function HostMetrics({ host, t }: { host: any; t: any }) {
 }
 
 export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' | 'monitor' }) {
-  const nav = useNavigate()
   const { t } = useTranslation()
   const [nodes, setNodes] = useState<any[]>([])
   const [queue, setQueue] = useState<any>(null)
@@ -75,14 +74,13 @@ export default function ClusterOps({ tab = 'nodes' }: { tab?: 'nodes' | 'gpus' |
 
   const gpus = nodes.flatMap((n) => (n.gpus || []).map((g: any) => ({ ...g, node: n.name })))
 
+  // 计算节点 / GPU 设备 / 监控大屏 已由侧边栏独立菜单直达，页内不再放横向子菜单
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>{t('cluster.title')}</h3>
-      <Tabs activeKey={tab} onChange={(k) => nav(`/cluster/${k}`)} items={[
-        { key: 'nodes', label: t('cluster.tabNodes'), children: <NodesView nodes={nodes} queue={queue} load={load} /> },
-        { key: 'gpus', label: t('cluster.tabGpus'), children: <GpusView gpus={gpus} /> },
-        { key: 'monitor', label: t('cluster.tabMonitor'), children: <MonitorView queue={queue} util={util} alerts={alerts} t={t} /> },
-      ]} />
+      {tab === 'nodes' && <NodesView nodes={nodes} queue={queue} load={load} />}
+      {tab === 'gpus' && <GpusView gpus={gpus} />}
+      {tab === 'monitor' && <MonitorView queue={queue} util={util} alerts={alerts} t={t} />}
     </div>
   )
 }
