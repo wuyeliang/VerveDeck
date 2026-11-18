@@ -684,7 +684,16 @@
     "restartOff": "已關閉",
     "restartHint": "實例故障時按指數退避自動重啟（30s 起步、上限 2h）；人工啟動即清零退避",
     "errCount": "累計錯誤 {n} 次",
-    "nextRestart": "下次重試 {at}"
+    "nextRestart": "下次重試 {at}",
+    "searchPh": "搜尋部署",
+    "all": "全部",
+    "stRunning": "執行中",
+    "stCreating": "建立中",
+    "stStopped": "已停止",
+    "stFailed": "失敗",
+    "replicasShort": "×{n} · TP{tp}",
+    "replicasPd": "P×{p}·TP{pt} / D×{d}·TP{dt}",
+    "empty": "暫無部署"
   },
   "cluster": {
     "addNode": "添加節點",
@@ -1263,7 +1272,9 @@
     "targetPh": "選擇目標部署",
     "weightHint": "1-100 的相對權重",
     "addTarget": "新增目標",
-    "saved": "已儲存（閘道下一同步週期生效）"
+    "saved": "已儲存（閘道下一同步週期生效）",
+    "searchPh": "搜尋路由",
+    "empty": "暫無路由"
   },
   "backends": {
     "title": "推理後端",
@@ -1307,7 +1318,10 @@
     "importYaml": "匯入 YAML",
     "imported": "匯入完成（新建 {n} 條）",
     "noDefault": "否",
-    "yesDefault": "是"
+    "yesDefault": "是",
+    "searchPh": "搜尋後端",
+    "empty": "暫無後端",
+    "source": "類型"
   },
   "cache": {
     "title": "快取加速",
@@ -1341,6 +1355,7 @@
     "editKv": "編輯",
     "editKvFor": "快取加速 · {name}",
     "kvSaved": "已儲存（實例重建中，完成後生效）",
-    "kvRebuildHint": "該變更將停止並重建部署實例，重建完成後生效。"
+    "kvRebuildHint": "該變更將停止並重建部署實例，重建完成後生效。",
+    "searchPh": "搜尋快取服務"
   }
 }

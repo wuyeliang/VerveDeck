@@ -1,19 +1,23 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
-  Row, Col, Card, Table, Button, Space, Tag, Modal, Form, Input,
-  Select, message, Popconfirm, Upload, Tooltip, Switch,
+  Table, Button, Space, Tag, Form, Input,
+  Select, message, Modal, Upload, Tooltip, Switch, Dropdown, Drawer,
 } from 'antd'
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, ImportOutlined,
-  StarOutlined, CodeOutlined,
+  PlusOutlined, DeleteOutlined, ImportOutlined,
+  StarOutlined, CodeOutlined, CopyOutlined,
+  SearchOutlined, MoreOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { SectionTitle } from './infer-shared'
 
 /** 推理后端注册表：builtin（vllm/sglang，镜像走 pin 系统）/ custom（版本决定镜像+启动命令模板） */
 export default function InferBackends() {
   const { t } = useTranslation()
   const [list, setList] = useState<any[]>([])
+  const [kw, setKw] = useState('')
+  const [expandedKeys, setExpandedKeys] = useState<number[]>([])
   const [openNew, setOpenNew] = useState(false)
   const [openEdit, setOpenEdit] = useState<any>(null)
   const [openVer, setOpenVer] = useState<any>(null)  // {backend, ver?}
@@ -167,27 +171,72 @@ export default function InferBackends() {
     {
       title: t('backends.runCmd'), ellipsis: true, render: (_: any, r: any) => r.run_command
         ? <Tooltip title={r.run_command}><code style={{ fontSize: 11 }}>{r.run_command}</code></Tooltip>
-        : <span style={{ color: '#bbb' }}>-</span>,
+        : <span style={{ color: 'var(--ant-color-text-quaternary)' }}>-</span>,
     },
     {
-      title: t('common.actions'), width: 210, render: (_: any, r: any) => (
-        <Space size={4}>
-          {!r.is_default && (
-            <Button size="small" icon={<StarOutlined />} onClick={() => setDefaultVer(b, r)}>{t('backends.setDefault')}</Button>
-          )}
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEditVer(b, r)}>{t('common.edit')}</Button>
-          <Popconfirm title={t('backends.verDelConfirm')} okButtonProps={{ danger: true }} onConfirm={() => delVer(b, r)}>
-            <Button size="small" danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
-          </Popconfirm>
-        </Space>
+      title: t('common.actions'), key: 'ops', width: 60, render: (_: any, r: any) => (
+        <Dropdown menu={{
+          items: [
+            ...(!r.is_default ? [{ key: 'def', icon: <StarOutlined />, label: t('backends.setDefault') }] : []),
+            { key: 'edit', icon: <CodeOutlined />, label: t('common.edit') },
+            { type: 'divider' as const },
+            { key: 'delete', icon: <DeleteOutlined />, label: t('common.delete'), danger: true },
+          ],
+          onClick: ({ key }: any) => {
+            if (key === 'def') setDefaultVer(b, r)
+            else if (key === 'edit') openEditVer(b, r)
+            else if (key === 'delete') {
+              Modal.confirm({
+                title: t('backends.verDelConfirm'),
+                okButtonProps: { danger: true },
+                onOk: () => delVer(b, r),
+              })
+            }
+          },
+        }}>
+          <Button size="small" type="text" icon={<MoreOutlined />} />
+        </Dropdown>
       ),
     },
   ]
 
+  // 行操作：版本 / 编辑 / 删除（custom 后端才暴露修改项）
+  const onRowAction = (key: string, b: any) => {
+    if (key === 'addVer') { openAddVer(b); return }
+    if (key === 'edit') {
+      editForm.resetFields()
+      editForm.setFieldsValue({
+        description: b.description || '',
+        health_check_path: b.health_check_path,
+        default_env: jsonOf(b.default_env),
+        default_params: jsonOf(b.default_params),
+      })
+      setOpenEdit(b)
+      return
+    }
+    if (key === 'delete') {
+      Modal.confirm({
+        title: t('backends.delConfirm'),
+        okButtonProps: { danger: true },
+        onOk: () => delBackend(b),
+      })
+    }
+  }
+
+  const filtered = list.filter((b) => {
+    const k = kw.trim().toLowerCase()
+    return !k || (b.name || '').toLowerCase().includes(k) || (b.description || '').toLowerCase().includes(k)
+  })
+
   return (
     <div>
-      <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
-        <h3 style={{ margin: 0 }}>{t('backends.title')}</h3>
+      {/* 工具栏：左=搜索+刷新；右=YAML 导入+新建（列表页无大标题） */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <Space wrap>
+          <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--ant-color-text-quaternary)' }} />}
+            placeholder={t('backends.searchPh')} value={kw} onChange={(e) => setKw(e.target.value)} style={{ width: 260 }} />
+          <Button type="text" icon={<ReloadOutlined />} onClick={load} />
+        </Space>
         <Space>
           <Upload accept=".yaml,.yml" showUploadList={false} beforeUpload={doImport} maxCount={1}>
             <Button icon={<ImportOutlined />} loading={importing}>{t('backends.importYaml')}</Button>
@@ -197,52 +246,16 @@ export default function InferBackends() {
             {t('backends.new')}
           </Button>
         </Space>
-      </Space>
-      <p style={{ color: '#888', fontSize: 12, marginTop: 0 }}>{t('backends.hint')}</p>
-
-      <Row gutter={[12, 12]}>
-        {list.map((b: any) => (
-          <Col xs={24} xl={12} key={b.id}>
-            <Card size="small" title={(
-              <Space>
-                <span style={{ fontWeight: 700 }}>{b.name}</span>
-                <Tag color={b.source === 'builtin' ? 'geekblue' : 'orange'}>
-                  {b.source === 'builtin' ? t('backends.builtin') : t('backends.custom')}
-                </Tag>
-              </Space>
-            )}
-              extra={(
-                <Space size={4}>
-                  {b.source === 'custom' && (
-                    <>
-                      <Button size="small" icon={<EditOutlined />}
-                        onClick={() => {
-                          editForm.resetFields()
-                          editForm.setFieldsValue({
-                            description: b.description || '',
-                            health_check_path: b.health_check_path,
-                            default_env: jsonOf(b.default_env),
-                            default_params: jsonOf(b.default_params),
-                          })
-                          setOpenEdit(b)
-                        }}>{t('common.edit')}</Button>
-                      <Popconfirm title={t('backends.delConfirm')} okButtonProps={{ danger: true }} onConfirm={() => delBackend(b)}>
-                        <Button size="small" danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
-                      </Popconfirm>
-                    </>
-                  )}
-                </Space>
-              )}>
-              <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
-                {b.description || <span style={{ color: '#bbb' }}>-</span>}
-              </div>
-              <Space size={6} wrap style={{ marginBottom: 8 }}>
-                <Tooltip title={t('backends.currentImageHint')}>
-                  <Tag icon={<CodeOutlined />} color={b.source === 'builtin' ? 'blue' : 'cyan'}>
-                    {b.current_image || '—'}
-                  </Tag>
-                </Tooltip>
-                <Tag>{t('backends.healthPath')}: {b.health_check_path}</Tag>
+      </div>
+      <Table rowKey="id" size="small" dataSource={filtered} pagination={{ pageSize: 12, showSizeChanger: false }}
+        scroll={{ x: 1080 }}
+        locale={{ emptyText: t('backends.empty') }}
+        expandable={{
+          expandedRowKeys: expandedKeys,
+          onExpandedRowsChange: (keys: any) => setExpandedKeys(keys.map(Number)),
+          expandedRowRender: (b: any) => (
+            <div style={{ padding: '6px 12px', background: 'var(--ant-color-fill-quaternary)' }}>
+              <Space size={[6, 4]} wrap style={{ marginBottom: 8 }}>
                 {Object.keys(b.default_env || {}).length > 0 && (
                   <Tooltip title={jsonOf(b.default_env)}>
                     <Tag color="purple">{t('backends.envKeys', { n: Object.keys(b.default_env).length })}</Tag>
@@ -264,16 +277,83 @@ export default function InferBackends() {
               </div>
               <Table size="small" rowKey="id" pagination={false} dataSource={b.versions} columns={verColumns(b)}
                 scroll={{ x: 560 }} />
-            </Card>
-          </Col>
-        ))}
-      </Row>
+            </div>
+          ),
+        }}
+        columns={[
+          {
+            title: t('common.name'), dataIndex: 'name', width: 200, fixed: 'left', render: (v: string, b: any) => (
+              <div style={{ minWidth: 0 }}>
+                <span style={{ color: 'var(--ant-color-primary)', fontWeight: 600 }}>{v}</span>
+                <div style={{ fontSize: 12, color: 'var(--ant-color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {b.description || '-'}
+                </div>
+              </div>
+            ),
+          },
+          {
+            title: t('backends.source'), dataIndex: 'source', width: 110, render: (v: string) => (
+              <Tag color={v === 'builtin' ? 'geekblue' : 'orange'}>
+                {v === 'builtin' ? t('backends.builtin') : t('backends.custom')}
+              </Tag>
+            ),
+          },
+          {
+            title: t('backends.image'), key: 'image', width: 240, ellipsis: true,
+            render: (_: any, b: any) => (
+              <Tooltip title={t('backends.currentImageHint')}>
+                <Space size={4}>
+                  <code style={{ fontSize: 11 }}>{b.current_image || '—'}</code>
+                  {b.current_image && <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => copy(b.current_image)} />}
+                </Space>
+              </Tooltip>
+            ),
+          },
+          {
+            title: t('backends.versions'), key: 'vers', width: 140,
+            render: (_: any, b: any) => {
+              const def = b.versions.find((v: any) => v.is_default)
+              return (
+                <span style={{ color: 'var(--ant-color-text-secondary)' }}>
+                  {b.versions.length} · {def ? def.version : '-'}
+                  {def && <StarOutlined style={{ color: '#faad14', marginLeft: 4 }} />}
+                </span>
+              )
+            },
+          },
+          {
+            title: t('backends.healthPath'), dataIndex: 'health_check_path', width: 150,
+            render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code>,
+          },
+          {
+            title: t('common.actions'), key: 'ops', width: 52, fixed: 'right', align: 'center',
+            render: (_: any, b: any) => b.source !== 'custom' ? null : (
+              <Dropdown menu={{
+                items: [
+                  { key: 'addVer', icon: <PlusOutlined />, label: t('backends.addVer') },
+                  { key: 'edit', icon: <CodeOutlined />, label: t('common.edit') },
+                  { type: 'divider' as const },
+                  { key: 'delete', icon: <DeleteOutlined />, label: t('common.delete'), danger: true },
+                ],
+                onClick: ({ key }: any) => onRowAction(key, b),
+              }}>
+                <Button size="small" type="text" icon={<MoreOutlined />} />
+              </Dropdown>
+            ),
+          },
+        ]} />
 
       {/* 新建自定义后端 */}
-      <Modal title={t('backends.new')} open={openNew} onCancel={() => setOpenNew(false)}
-        onOk={submitNew} okText={t('common.confirm')} width={620}>
+      <Drawer title={t('backends.new')} width={620} open={openNew} onClose={() => setOpenNew(false)}
+        footer={<div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={() => setOpenNew(false)}>{t('common.cancel')}</Button>
+            <Button type="primary" onClick={submitNew}>{t('common.confirm')}</Button>
+          </Space>
+        </div>}>
         <Form form={newForm} layout="vertical">
-          <Form.Item name="name" label={t('backends.name')}
+          <SectionTitle>{t('backends.name')}</SectionTitle>
+          <Form.Item name="name"
             rules={[
               { required: true },
               { pattern: /^[a-z0-9-]+$/, message: t('backends.nameRule') },
@@ -284,21 +364,29 @@ export default function InferBackends() {
           <Form.Item name="description" label={t('common.desc')}>
             <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
           </Form.Item>
-          <Form.Item name="health_check_path" label={t('backends.healthPath')} tooltip={t('backends.healthPathHint')}>
+          <SectionTitle>{t('backends.healthPath')}</SectionTitle>
+          <Form.Item name="health_check_path" tooltip={t('backends.healthPathHint')}>
             <Input placeholder="/v1/models" />
           </Form.Item>
-          <Form.Item name="default_env" label={t('backends.defaultEnv')} tooltip={t('backends.jsonInvalidHint')}>
+          <SectionTitle>{t('backends.defaultEnv')}</SectionTitle>
+          <Form.Item name="default_env" tooltip={t('backends.jsonInvalidHint')}>
             <Input.TextArea placeholder='{"SOME_KEY": "value"}' autoSize={{ minRows: 1, maxRows: 4 }} style={{ fontFamily: 'monospace', fontSize: 12 }} />
           </Form.Item>
           <Form.Item name="default_params" label={t('backends.defaultParams')} tooltip={t('backends.jsonInvalidHint')}>
             <Input.TextArea placeholder='{"max_model_len": 8192}' autoSize={{ minRows: 1, maxRows: 4 }} style={{ fontFamily: 'monospace', fontSize: 12 }} />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       {/* 编辑自定义后端（名不可改） */}
-      <Modal title={openEdit ? `${t('common.edit')} · ${openEdit.name}` : t('common.edit')}
-        open={!!openEdit} onCancel={() => setOpenEdit(null)} onOk={submitEdit} okText={t('common.confirm')} width={620}>
+      <Drawer title={openEdit ? `${t('common.edit')} · ${openEdit.name}` : t('common.edit')}
+        width={620} open={!!openEdit} onClose={() => setOpenEdit(null)}
+        footer={<div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={() => setOpenEdit(null)}>{t('common.cancel')}</Button>
+            <Button type="primary" onClick={submitEdit}>{t('common.confirm')}</Button>
+          </Space>
+        </div>}>
         <Form form={editForm} layout="vertical">
           <Form.Item name="description" label={t('common.desc')}>
             <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
@@ -313,28 +401,30 @@ export default function InferBackends() {
             <Input.TextArea placeholder='{"max_model_len": 8192}' autoSize={{ minRows: 1, maxRows: 4 }} style={{ fontFamily: 'monospace', fontSize: 12 }} />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       {/* 版本 创建/编辑（custom 后端） */}
-      <Modal title={openVer?.ver
+      <Drawer title={openVer?.ver
         ? `${t('backends.verEdit', { v: openVer.ver.version, b: openVer.backend.name })}`
         : t('backends.addVerFor', { b: openVer?.backend?.name })}
-        open={!!openVer} onCancel={() => setOpenVer(null)} onOk={submitVer} okText={t('common.confirm')} width={680}>
+        width={620} open={!!openVer} onClose={() => setOpenVer(null)}
+        footer={<div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={() => setOpenVer(null)}>{t('common.cancel')}</Button>
+            <Button type="primary" onClick={submitVer}>{t('common.confirm')}</Button>
+          </Space>
+        </div>}>
         <Form form={verForm} layout="vertical">
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item name="version" label={t('backends.ver')}
-                rules={[{ required: true, pattern: /^[a-zA-Z0-9._-]+$/, message: t('backends.verRule') }]}>
-                <Input maxLength={64} placeholder="v0.1" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="framework" label="framework">
-                <Select options={['cuda', 'rocm', 'cpu'].map((f) => ({ value: f, label: f }))} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="image" label={t('backends.image')} rules={[{ required: true }]}>
+          <SectionTitle>{t('backends.ver')}</SectionTitle>
+          <Form.Item name="version"
+            rules={[{ required: true, pattern: /^[a-zA-Z0-9._-]+$/, message: t('backends.verRule') }]}>
+            <Input maxLength={64} placeholder="v0.1" />
+          </Form.Item>
+          <Form.Item name="framework" label="framework">
+            <Select options={['cuda', 'rocm', 'cpu'].map((f) => ({ value: f, label: f }))} />
+          </Form.Item>
+          <SectionTitle>{t('backends.image')}</SectionTitle>
+          <Form.Item name="image" rules={[{ required: true }]}>
             <Input placeholder="registry.example.com/xxx:v1" />
           </Form.Item>
           <Form.Item name="entrypoint" label={t('backends.entrypoint')} tooltip={t('backends.entrypointHint')}>
@@ -353,7 +443,7 @@ export default function InferBackends() {
             <Switch checkedChildren={t('backends.yesDefault')} unCheckedChildren={t('backends.noDefault')} />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
     </div>
   )
 }

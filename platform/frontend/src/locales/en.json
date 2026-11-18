@@ -684,7 +684,16 @@
     "restartOff": "off",
     "restartHint": "On failure, restart with exponential backoff (30s up to 2h); a manual start resets the backoff",
     "errCount": "{n} error(s) in total",
-    "nextRestart": "Next retry {at}"
+    "nextRestart": "Next retry {at}",
+    "searchPh": "Search deployments",
+    "all": "All",
+    "stRunning": "Running",
+    "stCreating": "Creating",
+    "stStopped": "Stopped",
+    "stFailed": "Failed",
+    "replicasShort": "×{n} · TP{tp}",
+    "replicasPd": "P×{p}·TP{pt} / D×{d}·TP{dt}",
+    "empty": "No deployments"
   },
   "cluster": {
     "addNode": "Add Node",
@@ -1263,7 +1272,9 @@
     "targetPh": "Select target deployment",
     "weightHint": "Relative weight 1-100",
     "addTarget": "Add target",
-    "saved": "Saved (applies on the next gateway sync cycle)"
+    "saved": "Saved (applies on the next gateway sync cycle)",
+    "searchPh": "Search routes",
+    "empty": "No routes"
   },
   "backends": {
     "title": "Inference Backends",
@@ -1307,7 +1318,10 @@
     "importYaml": "Import YAML",
     "imported": "Imported ({n} created)",
     "noDefault": "no",
-    "yesDefault": "yes"
+    "yesDefault": "yes",
+    "searchPh": "Search backends",
+    "empty": "No backends",
+    "source": "Type"
   },
   "cache": {
     "title": "Cache Acceleration",
@@ -1341,6 +1355,7 @@
     "editKv": "Edit",
     "editKvFor": "Cache Acceleration · {name}",
     "kvSaved": "Saved (rebuilding instances; effective after rebuild)",
-    "kvRebuildHint": "This change stops and rebuilds the deployment's instances; effective after the rebuild."
+    "kvRebuildHint": "This change stops and rebuilds the deployment's instances; effective after the rebuild.",
+    "searchPh": "Search cache services"
   }
 }

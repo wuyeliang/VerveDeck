@@ -1,22 +1,23 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
-  Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select,
-  message, Popconfirm, Card, Tooltip, Divider,
+  Table, Button, Space, Tag, Form, Input, InputNumber, Select, Drawer,
+  message, Modal, Card, Tooltip, Divider, Dropdown,
 } from 'antd'
 import {
-  PlusOutlined, PlayCircleOutlined, PoweroffOutlined, EditOutlined,
-  DeleteOutlined, ExclamationCircleOutlined, DatabaseOutlined,
+  PlusOutlined, PlayCircleOutlined, PoweroffOutlined, EditOutlined, DeleteOutlined,
+  DatabaseOutlined,
+  SearchOutlined, MoreOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
-
-const ST: Record<string, string> = { stopped: 'default', creating: 'processing', running: 'success', failed: 'error' }
+import { StatusDot, STATUS_TONE, SectionTitle } from './infer-shared'
 
 /** 缓存加速：① 缓存服务实例（托管容器生命周期）② 部署级扩展 KV（CPU 卸载 / HiCache） */
 export default function InferCache() {
   const { t } = useTranslation()
   const [list, setList] = useState<any[]>([])
   const [deploys, setDeploys] = useState<any[]>([])
+  const [kw, setKw] = useState('')
   const [openNew, setOpenNew] = useState(false)
   const [openEdit, setOpenEdit] = useState<any>(null)
   const [openKv, setOpenKv] = useState<any>(null)  // 部署级扩展 KV 编辑
@@ -86,6 +87,28 @@ export default function InferCache() {
       .catch((e) => message.error(e.response?.data?.detail || e.message))
   }
 
+  const openEditSvc = (r: any) => {
+    editForm.resetFields()
+    editForm.setFieldsValue({
+      description: r.description || '', image: r.image,
+      command: r.command || '', env: jsonOf(r.env), port: r.port ?? 0,
+    })
+    setOpenEdit(r)
+  }
+
+  // 行操作（⋯ 菜单）：启动 / 停止 / 编辑 / 删除
+  const onRowAction = (key: string, r: any) => {
+    if (key === 'start') { start(r); return }
+    if (key === 'stop') {
+      Modal.confirm({ title: t('cache.stopConfirm'), okButtonProps: { danger: true }, onOk: () => stop(r) })
+      return
+    }
+    if (key === 'edit') { openEditSvc(r); return }
+    if (key === 'delete') {
+      Modal.confirm({ title: t('cache.delConfirm'), okButtonProps: { danger: true }, onOk: () => del(r) })
+    }
+  }
+
   // ---------- 部署级扩展 KV 快速编辑 ----------
   const openKvEdit = (d: any) => {
     kvForm.resetFields()
@@ -122,73 +145,75 @@ export default function InferCache() {
     return kv.cpu_offload_gb ? <Tag color="cyan">{t('cache.cpuOffload')}: {kv.cpu_offload_gb} GB</Tag> : null
   }
 
+  const filtered = list.filter((r) => {
+    const k = kw.trim().toLowerCase()
+    return !k || (r.name || '').toLowerCase().includes(k) || (r.image || '').toLowerCase().includes(k)
+  })
+
   return (
     <div>
-      <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
-        <h3 style={{ margin: 0 }}>{t('cache.title')}</h3>
+      {/* 工具栏：左=搜索+刷新；右=新建（列表页无大标题） */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <Space wrap>
+          <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--ant-color-text-quaternary)' }} />}
+            placeholder={t('cache.searchPh')} value={kw} onChange={(e) => setKw(e.target.value)} style={{ width: 260 }} />
+          <Button type="text" icon={<ReloadOutlined />} onClick={load} />
+        </Space>
         <Button type="primary" icon={<PlusOutlined />}
           onClick={() => { form.resetFields(); form.setFieldsValue({ port: 0 }); setOpenNew(true) }}>
           {t('cache.new')}
         </Button>
-      </Space>
-      <p style={{ color: '#888', fontSize: 12, marginTop: 0 }}>{t('cache.hint')}</p>
+      </div>
 
       {/* ① 缓存服务实例 */}
       <Card size="small" title={<span><DatabaseOutlined /> {t('cache.svcTitle')}</span>} style={{ marginBottom: 16 }}>
-        <Table rowKey="id" size="small" dataSource={list} pagination={{ pageSize: 10 }} scroll={{ x: 1080 }}
+        <Table rowKey="id" size="small" dataSource={filtered} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 1080 }}
           locale={{ emptyText: t('cache.empty') }}
           columns={[
-            { title: t('common.name'), dataIndex: 'name', width: 170, ellipsis: true, render: (v: string) => <span style={{ fontWeight: 600 }}>{v}</span> },
+            { title: t('common.name'), dataIndex: 'name', width: 170, ellipsis: true, render: (v: string) => (
+              <span style={{ color: 'var(--ant-color-primary)', fontWeight: 600 }}>{v}</span>
+            ) },
             { title: t('backends.image'), dataIndex: 'image', width: 250, ellipsis: true, render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code> },
             {
               title: t('cache.command'), width: 180, ellipsis: true, render: (_: any, r: any) => r.command
                 ? <Tooltip title={r.command}><code style={{ fontSize: 11 }}>{r.command}</code></Tooltip>
                 : <Tooltip title={t('cache.cmdEmpty')}>{t('cache.imageEntry')}</Tooltip>,
             },
-            { title: t('cache.port'), dataIndex: 'port', width: 70, render: (v: number) => v || <span style={{ color: '#bbb' }}>-</span> },
+            { title: t('cache.port'), dataIndex: 'port', width: 70, render: (v: number) => v || <span style={{ color: 'var(--ant-color-text-quaternary)' }}>-</span> },
             {
               title: t('common.status'), dataIndex: 'status', width: 150, render: (v: string, r: any) => (
-                <Space size={4}>
-                  <Tag color={ST[v] || 'default'}>{v}</Tag>
-                  {r.state_message && <Tooltip title={r.state_message}>
-                    <ExclamationCircleOutlined style={{ color: v === 'failed' ? '#cf1322' : '#fa8c16' }} />
-                  </Tooltip>}
-                </Space>
+                <StatusDot status={v} tone={STATUS_TONE[v] || 'default'} tip={r.state_message} />
               ),
             },
             { title: t('cache.endpoint'), width: 160, ellipsis: true, render: (_: any, r: any) =>
-              r.url ? <code style={{ fontSize: 11 }}>{r.url}</code> : <span style={{ color: '#bbb' }}>-</span> },
+              r.url ? <code style={{ fontSize: 11 }}>{r.url}</code> : <span style={{ color: 'var(--ant-color-text-quaternary)' }}>-</span> },
             {
               title: t('cache.usedBy'), width: 170, render: (_: any, r: any) => (
                 <Space size={[4, 4]} wrap>
-                  {(r.used_by || []).length === 0 && <span style={{ color: '#bbb' }}>-</span>}
+                  {(r.used_by || []).length === 0 && <span style={{ color: 'var(--ant-color-text-quaternary)' }}>-</span>}
                   {(r.used_by || []).map((n: string) => <Tag key={n}>{n}</Tag>)}
                 </Space>
               ),
             },
             {
-              title: t('common.actions'), width: 190, render: (_: any, r: any) => (
-                <Space size={4}>
-                  {r.status !== 'running' && r.status !== 'creating' && (
-                    <Button size="small" icon={<PlayCircleOutlined />} onClick={() => start(r)}>{t('cache.start')}</Button>
-                  )}
-                  {r.status === 'running' && (
-                    <Popconfirm title={t('cache.stopConfirm')} okButtonProps={{ danger: true }} onConfirm={() => stop(r)}>
-                      <Button size="small" danger icon={<PoweroffOutlined />}>{t('cache.stop')}</Button>
-                    </Popconfirm>
-                  )}
-                  <Button size="small" icon={<EditOutlined />} onClick={() => {
-                    editForm.resetFields()
-                    editForm.setFieldsValue({
-                      description: r.description || '', image: r.image,
-                      command: r.command || '', env: jsonOf(r.env), port: r.port ?? 0,
-                    })
-                    setOpenEdit(r)
-                  }}>{t('common.edit')}</Button>
-                  <Popconfirm title={t('cache.delConfirm')} okButtonProps={{ danger: true }} onConfirm={() => del(r)}>
-                    <Button size="small" danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
-                  </Popconfirm>
-                </Space>
+              title: t('common.actions'), key: 'ops', width: 52, fixed: 'right', align: 'center',
+              render: (_: any, r: any) => (
+                <Dropdown menu={{
+                  items: [
+                    ...(r.status !== 'running' && r.status !== 'creating'
+                      ? [{ key: 'start', icon: <PlayCircleOutlined />, label: t('cache.start') }]
+                      : []),
+                    ...(r.status === 'running'
+                      ? [{ key: 'stop', icon: <PoweroffOutlined />, label: t('cache.stop'), danger: true }]
+                      : []),
+                    { key: 'edit', icon: <EditOutlined />, label: t('common.edit') },
+                    { type: 'divider' as const },
+                    { key: 'delete', icon: <DeleteOutlined />, label: t('common.delete'), danger: true },
+                  ],
+                  onClick: ({ key }: any) => onRowAction(key, r),
+                }}>
+                  <Button size="small" type="text" icon={<MoreOutlined />} />
+                </Dropdown>
               ),
             },
           ]} />
@@ -196,40 +221,56 @@ export default function InferCache() {
 
       {/* ② 部署级扩展 KV */}
       <Card size="small" title={<span><DatabaseOutlined /> {t('cache.deployKvTitle')}</span>}>
-        <p style={{ color: '#888', fontSize: 12, marginTop: 0, marginBottom: 8 }}>{t('cache.deployKvHint')}</p>
-        <Table rowKey="id" size="small" dataSource={deploys} pagination={{ pageSize: 10 }} scroll={{ x: 900 }}
+        <p style={{ color: 'var(--ant-color-text-secondary)', fontSize: 12, marginTop: 0, marginBottom: 8 }}>{t('cache.deployKvHint')}</p>
+        <Table rowKey="id" size="small" dataSource={deploys} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 900 }}
           columns={[
-            { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true, render: (v: string) => <span style={{ fontWeight: 600 }}>{v}</span> },
+            { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true, render: (v: string) => (
+              <span style={{ color: 'var(--ant-color-primary)', fontWeight: 600 }}>{v}</span>
+            ) },
             { title: t('infer.colEngine'), dataIndex: 'engine', width: 90, render: (v: string) => <Tag color={v === 'vllm' ? 'blue' : 'cyan'}>{v}</Tag> },
-            { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={ST[v] || 'default'}>{v}</Tag> },
-            { title: t('cache.extKv'), width: 170, render: (_: any, r: any) => kvTag(r) || <span style={{ color: '#bbb' }}>{t('cache.none')}</span> },
+            {
+              title: t('common.status'), dataIndex: 'status', width: 110, render: (v: string, r: any) => (
+                <StatusDot status={v} tone={STATUS_TONE[v] || 'default'} tip={r.state_message} />
+              ),
+            },
+            { title: t('cache.extKv'), width: 170, render: (_: any, r: any) => kvTag(r) || <span style={{ color: 'var(--ant-color-text-quaternary)' }}>{t('cache.none')}</span> },
             {
               title: t('cache.cacheSvc'), width: 170, render: (_: any, r: any) => {
                 const c = list.find((x: any) => x.id === r.cache_service_id)
                 return c
                   ? <Space size={4}><Tag color="cyan">{c.name}</Tag>{c.status !== 'running' && <Tag color="orange">{c.status}</Tag>}</Space>
-                  : <span style={{ color: '#bbb' }}>-</span>
+                  : <span style={{ color: 'var(--ant-color-text-quaternary)' }}>-</span>
               },
             },
             {
-              title: t('common.actions'), width: 100, render: (_: any, r: any) => (
-                <Button size="small" icon={<EditOutlined />} onClick={() => openKvEdit(r)}>{t('cache.editKv')}</Button>
+              title: t('common.actions'), key: 'ops', width: 52, align: 'center',
+              render: (_: any, r: any) => (
+                <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openKvEdit(r)}>
+                  {t('cache.editKv')}
+                </Button>
               ),
             },
           ]} />
       </Card>
 
       {/* 新建缓存服务 */}
-      <Modal title={t('cache.new')} open={openNew} onCancel={() => setOpenNew(false)}
-        onOk={submitNew} okText={t('common.confirm')} width={640}>
+      <Drawer title={t('cache.new')} width={640} open={openNew} onClose={() => setOpenNew(false)}
+        footer={<div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={() => setOpenNew(false)}>{t('common.cancel')}</Button>
+            <Button type="primary" onClick={submitNew}>{t('common.confirm')}</Button>
+          </Space>
+        </div>}>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('common.name')} rules={[{ required: true }]} style={{ maxWidth: 360 }}>
+          <SectionTitle>{t('common.name')}</SectionTitle>
+          <Form.Item name="name" rules={[{ required: true }]} style={{ maxWidth: 360 }}>
             <Input maxLength={128} showCount />
           </Form.Item>
           <Form.Item name="description" label={t('common.desc')}>
             <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
           </Form.Item>
-          <Form.Item name="image" label={t('backends.image')} rules={[{ required: true }]}>
+          <SectionTitle>{t('backends.image')}</SectionTitle>
+          <Form.Item name="image" rules={[{ required: true }]}>
             <Input placeholder="registry.example.com/kv-cache:v1" />
           </Form.Item>
           <Form.Item name="command" label={t('cache.command')} tooltip={t('cache.cmdHint')}>
@@ -245,11 +286,17 @@ export default function InferCache() {
             </Form.Item>
           </Space>
         </Form>
-      </Modal>
+      </Drawer>
 
       {/* 编辑缓存服务（运行中修改=自动重启） */}
-      <Modal title={openEdit ? `${t('common.edit')} · ${openEdit.name}` : t('common.edit')}
-        open={!!openEdit} onCancel={() => setOpenEdit(null)} onOk={submitEdit} okText={t('common.confirm')} width={640}>
+      <Drawer title={openEdit ? `${t('common.edit')} · ${openEdit.name}` : t('common.edit')}
+        width={640} open={!!openEdit} onClose={() => setOpenEdit(null)}
+        footer={<div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={() => setOpenEdit(null)}>{t('common.cancel')}</Button>
+            <Button type="primary" onClick={submitEdit}>{t('common.confirm')}</Button>
+          </Space>
+        </div>}>
         <Form form={editForm} layout="vertical">
           <Form.Item name="description" label={t('common.desc')}>
             <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
@@ -269,11 +316,17 @@ export default function InferCache() {
             </Form.Item>
           </Space>
         </Form>
-      </Modal>
+      </Drawer>
 
       {/* 部署级扩展 KV 编辑（触发实例重建） */}
-      <Modal title={openKv ? `${t('cache.editKvFor', { name: openKv.name })}` : t('cache.editKv')}
-        open={!!openKv} onCancel={() => setOpenKv(null)} onOk={submitKv} okText={t('common.confirm')} width={520}>
+      <Drawer title={openKv ? `${t('cache.editKvFor', { name: openKv.name })}` : t('cache.editKv')}
+        width={520} open={!!openKv} onClose={() => setOpenKv(null)}
+        footer={<div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={() => setOpenKv(null)}>{t('common.cancel')}</Button>
+            <Button type="primary" onClick={submitKv}>{t('common.confirm')}</Button>
+          </Space>
+        </div>}>
         <Form form={kvForm} layout="vertical">
           <Form.Item name="engine" noStyle>
             <Input type="hidden" />
@@ -292,9 +345,9 @@ export default function InferCache() {
             <Select allowClear showSearch optionFilterProp="label" placeholder={t('infer.cacheSvcNone')}
               options={list.map((c: any) => ({ value: c.id, label: `${c.name} (${c.status})` }))} />
           </Form.Item>
-          <p style={{ color: '#999', fontSize: 12 }}>{t('cache.kvRebuildHint')}</p>
+          <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12 }}>{t('cache.kvRebuildHint')}</p>
         </Form>
-      </Modal>
+      </Drawer>
     </div>
   )
 }

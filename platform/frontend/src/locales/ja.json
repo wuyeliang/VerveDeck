@@ -684,7 +684,16 @@
     "restartOff": "オフ",
     "restartHint": "故障時に指数バックオフで自動再起動（30 秒〜最大 2 時間）；手動起動でバックオフはリセット",
     "errCount": "累計エラー {n} 回",
-    "nextRestart": "次回リトライ {at}"
+    "nextRestart": "次回リトライ {at}",
+    "searchPh": "展開を検索",
+    "all": "すべて",
+    "stRunning": "実行中",
+    "stCreating": "作成中",
+    "stStopped": "停止済み",
+    "stFailed": "失敗",
+    "replicasShort": "×{n} · TP{tp}",
+    "replicasPd": "P×{p}·TP{pt} / D×{d}·TP{dt}",
+    "empty": "展開はありません"
   },
   "cluster": {
     "addNode": "ノードを追加",
@@ -1263,7 +1272,9 @@
     "targetPh": "ターゲットデプロイを選択",
     "weightHint": "1-100 の相対重み",
     "addTarget": "ターゲットを追加",
-    "saved": "保存しました（次のゲートウェイ同期サイクルで有効化）"
+    "saved": "保存しました（次のゲートウェイ同期サイクルで有効化）",
+    "searchPh": "ルートを検索",
+    "empty": "ルートはありません"
   },
   "backends": {
     "title": "推論バックエンド",
@@ -1307,7 +1318,10 @@
     "importYaml": "YAML インポート",
     "imported": "インポート完了（{n} 件作成）",
     "noDefault": "いいえ",
-    "yesDefault": "はい"
+    "yesDefault": "はい",
+    "searchPh": "バックエンドを検索",
+    "empty": "バックエンドはありません",
+    "source": "タイプ"
   },
   "cache": {
     "title": "キャッシュ加速",
@@ -1341,6 +1355,7 @@
     "editKv": "編集",
     "editKvFor": "キャッシュ加速 · {name}",
     "kvSaved": "保存しました（インスタンス再構築中、完了後に有効）",
-    "kvRebuildHint": "この変更はデプロイのインスタンスを停止して再構築し、完了後に有効になります。"
+    "kvRebuildHint": "この変更はデプロイのインスタンスを停止して再構築し、完了後に有効になります。",
+    "searchPh": "キャッシュサービスを検索"
   }
 }

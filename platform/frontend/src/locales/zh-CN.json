@@ -684,7 +684,16 @@
     "restartOff": "已关闭",
     "restartHint": "实例故障时按指数退避自动重启（30s 起步、上限 2h）；人工启动即清零退避",
     "errCount": "累计错误 {n} 次",
-    "nextRestart": "下次重试 {at}"
+    "nextRestart": "下次重试 {at}",
+    "searchPh": "搜索部署",
+    "all": "全部",
+    "stRunning": "运行中",
+    "stCreating": "创建中",
+    "stStopped": "已停止",
+    "stFailed": "失败",
+    "replicasShort": "×{n} · TP{tp}",
+    "replicasPd": "P×{p}·TP{pt} / D×{d}·TP{dt}",
+    "empty": "暂无部署"
   },
   "cluster": {
     "addNode": "添加节点",
@@ -1263,7 +1272,9 @@
     "targetPh": "选择目标部署",
     "weightHint": "1-100 的相对权重",
     "addTarget": "添加目标",
-    "saved": "已保存（网关下一同步周期生效）"
+    "saved": "已保存（网关下一同步周期生效）",
+    "searchPh": "搜索路由",
+    "empty": "暂无路由"
   },
   "backends": {
     "title": "推理后端",
@@ -1307,7 +1318,10 @@
     "importYaml": "导入 YAML",
     "imported": "导入完成（新建 {n} 条）",
     "noDefault": "否",
-    "yesDefault": "是"
+    "yesDefault": "是",
+    "searchPh": "搜索后端",
+    "empty": "暂无后端",
+    "source": "类型"
   },
   "cache": {
     "title": "缓存加速",
@@ -1341,6 +1355,7 @@
     "editKv": "编辑",
     "editKvFor": "缓存加速 · {name}",
     "kvSaved": "已保存（实例重建中，完成后生效）",
-    "kvRebuildHint": "该变更将停止并重建部署实例，重建完成后生效。"
+    "kvRebuildHint": "该变更将停止并重建部署实例，重建完成后生效。",
+    "searchPh": "搜索缓存服务"
   }
 }

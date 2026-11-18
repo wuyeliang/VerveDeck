@@ -684,7 +684,16 @@
     "restartOff": "desactivado",
     "restartHint": "Ante fallo, reinicio con retroceso exponencial (30 s hasta 2 h); un arranque manual reinicia el retroceso",
     "errCount": "{n} error(es) en total",
-    "nextRestart": "Próximo reintento {at}"
+    "nextRestart": "Próximo reintento {at}",
+    "searchPh": "Buscar despliegues",
+    "all": "Todos",
+    "stRunning": "En ejecución",
+    "stCreating": "Creando",
+    "stStopped": "Detenido",
+    "stFailed": "Fallido",
+    "replicasShort": "×{n} · TP{tp}",
+    "replicasPd": "P×{p}·TP{pt} / D×{d}·TP{dt}",
+    "empty": "Sin despliegues"
   },
   "cluster": {
     "addNode": "Añadir nodo",
@@ -1263,7 +1272,9 @@
     "targetPh": "Seleccione el despliegue objetivo",
     "weightHint": "Peso relativo 1-100",
     "addTarget": "Añadir objetivo",
-    "saved": "Guardado (se aplica en el próximo ciclo de sincronización)"
+    "saved": "Guardado (se aplica en el próximo ciclo de sincronización)",
+    "searchPh": "Buscar rutas",
+    "empty": "Sin rutas"
   },
   "backends": {
     "title": "Backends de inferencia",
@@ -1307,7 +1318,10 @@
     "importYaml": "Importar YAML",
     "imported": "Importado ({n} creados)",
     "noDefault": "no",
-    "yesDefault": "sí"
+    "yesDefault": "sí",
+    "searchPh": "Buscar backends",
+    "empty": "Sin backends",
+    "source": "Tipo"
   },
   "cache": {
     "title": "Aceleración de caché",
@@ -1341,6 +1355,7 @@
     "editKv": "Editar",
     "editKvFor": "Aceleración de caché · {name}",
     "kvSaved": "Guardado (reconstruyendo instancias; efectivo tras la reconstrucción)",
-    "kvRebuildHint": "Este cambio detiene y reconstruye las instancias; efectivo tras la reconstrucción."
+    "kvRebuildHint": "Este cambio detiene y reconstruye las instancias; efectivo tras la reconstrucción.",
+    "searchPh": "Buscar servicios de caché"
   }
 }

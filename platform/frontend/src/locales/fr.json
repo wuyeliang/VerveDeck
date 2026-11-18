@@ -684,7 +684,16 @@
     "restartOff": "désactivé",
     "restartHint": "En cas de panne, redémarrage avec retour exponentiel (30 s jusqu'à 2 h) ; un démarrage manuel réinitialise le retour",
     "errCount": "{n} erreur(s) au total",
-    "nextRestart": "Prochain essai {at}"
+    "nextRestart": "Prochain essai {at}",
+    "searchPh": "Rechercher des déploiements",
+    "all": "Tous",
+    "stRunning": "En cours",
+    "stCreating": "En création",
+    "stStopped": "Arrêté",
+    "stFailed": "Échec",
+    "replicasShort": "×{n} · TP{tp}",
+    "replicasPd": "P×{p}·TP{pt} / D×{d}·TP{dt}",
+    "empty": "Aucun déploiement"
   },
   "cluster": {
     "addNode": "Ajouter un nœud",
@@ -1263,7 +1272,9 @@
     "targetPh": "Sélectionnez le déploiement cible",
     "weightHint": "Poids relatif 1-100",
     "addTarget": "Ajouter une cible",
-    "saved": "Enregistré (appliqué au prochain cycle de synchronisation)"
+    "saved": "Enregistré (appliqué au prochain cycle de synchronisation)",
+    "searchPh": "Rechercher des routes",
+    "empty": "Aucune route"
   },
   "backends": {
     "title": "Backends d'inférence",
@@ -1307,7 +1318,10 @@
     "importYaml": "Importer YAML",
     "imported": "Importé ({n} créés)",
     "noDefault": "non",
-    "yesDefault": "oui"
+    "yesDefault": "oui",
+    "searchPh": "Rechercher des backends",
+    "empty": "Aucun backend",
+    "source": "Type"
   },
   "cache": {
     "title": "Accélération de cache",
@@ -1341,6 +1355,7 @@
     "editKv": "Modifier",
     "editKvFor": "Accélération de cache · {name}",
     "kvSaved": "Enregistré (reconstruction des instances ; effectif après reconstruction)",
-    "kvRebuildHint": "Ce changement arrête et reconstruit les instances ; effectif après reconstruction."
+    "kvRebuildHint": "Ce changement arrête et reconstruit les instances ; effectif après reconstruction.",
+    "searchPh": "Rechercher les services de cache"
   }
 }
