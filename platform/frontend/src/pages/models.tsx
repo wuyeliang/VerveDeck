@@ -282,13 +282,15 @@ export default function ModelRepo() {
                   </Form.Item>
                 </Space>
                 <Form.Item name="note" label={t('models.note')}><Input /></Form.Item>
-                <Form.Item name="storage_backend_id" label={t('models.storageLocation')}
-                  tooltip={<span style={{ whiteSpace: 'pre-line' }}>{t('models.storageLocationTip')}</span>}>
-                  <Select allowClear options={[
-                    { value: '', label: t('models.storageDefault') },
-                    ...backends.map((b) => ({ value: b.id, label: `${b.name}（${typeLabel[b.type] || b.type}）` })),
-                  ]} />
-                </Form.Item>
+                {backends.length > 0 && (
+                  <Form.Item name="storage_backend_id" label={t('models.storageLocation')}
+                    tooltip={<span style={{ whiteSpace: 'pre-line' }}>{t('models.storageLocationTip')}</span>}>
+                    <Select allowClear options={[
+                      { value: '', label: t('models.storageDefault') },
+                      ...backends.map((b) => ({ value: b.id, label: `${b.name}（${typeLabel[b.type] || b.type}）` })),
+                    ]} />
+                  </Form.Item>
+                )}
                 <Button type="primary" htmlType="submit">{t('common.create')}</Button>
               </Form>
             ),
@@ -301,12 +303,14 @@ export default function ModelRepo() {
                   <Input value={upNote} onChange={(e) => setUpNote(e.target.value)} placeholder={t('models.note')} style={{ flex: 1 }} />
                   <Input value={upCat} onChange={(e) => setUpCat(e.target.value)} placeholder={t('models.categoryPh')} style={{ width: 180 }} />
                   <Input value={upTags} onChange={(e) => setUpTags(e.target.value)} placeholder={t('models.tagsPh') + '（逗号分隔）'} style={{ width: 180 }} />
-                  <Select value={upStorage} onChange={setUpStorage} style={{ width: 280 }}
-                    title={t('models.storageLocationTip')}
-                    options={[
-                      { value: '', label: `${t('models.storageLocation')}: ${t('models.storageDefault')}` },
-                      ...backends.map((b) => ({ value: b.id, label: `${t('models.storageLocation')}: ${b.name}（${typeLabel[b.type] || b.type}）` })),
-                    ]} />
+                  {backends.length > 0 && (
+                    <Select value={upStorage} onChange={setUpStorage} style={{ width: 280 }}
+                      title={t('models.storageLocationTip')}
+                      options={[
+                        { value: '', label: `${t('models.storageLocation')}: ${t('models.storageDefault')}` },
+                        ...backends.map((b) => ({ value: b.id, label: `${t('models.storageLocation')}: ${b.name}（${typeLabel[b.type] || b.type}）` })),
+                      ]} />
+                  )}
                 </Space>
                 <Upload.Dragger accept=".zip" showUploadList={false} beforeUpload={submitUpload} disabled={upPct != null}>
                   <p className="ant-upload-drag-icon" style={{ margin: 0 }}><InboxOutlined /></p>

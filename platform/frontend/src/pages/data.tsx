@@ -162,13 +162,15 @@ export default function DataCenter() {
               <Radio.Group options={[{ value: 'text', label: t('data.sceneText') }, { value: 'vlm', label: t('data.sceneVlm') }]} />
             </Form.Item></Col>
           </Row>
-          <Form.Item name="storage_backend_id" label={t('data.storageLocation')}
-            tooltip={<span style={{ whiteSpace: 'pre-line' }}>{t('data.storageLocationTip')}</span>}>
-            <Select allowClear options={[
-              { value: '', label: t('data.storageDefault') },
-              ...backends.map((b) => ({ value: b.id, label: `${b.name}（${typeLabel[b.type] || b.type}）` })),
-            ]} />
-          </Form.Item>
+          {backends.length > 0 && (
+            <Form.Item name="storage_backend_id" label={t('data.storageLocation')}
+              tooltip={<span style={{ whiteSpace: 'pre-line' }}>{t('data.storageLocationTip')}</span>}>
+              <Select allowClear options={[
+                { value: '', label: t('data.storageDefault') },
+                ...backends.map((b) => ({ value: b.id, label: `${b.name}（${typeLabel[b.type] || b.type}）` })),
+              ]} />
+            </Form.Item>
+          )}
           <Form.Item label={t('data.importMethod')} required style={{ marginBottom: 0 }}>
             <Tabs activeKey={createTab} onChange={setCreateTab} size="small" items={[
               {
