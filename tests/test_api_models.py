@@ -413,3 +413,82 @@ def test_cross_project_lineage_403(admin_tok, tenant_a, mctx):
     r = requests.get(f"{BASE}/api/models/{BASE_MODEL_ASSET_ID}/lineage",
                      headers=H(tok), timeout=15)
     assert r.status_code in (403, 404)
+
+
+# ---------- 存储位置：object 型单副本（桶内唯一 + 用时拉取） ----------
+
+
+@pytest.fixture()
+def mobj_backend(admin_tok):
+    """对象存储后端（平台 rustfs + 独立临时桶，避免污染主桶；测后清理）"""
+    url = os.environ.get("S3_ENDPOINT", "")
+    if not url:
+        pytest.skip("S3 未启用（纯本地模式）")
+    host = url.split("//", 1)[1].split("/", 1)[0] if "://" in url else url
+    bucket = f"mobj-{SUF}-bkt"
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=60,
+                      json={"name": f"mobj-{SUF}", "type": "object",
+                            "config": {"endpoint": host,
+                                       "access_key": os.environ.get("S3_ACCESS_KEY", "rustfsadmin"),
+                                       "secret_key": os.environ.get("S3_SECRET_KEY", "rustfsadmin"),
+                                       "bucket": bucket}})
+    r.raise_for_status()
+    bid = r.json()["id"]
+    yield {"id": bid, "bucket": bucket}
+    requests.delete(f"{BASE}/api/storage/backends/{bid}", headers=H(admin_tok), timeout=30)
+
+
+def _mobj_bucket_keys(bucket, prefix):
+    from test_api_storage import _minio_client
+    c = _minio_client()
+    return [o.object_name for o in c.list_objects(bucket, prefix=prefix, recursive=True)]
+
+
+def _mk_model_zip(fname):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("config.json", '{"model_type": "fintune-test", "torch_dtype": "float32"}')
+        zf.writestr("model.safetensors", b"\x00" * 1024)
+    buf.seek(0)
+    return (fname, buf.getvalue(), "application/zip")
+
+
+def test_upload_object_backend_bucket_only(admin_tok, mobj_backend):
+    """object 型存储位置上传模型：唯一副本入桶、本地副本清理；用时自动拉回；删除后桶前缀清理"""
+    name = f"mobjup-{SUF}"
+    files = {"file": _mk_model_zip(f"{name}.zip")}
+    data = {"project_id": str(DEFAULT_PROJECT), "name": name,
+            "storage_backend_id": str(mobj_backend["id"])}
+    r = requests.post(f"{BASE}/api/models/upload", headers=H(admin_tok), timeout=60,
+                      data=data, files=files)
+    r.raise_for_status()
+    a = r.json()
+    prefix = os.path.relpath(a["path"], os.environ.get("DATA_DIR", "/data")) + "/"
+    try:
+        assert a["status"] == "ready"
+        # 本地模型仓库路径已清理（桶内为唯一权威副本，该路径是服务缓存）
+        assert not os.path.exists(a["path"]), f"本地副本应已清理（单副本）: {a['path']}"
+        # 桶内含模型文件
+        keys = _mobj_bucket_keys(mobj_backend["bucket"], prefix)
+        assert any(k.endswith("config.json") for k in keys), f"桶内应含 config.json: {keys[:5]}"
+        # 用时拉取：ensure_model_local 从桶恢复到本地（训练/推理启动同链路）
+        try:
+            from app.database import SessionLocal
+            from app.models import ModelAsset
+            from app.services import model_service
+        except Exception:
+            pytest.skip("非 backend 容器内运行，跳过进程内拉取断言")
+        db = SessionLocal()
+        try:
+            asset = db.get(ModelAsset, a["id"])
+            assert model_service.ensure_model_local(asset, db), "ensure_model_local 应拉取成功"
+            assert os.path.exists(os.path.join(a["path"], "config.json")), "拉取后本地文件应存在"
+        finally:
+            db.close()
+    finally:
+        requests.delete(f"{BASE}/api/models/{a['id']}", headers=H(admin_tok), timeout=30)
+    # 删除后桶前缀清理（此时本地缓存仍在/已删均不应影响，force 删除）
+    keys = _mobj_bucket_keys(mobj_backend["bucket"], prefix)
+    assert keys == [], f"删除模型后桶前缀应清理: {keys[:5]}"

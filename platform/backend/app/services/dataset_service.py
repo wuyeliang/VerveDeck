@@ -35,7 +35,8 @@ def dataset_repo_dir(project_id: int, name: str, dset=None, db=None) -> str:
 
     dset 选择了 path 型后端（local/nfs/block/juicefs）时建在该后端挂载点下
     （<挂载点>/datasets/p{pid}/{name}）；否则（object 型/未选择）保持默认
-    {data_dir}/datasets/p{pid}/{name}（object 型走本地仓库 + 桶同步）。
+    {data_dir}/datasets/p{pid}/{name}（object 型：桶为唯一副本，本地目录仅
+    工作/缓存，写后清理、用时经 ensure_local 拉回）。
     """
     safe = re.sub(r"[^\w\-]", "_", name)
     base = os.path.join(settings.data_dir, "datasets")
@@ -49,7 +50,8 @@ def dataset_repo_dir(project_id: int, name: str, dset=None, db=None) -> str:
 
 
 def _object_cfg(dset, db) -> dict | None:
-    """object 型后端 → 其对象存储 cfg（供 put/ensure/delete 定向该桶）；其他情况 None（主存储）"""
+    """object 型后端 → 其对象存储 cfg（供 put/get/delete 定向该桶，桶内为唯一副本）；
+    其他情况 None（本地优先，主存储仅兼容存量旧镜像的 fallback）"""
     b = _backend_row(dset, db)
     if b is not None and b.type == "object":
         return b.config or {}

@@ -294,6 +294,10 @@ def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curre
         raise HTTPException(400, f"GPU 不足：需要 {need} 卡，可用 {max(0, (node.gpu_count or 0) - used + have)}")
     asset = db.get(ModelAsset, d.model_asset_id)
     path = _resolve_model_path(asset, db)
+    try:
+        inf.ensure_deployment_model(asset, db)  # 单副本：本地缓存缺失从桶拉取
+    except Exception as e:
+        raise HTTPException(503, str(e))
     old = d.replicas
     # 扩容：先建新副本（容器一旦创建即 docker-alive），再登记并提交——
     # 避免并发 reconcile 在"新副本尚未登记"的窗口里按旧 container_ids 判死。
@@ -358,6 +362,10 @@ def scale_role_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_
         raise HTTPException(400, f"GPU 不足：需要 {need} 卡，可用 {max(0, (node.gpu_count or 0) - used + have)}")
     asset = db.get(ModelAsset, d.model_asset_id)
     path = _resolve_model_path(asset, db)
+    try:
+        inf.ensure_deployment_model(asset, db)  # 单副本：本地缓存缺失从桶拉取
+    except Exception as e:
+        raise HTTPException(503, str(e))
     if want > cur:
         # 扩容：先建新实例（docker-alive），SGLang router 需感知新 prefill → 重建
         for i in range(cur, want):
@@ -537,6 +545,10 @@ def rebuild_instance(did: int, req: dict, db=Depends(get_db), user=Depends(get_c
         raise HTTPException(400, "仅运行中/创建中的部署可重建实例")
     asset = db.get(ModelAsset, d.model_asset_id)
     path = _resolve_model_path(asset, db)
+    try:
+        inf.ensure_deployment_model(asset, db)  # 单副本：本地缓存缺失从桶拉取
+    except Exception as e:
+        raise HTTPException(503, str(e))
     role = str(req.get("role", "r"))
     index = int(req.get("index", 0))
     if (d.pd_mode or "off") == "pd":

@@ -231,19 +231,87 @@ def test_path_type_dataset_no_main_mirror(admin_tok, ds_loc_backend):
         requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
 
 
-def test_default_dataset_mirrored_to_main_bucket(admin_tok):
-    """未选存储位置：版本文件默认镜像同步到主对象存储桶（跨节点 ensure_local 恢复的 fallback 源）"""
-    name = f"dsmirrdef-{SUF}"
+def test_default_dataset_local_only(admin_tok):
+    """未选存储位置：版本文件仅存本地 /data（单副本语义），主对象存储桶不写镜像"""
+    import os
+    name = f"dslonly-{SUF}"
     dsid = _mk_ds(admin_tok, name)
     try:
         _upload(admin_tok, dsid, ALPACA_ROWS[:1])
+        data_dir = os.environ.get("DATA_DIR", "/data")
+        assert os.path.exists(
+            f"{data_dir}/datasets/p{DEFAULT_PROJECT}/{name}/v1/data.jsonl"), \
+            "默认数据集版本文件应存本地 /data"
         keys = _main_bucket_keys(f"datasets/p{DEFAULT_PROJECT}/{name}/")
         if keys is None:
-            pytest.skip("主对象存储不可用，跳过镜像断言")
-        assert any(k.endswith("/v1/data.jsonl") for k in keys), \
-            f"默认数据集应镜像到主桶: {keys[:5]}"
+            pytest.skip("主对象存储不可用，跳过不镜像断言")
+        assert keys == [], f"默认数据集不应镜像到主桶（单副本语义）: {keys[:5]}"
     finally:
         requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+
+
+@pytest.fixture()
+def ds_obj_backend(admin_tok):
+    """存储位置测试用对象存储后端（平台 rustfs + 独立临时桶，避免污染主桶；测后清理）"""
+    import os
+    url = os.environ.get("S3_ENDPOINT", "")
+    if not url:
+        pytest.skip("S3 未启用（纯本地模式）")
+    host = url.split("//", 1)[1].split("/", 1)[0] if "://" in url else url
+    bucket = f"dsloc-{SUF}-obj"
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=60,
+                      json={"name": f"dsobj-{SUF}", "type": "object",
+                            "config": {"endpoint": host,
+                                       "access_key": os.environ.get("S3_ACCESS_KEY", "rustfsadmin"),
+                                       "secret_key": os.environ.get("S3_SECRET_KEY", "rustfsadmin"),
+                                       "bucket": bucket}})
+    r.raise_for_status()
+    bid = r.json()["id"]
+    yield {"id": bid, "bucket": bucket}
+    requests.delete(f"{BASE}/api/storage/backends/{bid}", headers=H(admin_tok), timeout=30)
+
+
+def _obj_bucket_keys(bucket, prefix):
+    from test_api_storage import _minio_client
+    c = _minio_client()
+    return [o.object_name for o in c.list_objects(bucket, prefix=prefix, recursive=True)]
+
+
+def test_object_type_dataset_bucket_only(admin_tok, ds_obj_backend):
+    """object 型存储位置：唯一副本在桶内，全量上传后本地工作副本清理；预览用时自动拉回；
+    删除数据集后桶前缀一并清理（不依赖本地目录存在）"""
+    import os
+    name = f"dsobjd-{SUF}"
+    data_dir = os.environ.get("DATA_DIR", "/data")
+    r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": name,
+                            "storage_backend_id": ds_obj_backend["id"]})
+    r.raise_for_status()
+    dsid = r.json()["id"]
+    try:
+        _upload(admin_tok, dsid, ALPACA_ROWS[:2])
+        # 本地工作副本已清理（桶内为唯一权威副本）
+        vfile = f"{data_dir}/datasets/p{DEFAULT_PROJECT}/{name}/v1/data.jsonl"
+        assert not os.path.exists(vfile), f"本地工作副本应已清理（单副本）: {vfile}"
+        # 桶内含该版本文件
+        keys = _obj_bucket_keys(ds_obj_backend["bucket"],
+                                f"datasets/p{DEFAULT_PROJECT}/{name}/")
+        assert any(k.endswith("/v1/data.jsonl") for k in keys), \
+            f"桶内应含版本文件: {keys[:5]}"
+        # 预览仍可用：本地缓存缺失 → 自动从桶拉回（单副本读取链路）
+        vers = requests.get(f"{BASE}/api/datasets/{dsid}/versions",
+                            headers=H(admin_tok), timeout=15).json()
+        v = next(x for x in vers if x["version"] == 1)
+        r2 = requests.get(f"{BASE}/api/datasets/{dsid}/versions/{v['id']}/samples",
+                          headers=H(admin_tok), timeout=60)
+        assert r2.status_code == 200, f"预览应自动从桶拉回: {r2.text[:200]}"
+        assert r2.json()["total"] == len(ALPACA_ROWS[:2])
+    finally:
+        requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+    # 删除后桶前缀清理（此时本地仓库目录已不存在，验证 force 删除路径）
+    keys = _obj_bucket_keys(ds_obj_backend["bucket"],
+                            f"datasets/p{DEFAULT_PROJECT}/{name}/")
+    assert keys == [], f"删除数据集后桶前缀应清理: {keys[:5]}"
 
 
 # ---------- 上传 / 版本 ----------

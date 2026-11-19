@@ -537,6 +537,20 @@ def resolve_model_path(asset: ModelAsset, db) -> str:
     return asset.path if asset else ""
 
 
+def ensure_deployment_model(asset: ModelAsset, db) -> None:
+    """单副本（object 型后端）：确保部署模型本地缓存可用，缺失从桶拉取。
+
+    正常路径（新启动/重启）已覆盖；此处供运行中部署扩容/单实例重建前防御性
+    检查——缓存被手工清理时避免拿不存在的路径起新容器。失败抛 RuntimeError。
+    """
+    from . import model_service
+    resolved = db.get(ModelAsset, asset.parent_asset_id) if (
+        asset and asset.type == "lora" and asset.parent_asset_id) else asset
+    if not model_service.ensure_model_local(resolved, db):
+        raise RuntimeError("模型文件不可用：本地不存在且对象存储拉取失败"
+                           "（object 型后端桶内为唯一副本，请确认模型已上传成功）")
+
+
 def wait_engine_image(dep: Deployment, db2) -> str:
     """引擎镜像按需下载（懒加载）：本地缺失自动后台拉取并等待就绪。
 
@@ -596,7 +610,20 @@ def launch_thread(did: int, note: str = "") -> str:
         db2 = SessionLocal()
         try:
             dep = db2.get(Deployment, did)
-            path = resolve_model_path(db2.get(ModelAsset, model_asset_id), db2)
+            asset = db2.get(ModelAsset, model_asset_id)
+            path = resolve_model_path(asset, db2)
+            # 单副本（object 型后端）：桶内为唯一权威副本，本地缓存缺失先拉取；
+            # 拉取失败直接 failed（不能拿不存在的路径起容器）
+            if path:
+                from . import model_service
+                resolved = db2.get(ModelAsset, asset.parent_asset_id) if (
+                    asset and asset.type == "lora" and asset.parent_asset_id) else asset
+                if not model_service.ensure_model_local(resolved, db2):
+                    dep.status = "failed"
+                    dep.error = (f"模型文件不可用：本地 {path} 不存在且对象存储拉取失败"
+                                 "（object 型后端桶内为唯一副本，请确认模型已上传成功）")
+                    db2.commit()
+                    return
             if wait_engine_image(dep, db2) != "ready":
                 return
             launch(dep, path)
@@ -747,6 +774,14 @@ def ensure_serving(asset: ModelAsset, db) -> tuple[str, str]:
     db.commit()
     db.refresh(dep)
     model_path = _resolve_model_path(asset, db)
+    # 单副本（object 型后端）：本地缓存缺失先从桶拉取，失败即报错
+    from . import model_service
+    resolved = db.get(ModelAsset, asset.parent_asset_id) if (
+        asset.type == "lora" and asset.parent_asset_id) else asset
+    if not model_service.ensure_model_local(resolved, db):
+        stop(dep)
+        raise RuntimeError("模型文件不可用：本地不存在且对象存储拉取失败"
+                           "（object 型后端桶内为唯一副本，请确认模型已上传成功）")
     launch(dep, model_path)
     ready = wait_ready(dep, timeout=900)
     db.refresh(dep)

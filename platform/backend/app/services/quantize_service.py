@@ -51,6 +51,13 @@ def launch(task: QuantTask) -> None:
     db = SessionLocal()
     try:
         asset = db.get(ModelAsset, task.model_asset_id)
+        # 单副本（object 型后端）：桶内为唯一副本，本地缓存缺失先拉取，失败抛异常
+        # → 调度器把任务置 failed（不能拿不存在的路径起量化容器）
+        from . import model_service
+        if not model_service.ensure_model_local(asset, db):
+            raise RuntimeError(
+                f"模型 {asset.name} 不可用：本地不存在且对象存储拉取失败"
+                "（object 型后端桶内为唯一副本，请确认模型已上传成功）")
         cfg = build_config(task, asset.path)
     finally:
         db.close()

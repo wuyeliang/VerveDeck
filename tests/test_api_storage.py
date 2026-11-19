@@ -4,8 +4,9 @@
 覆盖：
 - dashboard 汇总中的 storage 健康字段
 - storage 库 上传/下载 roundtrip（含本地缓存未命中回源）
-- 数据集版本 commit 后自动同步到 S3（端到端写路径）
-- 删除数据集时 S3 前缀一并清理
+- object 型数据集版本文件仅存桶（端到端写路径，单副本语义；
+  默认数据集已改为仅本地 /data，不再镜像主桶，见 test_api_datasets）
+- 删除数据集时 S3 前缀一并清理（force，不依赖本地目录存在）
 
 S3 未配置（S3_ENDPOINT 为空，纯本地模式）时整组 skip。
 运行环境：backend 容器内（与 500 套件一致，rustfs 经内网可达）。
@@ -97,13 +98,27 @@ def test_put_get_roundtrip(s3):
 
 @pytest.fixture()
 def s3_dataset(s3, admin_tok):
+    """单副本语义：默认数据集仅本地不写桶，端到端桶写路径改用 object 型后端
+    （指向平台主对象存储的同一桶，key 布局与主桶一致）"""
+    url = os.environ.get("S3_ENDPOINT", "")
+    host = url.split("//", 1)[1].split("/", 1)[0] if "://" in url else (url or "rustfs:9000")
+    r = requests.post(f"{BASE}/api/storage/backends", headers=H(admin_tok), timeout=60,
+                      json={"name": f"s3obj-{SUF}", "type": "object",
+                            "config": {"endpoint": host,
+                                       "access_key": os.environ.get("S3_ACCESS_KEY", "rustfsadmin"),
+                                       "secret_key": os.environ.get("S3_SECRET_KEY", "rustfsadmin"),
+                                       "bucket": s3["bucket"]}})
+    r.raise_for_status()
+    bid = r.json()["id"]
     name = f"s3ds-{SUF}"
     r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
-                      json={"project_id": DEFAULT_PROJECT, "name": name, "description": "s3 sync test"})
+                      json={"project_id": DEFAULT_PROJECT, "name": name, "description": "s3 sync test",
+                            "storage_backend_id": bid})
     r.raise_for_status()
     dsid = r.json()["id"]
     yield {"id": dsid, "name": name}
     requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+    requests.delete(f"{BASE}/api/storage/backends/{bid}", headers=H(admin_tok), timeout=30)
 
 
 def _vkey(project_id: int, name: str, version: int, fname: str) -> str:

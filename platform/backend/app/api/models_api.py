@@ -1,5 +1,13 @@
-"""模型资产仓库：基座模型纳管（HF 下载）+ 微调产物归档 + 血缘追踪"""
+"""模型资产仓库：基座模型纳管（HF 下载）+ 微调产物归档 + 血缘追踪
+
+存储位置（单副本语义）：
+- 未选择：仅本地 {data_dir}/models/hub；path 型后端：挂载点下 models/hub；
+- object 型后端：唯一权威副本在桶内，本地模型仓库路径是**服务缓存**
+  （上传/HF 下载全量入桶后删本地；训练/推理启动前经 model_service.
+  ensure_model_local 自动拉回，拉取失败任务直接报错）。
+"""
 import os
+import logging
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -12,6 +20,7 @@ from ..security import get_current_user, can_access_project, require_role
 from ..models import ModelAsset, Project, TrainingJob, DatasetVersion, User, StorageBackend
 from ..services import storage
 
+log = logging.getLogger("models")
 router = APIRouter(prefix="/api/models", tags=["models"])
 
 
@@ -38,7 +47,8 @@ def _resolve_backend(db, storage_backend_id: int | None):
 
 def _model_hub_root(db: Session, storage_backend_id: int | None) -> str:
     """模型仓库根目录：path 型后端 → <挂载点>/models/hub（与默认布局对齐）；
-    object 型/未选择 → 默认 {data_dir}/models/hub（object 型本地下载后再同步该桶）"""
+    object 型/未选择 → 默认 {data_dir}/models/hub（object 型该路径是服务缓存，
+    权威副本在桶内，key 前缀与该路径相对 data_dir 一一对应）"""
     b = _resolve_backend(db, storage_backend_id)
     if b is not None and b.type in storage.PATH_BASED_TYPES:
         root = storage.backend_root(b)
@@ -195,8 +205,9 @@ async def upload_model(project_id: int = Form(...), name: str = Form(...),
                        db=Depends(get_db), user=Depends(get_current_user)):
     """本地上传：zip 包（含 config.json / *.safetensors 的完整模型目录）→ 解压入仓
 
-    storage_backend_id>0 且为 path 型后端时解压到该后端挂载点下；
-    object 型后端解压到本地默认仓库后再同步该桶。
+    storage_backend_id>0 且为 path 型后端时解压到该后端挂载点下（唯一副本）；
+    object 型后端：先上传到该桶，全量成功后删除本地副本（桶内为唯一权威副本，
+    本地模型仓库路径变为服务缓存，训练/推理启动前自动拉回）。
     """
     import io
     import re
@@ -238,17 +249,23 @@ async def upload_model(project_id: int = Form(...), name: str = Form(...),
             or any(f.endswith(".safetensors") for f in files)):
         _abort()
         raise HTTPException(400, "zip 不是完整模型目录（缺 config.json 或 *.safetensors）")
+    size = _size(dest)
+    # object 型单副本：全量上传该桶后删除本地副本（上传不完整则保留本地防丢数据）
+    if b is not None and b.type == "object":
+        n_files = sum(len(fs) for _, _, fs in os.walk(dest))
+        ok_n = storage.put_dir(dest, b.config or {})
+        if n_files and ok_n >= n_files:
+            shutil.rmtree(dest, ignore_errors=True)  # 桶内为唯一权威副本
+        elif ok_n:
+            log.warning("模型 %s 桶同步不完整（%d/%d），保留本地副本", name, ok_n, n_files)
     a = ModelAsset(project_id=project_id, name=name, type="base", path=dest,
-                   source="upload", status="ready", size_bytes=_size(dest),
+                   source="upload", status="ready", size_bytes=size,
                    category=category or "",
                    tags=[t.strip() for t in tags.split(",") if t.strip()],
                    storage_backend_id=sbid,
                    note=note or f"local upload: {file.filename}", created_by=user.id)
     db.add(a)
     db.commit()
-    # object 型后端：本地解压完成后同步该桶（path 型已直接在挂载点上，无需同步）
-    if b is not None and b.type == "object":
-        storage.put_dir(dest, b.config or {})
     db.refresh(a)
     return _brief(a, db)
 
@@ -389,11 +406,12 @@ def delete_model(aid: int, db=Depends(get_db), user=Depends(require_role("super_
     b = db.get(StorageBackend, bid) if bid else None
     db.delete(a)
     db.commit()
-    # 清理：所选 object 型后端的桶对象 + 本地目录（限平台数据目录或 path 型后端挂载点内）
+    # 清理：object 型后端桶内唯一副本（force：本地缓存可能已删，不依赖本地存在）
+    #      + 本地目录（限平台数据目录或 path 型后端挂载点内）
     import shutil
     try:
         if b is not None and b.type == "object":
-            storage.delete_dir(path, b.config or {})
+            storage.delete_dir(path, b.config or {}, force=True)
         allowed_roots = [os.path.realpath(settings.data_dir)]
         if b is not None and b.type in storage.PATH_BASED_TYPES:
             allowed_roots.append(os.path.realpath(storage.backend_root(b)))

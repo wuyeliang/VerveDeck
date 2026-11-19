@@ -367,13 +367,22 @@ def _model_downloads(db):
             if ok:
                 if not asset.size_bytes:
                     asset.size_bytes = _dir_size(asset.path)
-                # 存储位置：object 型后端下载完成后同步该桶（path 型已直接落在挂载点）
+                # 单副本：object 型后端下载全量入桶后删本地（本地变服务缓存，
+                # 用时 ensure_model_local 拉回）；同步不完整保留本地防丢数据
                 if asset.storage_backend_id:
+                    import shutil as _shutil
                     from .models import StorageBackend
                     from .services import storage as st2
                     b = db.get(StorageBackend, asset.storage_backend_id)
                     if b is not None and b.type == "object":
-                        st2.put_dir(asset.path, b.config or {})
+                        cfg = b.config or {}
+                        n_files = sum(len(fs) for _, _, fs in os.walk(asset.path))
+                        ok_n = st2.put_dir(asset.path, cfg)
+                        if n_files and ok_n >= n_files:
+                            _shutil.rmtree(asset.path, ignore_errors=True)
+                        elif ok_n:
+                            log.warning("模型 %s 桶同步不完整（%d/%d），保留本地副本",
+                                        asset.name, ok_n, n_files)
             db.commit()
             continue
         if st["known"]:

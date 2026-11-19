@@ -1,19 +1,17 @@
 """对象存储层：rustfs（S3 兼容）+ 本地缓存 + 多存储位置
 
-设计约定：
-- 数据集版本文件（data.jsonl / raw.md）主存储在 rustfs 对象存储；
-  本地 /data/datasets 是**处理缓存**（训练 symlink、MinerU 解析、清洗/合成都需要本地路径）。
-- 写：先落本地缓存，再同步上传 S3（_create_version 统一收口）。
-- 读：本地缓存命中直接用；未命中从 S3 下载后复用（ensure_local）。
-- S3 未配置（settings.s3_endpoint 为空）时自动降级为纯本地存储，全部调用点无感。
-- S3 key 与本地路径一一对应：{data_dir} 相对路径（datasets/p{pid}/{name}/v{N}/...）。
-
-存储位置选择（数据集/模型可选注册后端）：
-- object 型后端：本地工作目录不变，put/ensure/delete 通过 cfg 参数指向该桶
-  （cfg=None 时走平台主对象存储，行为与历史完全一致）。
+设计约定（单副本语义：每个存储位置只存一份权威数据，本地为工作/缓存层）：
+- 未选存储位置（默认）：仅本地 /data，一份；不再自动镜像主对象存储
+  （存量旧数据集若桶内有历史镜像，ensure_local 未命中时仍可从主桶恢复）。
+- object 型后端：唯一副本在所选桶；写入时先落本地工作目录再上传，**全量上传
+  成功后删除本地**（上传不完整则保留本地防丢数据）；读取/训练/评测/推理用时
+  经 ensure_local / get_dir 按需拉回本地（临时缓存，可清理）。
 - path 型后端（local/nfs/block/juicefs）：文件直接建在挂载点下（backend_subdir），
   读写即本地、无同步步骤；juicefs 的 FUSE 挂载点在宿主可见，backend 与 worker 容器
   经 /data（或同路径 bind）直接访问。
+- S3 key 与本地路径一一对应：{data_dir} 相对路径（datasets/p{pid}/{name}/v{N}/...、
+  models/hub/{name}/...）；put_dir/get_dir/delete_dir 互为逆操作。
+- S3 未配置（settings.s3_endpoint 为空）时主存储自动降级为纯本地，全部调用点无感。
 """
 import os
 import logging
@@ -112,7 +110,11 @@ def put_file(local_path: str, cfg: dict | None = None) -> bool:
 
 
 def put_dir(local_dir: str, cfg: dict | None = None) -> int:
-    """上传目录下全部文件（版本目录：data.jsonl + raw.md 等），返回成功数"""
+    """上传目录下全部文件（版本目录：data.jsonl + raw.md 等），返回成功数。
+
+    调用方以「成功数 >= 目录内文件总数」判定全量上传成功，成功后才可删除本地源
+    （单副本语义：桶内是唯一权威副本，上传不完整时保留本地防丢数据）。
+    """
     if not os.path.isdir(local_dir):
         return 0
     n = 0
@@ -120,6 +122,38 @@ def put_dir(local_dir: str, cfg: dict | None = None) -> int:
         for f in files:
             if put_file(os.path.join(root, f), cfg):
                 n += 1
+    return n
+
+
+def get_dir(local_dir: str, cfg: dict | None = None) -> int:
+    """下载 local_dir 对应前缀下全部对象到 local_dir（put_dir 的逆操作），返回成功数。
+
+    单副本（object 型后端）场景下用时拉取：本地缓存缺失时把桶内唯一副本
+    恢复到本地工作/服务路径。key 前缀与本地路径按 data_dir 相对路径一一对应。
+    """
+    try:
+        prefix = _key(local_dir.rstrip(os.sep)) + "/"
+        c, bucket = _bucket_for(cfg)
+    except Exception as e:
+        log.warning("s3 resolve bucket failed: %s", e)
+        return 0
+    if c is None:
+        return 0
+    n = 0
+    try:
+        for o in c.list_objects(bucket, prefix=prefix, recursive=True):
+            if o.is_dir:
+                continue
+            rel = o.object_name[len(prefix):]
+            if not rel:
+                continue
+            dest = os.path.join(local_dir, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            c.fget_object(bucket, o.object_name, dest)
+            n += 1
+        log.info("s3 downloaded prefix %s (%d objects) from %s", prefix, n, bucket)
+    except Exception as e:
+        log.warning("s3 download prefix %s failed: %s", local_dir, e)
     return n
 
 
@@ -147,9 +181,13 @@ def ensure_local(local_path: str, cfg: dict | None = None) -> bool:
         return False
 
 
-def delete_dir(local_dir: str, cfg: dict | None = None) -> None:
-    """删除对象存储上对应前缀（数据集删除时调用，失败仅告警）"""
-    if not os.path.isdir(local_dir):
+def delete_dir(local_dir: str, cfg: dict | None = None, force: bool = False) -> None:
+    """删除对象存储上对应前缀（数据集/模型删除时调用，失败仅告警）。
+
+    force=True：不要求本地目录存在（object 型单副本场景本地缓存可能已被清理，
+    仍须按前缀删除桶内唯一副本，避免孤儿对象）。
+    """
+    if not force and not os.path.isdir(local_dir):
         return
     prefix = ""
     try:
@@ -384,10 +422,10 @@ def test_backend(btype: str, cfg: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 存储位置选择：数据集/模型可选已注册的存储后端
+# 存储位置选择：数据集/模型可选已注册的存储后端（单副本语义）
 #   path 型（local/nfs/block/juicefs）：文件直接建在挂载点下（backend_subdir），无同步；
-#   object 型：本地工作目录 + 同步到该桶（put/ensure/delete 传 cfg）；
-#   未选择（None）：平台默认（本地 /data + 主对象存储 rustfs）。
+#   object 型：唯一副本在该桶（put/ensure/delete 传 cfg），本地仅工作/缓存；
+#   未选择（None）：平台默认，仅本地 /data（不再镜像主对象存储）。
 # ---------------------------------------------------------------------------
 
 PATH_BASED_TYPES = ("local", "nfs", "block", "juicefs")

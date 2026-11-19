@@ -60,16 +60,21 @@ def _create_version(db, dset: Dataset, rows: list[dict], uid: int, fmt: str,
         sample_count=n, fmt=fmt, status="draft", note=note, created_by=uid)
     db.add(ver)
     db.commit()
-    # 对象存储同步到所选存储位置：未选择→主存储 rustfs（历史默认）；
-    # object 型后端→该桶；path 型后端仓库已直接在挂载点上，不另存副副本
-    # （如 juicefs 数据块本就在对象存储，避免双份占用）。未配置/失败静默降级。
+    # 单副本语义：未选择→仅本地 /data（不再镜像主对象存储）；path 型→已在挂载点上；
+    # object 型→唯一副本上传到所选桶，全量成功后删除本地工作目录（上传不完整则
+    # 保留本地防丢数据，读取侧 ensure_local 仍按本地优先）。失败静默降级为本地。
     from ..models import StorageBackend
     from ..services import storage
     b = db.get(StorageBackend, dset.storage_backend_id) if dset.storage_backend_id else None
-    if b is None:
-        storage.put_dir(vdir)
-    elif b.type == "object":
-        storage.put_dir(vdir, b.config or {})
+    if b is not None and b.type == "object":
+        n_files = sum(len(files) for _, _, files in os.walk(vdir))
+        ok_n = storage.put_dir(vdir, b.config or {})
+        if n_files and ok_n >= n_files:
+            import shutil
+            shutil.rmtree(vdir, ignore_errors=True)  # 桶内为唯一副本，清理本地工作目录
+        elif ok_n:
+            log.warning("数据集 %s v%d 桶同步不完整（%d/%d），保留本地副本",
+                        dset.name, ver_no, ok_n, n_files)
     db.refresh(ver)
     return ver
 
@@ -162,16 +167,17 @@ def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("sup
     db.query(DatasetVersion).filter_by(dataset_id=dsid).delete()
     db.delete(d)
     db.commit()
-    # 清理：所选存储位置的对象存储（默认→主存储；object 型→该桶；path 型无副副本不处理）
-    #      + 本地仓库目录（path 型即挂载点目录）+ 解析上传缓存
+    # 清理：object 型→按前缀删桶内唯一副本（force：本地缓存可能已删，不依赖本地存在）；
+    #      默认→清理存量旧镜像（新版本不再写主桶，无匹配对象时为 no-op）；path 型无需；
+    #      最后删本地仓库目录（path 型即挂载点目录）+ 解析上传缓存
     import shutil
     from ..models import StorageBackend
     from ..services import storage
     b = db.get(StorageBackend, bid) if bid else None
-    if b is None:
+    if b is not None and b.type == "object":
+        storage.delete_dir(repo, b.config or {}, force=True)
+    elif b is None:
         storage.delete_dir(repo)
-    elif b.type == "object":
-        storage.delete_dir(repo, b.config or {})
     shutil.rmtree(repo, ignore_errors=True)
     shutil.rmtree(os.path.join(settings.data_dir, "uploads", str(dsid)), ignore_errors=True)
     return {"ok": True}

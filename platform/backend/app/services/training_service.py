@@ -640,8 +640,16 @@ def launch(job: TrainingJob) -> None:
       rendezvous 参数经 exec env 注入，镜像内 launcher 自启 torchrun；
       rank0 为主节点，MASTER_ADDR 取其容器 IP（容器网络互达）
     """
+    # 单副本（object 型后端）：基座模型桶内为唯一副本，本地缓存缺失先拉取；
+    # 失败抛异常 → 调度器把任务置 failed（不能拿不存在的路径起训练容器）
+    from . import model_service
     db = SessionLocal()
     try:
+        base = db.get(ModelAsset, job.base_model_id) if job.base_model_id else None
+        if base and not model_service.ensure_model_local(base, db):
+            raise RuntimeError(
+                f"模型 {base.name} 不可用：本地不存在且对象存储拉取失败"
+                "（object 型后端桶内为唯一副本，请确认模型已上传成功）")
         cfg = write_config(job, db)
     finally:
         db.close()
