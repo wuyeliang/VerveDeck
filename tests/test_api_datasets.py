@@ -196,6 +196,56 @@ def test_default_dataset_stays_in_datadir(admin_tok):
         requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
 
 
+def _main_bucket_keys(prefix):
+    """主对象存储桶指定前缀下的 key 列表（主存储未启用/不可达返回 None，由测试侧降级 skip）"""
+    try:
+        from app.config import settings
+        from app.services import storage
+    except Exception:
+        return None
+    if not storage.enabled():
+        return None
+    try:
+        storage.ensure_bucket()
+        return [o.object_name for o in storage.client().list_objects(
+            settings.s3_bucket, prefix=prefix, recursive=True)]
+    except Exception:
+        return None
+
+
+def test_path_type_dataset_no_main_mirror(admin_tok, ds_loc_backend):
+    """path 型存储位置：版本文件只落在挂载点，主对象存储桶不写镜像副副本（避免双份占用）"""
+    name = f"dsmirr-{SUF}"
+    r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": name,
+                            "storage_backend_id": ds_loc_backend})
+    r.raise_for_status()
+    dsid = r.json()["id"]
+    try:
+        _upload(admin_tok, dsid, ALPACA_ROWS[:2])
+        keys = _main_bucket_keys(f"datasets/p{DEFAULT_PROJECT}/{name}/")
+        if keys is None:
+            pytest.skip("主对象存储不可用，跳过镜像断言")
+        assert keys == [], f"主桶不应含 path 型数据集镜像副本: {keys[:5]}"
+    finally:
+        requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+
+
+def test_default_dataset_mirrored_to_main_bucket(admin_tok):
+    """未选存储位置：版本文件默认镜像同步到主对象存储桶（跨节点 ensure_local 恢复的 fallback 源）"""
+    name = f"dsmirrdef-{SUF}"
+    dsid = _mk_ds(admin_tok, name)
+    try:
+        _upload(admin_tok, dsid, ALPACA_ROWS[:1])
+        keys = _main_bucket_keys(f"datasets/p{DEFAULT_PROJECT}/{name}/")
+        if keys is None:
+            pytest.skip("主对象存储不可用，跳过镜像断言")
+        assert any(k.endswith("/v1/data.jsonl") for k in keys), \
+            f"默认数据集应镜像到主桶: {keys[:5]}"
+    finally:
+        requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+
+
 # ---------- 上传 / 版本 ----------
 
 def test_upload_alpaca_count(admin_tok, dctx):

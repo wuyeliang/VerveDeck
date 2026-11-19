@@ -34,6 +34,11 @@ export default function DataCenter() {
   useEffect(() => {
     api.get('/api/storage/backends/options').then((r) => setBackends(r.data || [])).catch(() => setBackends([]))
   }, [])
+  // 后端类型友好名（复用存储页 type* 键）
+  const typeLabel: Record<string, string> = {
+    object: t('storage.typeObject'), local: t('storage.typeLocal'), nfs: t('storage.typeNfs'),
+    block: t('storage.typeBlock'), juicefs: t('storage.typeJuicefs'),
+  }
 
   const load = useCallback(() => {
     api.get('/api/datasets', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
@@ -158,10 +163,10 @@ export default function DataCenter() {
             </Form.Item></Col>
           </Row>
           <Form.Item name="storage_backend_id" label={t('data.storageLocation')}
-            tooltip={t('data.storageLocationTip')}>
+            tooltip={<span style={{ whiteSpace: 'pre-line' }}>{t('data.storageLocationTip')}</span>}>
             <Select allowClear options={[
               { value: '', label: t('data.storageDefault') },
-              ...backends.map((b) => ({ value: b.id, label: `${b.name}（${b.type}）` })),
+              ...backends.map((b) => ({ value: b.id, label: `${b.name}（${typeLabel[b.type] || b.type}）` })),
             ]} />
           </Form.Item>
           <Form.Item label={t('data.importMethod')} required style={{ marginBottom: 0 }}>

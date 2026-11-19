@@ -60,10 +60,16 @@ def _create_version(db, dset: Dataset, rows: list[dict], uid: int, fmt: str,
         sample_count=n, fmt=fmt, status="draft", note=note, created_by=uid)
     db.add(ver)
     db.commit()
-    # 对象存储同步到所选存储位置（object 型后端→该桶；未选择→主存储 rustfs；
-    # path 型后端仓库已在挂载点上、无需同步；本地文件已写入，未配置/失败时静默降级）
+    # 对象存储同步到所选存储位置：未选择→主存储 rustfs（历史默认）；
+    # object 型后端→该桶；path 型后端仓库已直接在挂载点上，不另存副副本
+    # （如 juicefs 数据块本就在对象存储，避免双份占用）。未配置/失败静默降级。
+    from ..models import StorageBackend
     from ..services import storage
-    storage.put_dir(vdir, ds._object_cfg(dset, db))
+    b = db.get(StorageBackend, dset.storage_backend_id) if dset.storage_backend_id else None
+    if b is None:
+        storage.put_dir(vdir)
+    elif b.type == "object":
+        storage.put_dir(vdir, b.config or {})
     db.refresh(ver)
     return ver
 
@@ -143,6 +149,7 @@ def create_dataset(req: DsReq, db=Depends(get_db), user=Depends(get_current_user
 def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("super_admin", "tenant_admin", "developer"))):
     d = _get_ds(db, dsid, user)
     repo = ds.dataset_repo_dir(d.project_id, d.name, dset=d, db=db)  # commit 后 ORM 属性过期，先捕获路径
+    bid = d.storage_backend_id  # 同上：删除提交前先捕获存储位置
     vids = {v.id for v in db.query(DatasetVersion).filter_by(dataset_id=dsid).all()}
     # 引用检查：训练任务（数据版本 / 由本数据集产物）与评测任务
     from ..models import TrainingJob, EvalTask
@@ -155,10 +162,16 @@ def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("sup
     db.query(DatasetVersion).filter_by(dataset_id=dsid).delete()
     db.delete(d)
     db.commit()
-    # 清理：所选存储位置的对象存储（object 型/默认）+ 本地仓库目录（path 型即挂载点）+ 解析上传缓存
+    # 清理：所选存储位置的对象存储（默认→主存储；object 型→该桶；path 型无副副本不处理）
+    #      + 本地仓库目录（path 型即挂载点目录）+ 解析上传缓存
     import shutil
+    from ..models import StorageBackend
     from ..services import storage
-    storage.delete_dir(repo, ds._object_cfg(d, db))
+    b = db.get(StorageBackend, bid) if bid else None
+    if b is None:
+        storage.delete_dir(repo)
+    elif b.type == "object":
+        storage.delete_dir(repo, b.config or {})
     shutil.rmtree(repo, ignore_errors=True)
     shutil.rmtree(os.path.join(settings.data_dir, "uploads", str(dsid)), ignore_errors=True)
     return {"ok": True}

@@ -47,6 +47,11 @@ export default function ModelRepo() {
   useEffect(() => {
     api.get('/api/storage/backends/options').then((r) => setBackends(r.data || [])).catch(() => setBackends([]))
   }, [])
+  // 后端类型友好名（复用存储页 type* 键）
+  const typeLabel: Record<string, string> = {
+    object: t('storage.typeObject'), local: t('storage.typeLocal'), nfs: t('storage.typeNfs'),
+    block: t('storage.typeBlock'), juicefs: t('storage.typeJuicefs'),
+  }
 
   const load = useCallback(() => {
     api.get('/api/models', { params: { project_id: projectId, q } }).then((r) => setList(r.data)).catch(() => {})
@@ -278,10 +283,10 @@ export default function ModelRepo() {
                 </Space>
                 <Form.Item name="note" label={t('models.note')}><Input /></Form.Item>
                 <Form.Item name="storage_backend_id" label={t('models.storageLocation')}
-                  tooltip={t('models.storageLocationTip')}>
+                  tooltip={<span style={{ whiteSpace: 'pre-line' }}>{t('models.storageLocationTip')}</span>}>
                   <Select allowClear options={[
                     { value: '', label: t('models.storageDefault') },
-                    ...backends.map((b) => ({ value: b.id, label: `${b.name}（${b.type}）` })),
+                    ...backends.map((b) => ({ value: b.id, label: `${b.name}（${typeLabel[b.type] || b.type}）` })),
                   ]} />
                 </Form.Item>
                 <Button type="primary" htmlType="submit">{t('common.create')}</Button>
@@ -296,10 +301,11 @@ export default function ModelRepo() {
                   <Input value={upNote} onChange={(e) => setUpNote(e.target.value)} placeholder={t('models.note')} style={{ flex: 1 }} />
                   <Input value={upCat} onChange={(e) => setUpCat(e.target.value)} placeholder={t('models.categoryPh')} style={{ width: 180 }} />
                   <Input value={upTags} onChange={(e) => setUpTags(e.target.value)} placeholder={t('models.tagsPh') + '（逗号分隔）'} style={{ width: 180 }} />
-                  <Select value={upStorage} onChange={setUpStorage} style={{ width: 200 }}
+                  <Select value={upStorage} onChange={setUpStorage} style={{ width: 280 }}
+                    title={t('models.storageLocationTip')}
                     options={[
                       { value: '', label: `${t('models.storageLocation')}: ${t('models.storageDefault')}` },
-                      ...backends.map((b) => ({ value: b.id, label: `${t('models.storageLocation')}: ${b.name}（${b.type}）` })),
+                      ...backends.map((b) => ({ value: b.id, label: `${t('models.storageLocation')}: ${b.name}（${typeLabel[b.type] || b.type}）` })),
                     ]} />
                 </Space>
                 <Upload.Dragger accept=".zip" showUploadList={false} beforeUpload={submitUpload} disabled={upPct != null}>
