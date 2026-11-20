@@ -5,6 +5,7 @@ node_modules/
 dist/
 **/dist/
 build/
+*.tsbuildinfo
 # 顶层 build/ 为项目一键编译脚本与文档，需入库（嵌套的 build/ 仍忽略）
 !/build/
 
