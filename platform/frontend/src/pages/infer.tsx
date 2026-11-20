@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, Drawer,
   Descriptions, message, Popconfirm, Card, Tabs, Row, Col, Statistic,
-  Collapse, Switch, Tooltip, Dropdown,
+  Switch, Tooltip, Dropdown,
 } from 'antd'
 import {
   PlusOutlined, PoweroffOutlined, PlayCircleOutlined, CopyOutlined,
@@ -22,6 +22,144 @@ const ENGINE_IMAGES: Record<string, string> = {
   sglang: 'lmsysorg/sglang:v0.5.23',
 }
 
+// 部署页卡片分组（GPUWorks 式信息架构：分组卡片 + 字段下方说明文字）
+const Group = ({ title, extra, children }: {
+  title: string; extra?: React.ReactNode; children: React.ReactNode;
+}) => (
+  <Card size="small" title={<span style={{ fontSize: 13, fontWeight: 600 }}>{title}</span>}
+    extra={extra} style={{ marginBottom: 12 }}>
+    {children}
+  </Card>
+)
+
+// 启动配置预览：表单字段变化（防抖 500ms）调后端 /preview（与 build_cmd 同一命令拼装路径，
+// 保证预览 == 实际启动命令），深色代码块渲染 镜像 / 容器环境变量 / 各实例启动命令（可复制）
+function LaunchPreview({ form, tick, loraModels, t }: {
+  form: any; tick: number; loraModels: any[]; t: (k: string, o?: Record<string, any>) => string;
+}) {
+  const [pv, setPv] = useState<any>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (!tick) return
+    let stop = false
+    setBusy(true)
+    const h = setTimeout(async () => {
+      const v = form.getFieldsValue(true) || {}
+      // 组装口径与 submitCreate 完全一致（advanced/kv/nccl/lora）
+      const adv: Record<string, any> = {}
+      if (v.engine === 'vllm') {
+        if (v.adv_max_num_seqs != null && v.adv_max_num_seqs !== '') adv.max_num_seqs = v.adv_max_num_seqs
+        if (v.adv_dtype) adv.dtype = v.adv_dtype
+        if (v.adv_enforce_eager) adv.enforce_eager = true
+        if (v.adv_prefix_caching) adv.enable_prefix_caching = true
+        if (v.adv_chunked_prefill) adv.enable_chunked_prefill = true
+        if (v.adv_served_model_name?.trim()) adv.served_model_name = v.adv_served_model_name.trim()
+        if (v.adv_api_key?.trim()) adv.api_key = v.adv_api_key.trim()
+      } else {
+        if (v.adv_mem_fraction_static != null && v.adv_mem_fraction_static !== '') adv.mem_fraction_static = v.adv_mem_fraction_static
+        if (v.adv_disable_cuda_graph) adv.disable_cuda_graph = true
+      }
+      if (v.adv_extra_args?.trim()) adv.extra_args = v.adv_extra_args.trim()
+      const kv: Record<string, number> = {}
+      if (v.engine === 'sglang') {
+        if (v.adv_hicache_size != null && v.adv_hicache_size !== '') kv.hicache_size = v.adv_hicache_size
+      } else if (v.adv_cpu_offload_gb != null && v.adv_cpu_offload_gb !== '') {
+        kv.cpu_offload_gb = v.adv_cpu_offload_gb
+      }
+      let ncclEnv: Record<string, string> = {}
+      if (v.adv_nccl_env?.trim()) {
+        try {
+          const o = JSON.parse(v.adv_nccl_env)
+          if (o && typeof o === 'object' && !Array.isArray(o)) {
+            ncclEnv = Object.fromEntries(Object.entries(o).map(([k, val]: any) => [k, String(val)]))
+          } else {
+            if (!stop) { setErr(t('infer.ncclEnvInvalid')); setBusy(false) }
+            return
+          }
+        } catch {
+          if (!stop) { setErr(t('infer.ncclEnvInvalid')); setBusy(false) }
+          return
+        }
+      }
+      const adapters: any[] = []
+      ;(v.lora_assets || []).forEach((aid: number) => {
+        const a = loraModels.find((x: any) => x.id === aid)
+        if (a) adapters.push({ name: a.name.replace(/[^a-zA-Z0-9_-]/g, '_'), path: a.path })
+      })
+      try {
+        const r = await api.post('/api/inference/deployments/preview', {
+          name: v.name || '', model_asset_id: v.model_asset_id ?? null,
+          engine: v.engine || 'vllm', quantization: v.quantization || 'none',
+          tensor_parallel: v.tensor_parallel || 1, max_model_len: v.max_model_len || 8192,
+          gpu_mem_util: v.gpu_mem_util ?? 0.85,
+          enable_lora: adapters.length > 0, lora_adapters: adapters,
+          advanced: adv,
+          pd_mode: v.pd_mode || 'off',
+          prefill_replicas: v.prefill_replicas || 1, prefill_tp: v.prefill_tp || 1,
+          decode_replicas: v.decode_replicas || 1, decode_tp: v.decode_tp || 1,
+          kv_connector: v.kv_connector || 'nixl', node_count: v.node_count || 1,
+          nccl_env: ncclEnv,
+          backend_name: v.backend_name || null, backend_version: v.backend_version || null,
+          cache_service_id: v.cache_service_id ?? null,
+          kv_cache_ext: kv,
+        })
+        if (!stop) { setPv(r.data); setErr(''); setBusy(false) }
+      } catch (e: any) {
+        if (!stop) { setErr(e.response?.data?.detail || e.message); setBusy(false) }
+      }
+    }, 500)
+    return () => { stop = true; clearTimeout(h) }
+  }, [tick])
+
+  const dark: React.CSSProperties = {
+    margin: 0, padding: '10px 12px', background: '#1e1e2e', color: '#e2e2e8',
+    borderRadius: 6, fontSize: 12, lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  }
+  const copyLine = (text: string) => {
+    navigator.clipboard?.writeText(text).then(
+      () => message.success(t('infer.copied')),
+      () => message.error(t('infer.copy')),
+    )
+  }
+  if (!pv) {
+    return <div style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12 }}>
+      {busy ? t('infer.previewLoading') : t('infer.previewEmpty')}
+    </div>
+  }
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        <Tag color="blue"><code style={{ fontSize: 12 }}>{pv.image || '—'}</code></Tag>
+        {pv.commands.map((c: any) => (
+          <Tag key={c.label}>{c.label} · {t('infer.gpusPer', { n: c.gpus })}</Tag>
+        ))}
+      </div>
+      {Object.keys(pv.env || {}).length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--ant-color-text-secondary)', marginBottom: 4 }}>
+            {t('infer.previewEnv')}
+          </div>
+          <pre style={dark}>{Object.entries(pv.env).map(([k, val]) => `${k}=${val}`).join('\n')}</pre>
+        </div>
+      )}
+      {pv.commands.map((c: any) => (
+        <div key={c.label} style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <Tag color={c.label.startsWith('prefill') ? 'orange' : c.label.startsWith('decode') ? 'green' : 'blue'}>{c.label}</Tag>
+            <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => copyLine(c.cmd)}>
+              {t('infer.copy')}
+            </Button>
+          </div>
+          <pre style={dark}>{c.cmd}</pre>
+        </div>
+      ))}
+      {err && <div style={{ color: '#cf1322', fontSize: 12 }}>{err}</div>}
+    </div>
+  )
+}
+
 export default function Inference() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
@@ -30,6 +168,8 @@ export default function Inference() {
   const [kw, setKw] = useState('')
   const [stFilter, setStFilter] = useState('')
   const [open, setOpen] = useState(false)
+  const [createTab, setCreateTab] = useState<'quick' | 'expert'>('quick')
+  const [formTick, setFormTick] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
   const [models, setModels] = useState<any[]>([])
@@ -201,6 +341,8 @@ export default function Inference() {
       setModels(all.filter((x: any) => x.status === 'ready' && (x.type === 'base' || x.type === 'merged')))
       setLoraModels(all.filter((x: any) => x.type === 'lora'))
     } catch { /* ignore */ }
+    setCreateTab('quick')
+    setFormTick(1)  // 抽屉打开即按默认值生成启动配置预览
     setOpen(true)
   }
 
@@ -580,214 +722,326 @@ console.log(resp.choices[0].message.content)`
         locale={{ emptyText: t('infer.empty') }}
         columns={columns} />
 
-      {/* 新建部署（右侧 Drawer：基本信息 / 模型 / 资源 / 拓扑 / 参数 / 高级） */}
-      <Drawer title={t('infer.modalTitle')} width={640} open={open} onClose={() => setOpen(false)}
+      {/* 新建部署（GPUWorks 式信息架构：快捷/专家双 tab + 分组卡片 + 启动配置预览） */}
+      <Drawer title={t('infer.modalTitle')} width={720} open={open} onClose={() => setOpen(false)}
         footer={<div style={{ textAlign: 'right' }}>
           <Space>
             <Button onClick={() => setOpen(false)}>{t('common.cancel')}</Button>
             <Button type="primary" loading={submitting} onClick={submitCreate}>{t('common.create')}</Button>
           </Space>
         </div>}>
-        <Form form={form} layout="vertical">
-          <SectionTitle>{t('infer.secBasic')}</SectionTitle>
-          <Form.Item name="name" label={t('infer.deployName')} rules={[{ required: true, pattern: /^[a-zA-Z0-9_-]+$/, message: t('infer.nameRule') }]}>
-            <Input placeholder={t('infer.namePh')} maxLength={60} showCount />
-          </Form.Item>
-          <Form.Item name="description" label={t('infer.desc')}>
-            <Input.TextArea placeholder={t('infer.descPh')} maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
-          </Form.Item>
-
-          <SectionTitle>{t('infer.secModel')}</SectionTitle>
-          <Form.Item name="model_asset_id" label={t('infer.modelAsset')} rules={[{ required: true }]}>
-            <Select options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
-          </Form.Item>
-
-          <SectionTitle>{t('infer.secResource')}</SectionTitle>
-          <Space wrap align="start">
-            <Form.Item name="engine" label={t('infer.engine')}>
-              <Select style={{ width: 130 }} options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
-            </Form.Item>
-            <Form.Item label={t('infer.dImage')}>
-              <code style={{ fontSize: 12, background: 'var(--ant-color-fill-tertiary)', padding: '4px 8px', borderRadius: 4 }}>
-                {(selBackendObj && selBackendObj.source === 'custom'
-                  ? (selBackendObj.versions.find((v: any) => v.version === selBackendVer)?.image
-                    || selBackendObj.current_image)
-                  : ENGINE_IMAGES[eng]) || '—'}
-              </code>
-            </Form.Item>
-          </Space>
-          {/* 推理配置：后端注册表（builtin 引擎 / 自定义后端）+ 版本 + 缓存加速服务 */}
-          <Space wrap align="start" style={{ marginTop: 8 }}>
-            <Form.Item name="backend_name" label={t('infer.backend')} tooltip={t('infer.backendHint')}>
-              <Select style={{ width: 240 }} allowClear showSearch optionFilterProp="label"
-                placeholder={t('infer.backendDefault')}
-                onChange={(v) => {
-                  if (v) form.setFieldsValue({ backend_version: '' })
-                  if (v && backends.find((b: any) => b.name === v)?.source === 'custom'
-                    && form.getFieldValue('pd_mode') === 'pd') {
-                    form.setFieldsValue({ pd_mode: 'off' })  // 自定义后端不支持 PD 分离
-                  }
-                }}
-                options={[
-                  ...backends.filter((b: any) => b.source === 'builtin').map((b: any) => ({
-                    value: '', label: t('infer.backendDefault'), disabled: true,
-                  })),
-                  ...backends.filter((b: any) => b.source === 'custom').map((b: any) => ({
-                    value: b.name, label: b.name,
-                  })),
-                ]} />
-            </Form.Item>
-            {selBackendObj && selBackendObj.source === 'custom' && (
-              <Form.Item name="backend_version" label={t('infer.backendVer')} tooltip={t('infer.backendVerHint')}>
-                <Select style={{ width: 180 }} allowClear placeholder={t('infer.backendVerDefault')}
-                  options={selBackendObj.versions.map((v: any) => ({
-                    value: v.version,
-                    label: v.is_default ? `${v.version} (${t('infer.defaultVer')})` : v.version,
-                  }))} />
-              </Form.Item>
-            )}
-            <Form.Item name="cache_service_id" label={t('infer.cacheSvc')} tooltip={t('infer.cacheSvcHint')}>
-              <Select style={{ width: 200 }} allowClear showSearch optionFilterProp="label"
-                placeholder={t('infer.cacheSvcNone')}
-                options={cacheServices.map((c: any) => ({ value: c.id, label: c.name }))} />
-            </Form.Item>
-          </Space>
-          <Space wrap align="start">
-            <Form.Item name="tensor_parallel" label={t('infer.tp')}><InputNumber min={1} max={8} /></Form.Item>
-            <Form.Item name="replicas" label={t('infer.replicas')}><InputNumber min={1} max={8} /></Form.Item>
-            <Form.Item label={t('infer.formNode')} tooltip={t('infer.formNodeHint')}>
-              <Input disabled value={nodeName || '—'} style={{ width: 170 }} />
-            </Form.Item>
-          </Space>
-          <div style={{ color: 'var(--ant-color-text-secondary)', fontSize: 12, marginTop: -4 }}>
-            <ThunderboltOutlined />{' '}
-            {pdMode === 'pd'
-              ? t('infer.gpuNeedPd', { p: prefillReplicas, pt: prefillTp, d: decodeReplicas, dt: decodeTp, n: gpuNeed })
-              : t('infer.gpuNeed', { n: gpuNeed, tp, r: rep })}
-          </div>
-
-          <SectionTitle>{t('infer.secTopology')}</SectionTitle>
-          <Space wrap align="start">
-            <Form.Item name="pd_mode" label={t('infer.pdMode')}
-              tooltip={selBackendObj && selBackendObj.source === 'custom'
-                ? t('infer.pdDisabledCustom') : t('infer.pdModeHint')}>
-              <Select style={{ width: 200 }}
-                disabled={!!selBackendObj && selBackendObj.source === 'custom'}
-                options={[
-                  { value: 'off', label: t('infer.pdOff') },
-                  { value: 'pd', label: t('infer.pdOn') },
-                ]} />
-            </Form.Item>
-            <Form.Item label={t('infer.rdmaStatus')} tooltip={t('infer.rdmaStatusHint')}>
-              <span>
-                {rdma.present
-                  ? <Tag color="green">{t('infer.rdmaOn', { d: rdma.devices.join(', ') })}</Tag>
-                  : <Tag>{t('infer.rdmaOff')}</Tag>}
-              </span>
-            </Form.Item>
-          </Space>
-          {pdMode === 'pd' && (
-            <>
-              <Space wrap align="start">
-                <Form.Item name="prefill_replicas" label={t('infer.prefillReplicas')} tooltip={t('infer.prefillReplicasHint')}><InputNumber min={1} max={8} /></Form.Item>
-                <Form.Item name="prefill_tp" label={t('infer.prefillTp')}><InputNumber min={1} max={8} /></Form.Item>
-                <Form.Item name="decode_replicas" label={t('infer.decodeReplicas')} tooltip={t('infer.decodeReplicasHint')}><InputNumber min={1} max={8} /></Form.Item>
-                <Form.Item name="decode_tp" label={t('infer.decodeTp')}><InputNumber min={1} max={8} /></Form.Item>
-                <Form.Item name="kv_connector" label={t('infer.kvConnector')} tooltip={t('infer.kvConnectorHint')}>
-                  <Select style={{ width: 140 }} options={[
-                    { value: 'nixl', label: 'NIXL' }, { value: 'mooncake', label: 'Mooncake' },
-                  ]} />
-                </Form.Item>
-              </Space>
-              <div style={{ color: 'var(--ant-color-text-secondary)', fontSize: 12, marginTop: -4 }}>
-                <ThunderboltOutlined /> {t('infer.gpuNeedPd', { p: prefillReplicas, pt: prefillTp, d: decodeReplicas, dt: decodeTp, n: gpuNeed })}
-              </div>
-            </>
-          )}
-          <Space wrap align="start" style={{ marginTop: pdMode === 'pd' ? 8 : 0 }}>
-            <Form.Item name="node_count" label={t('infer.nodeCount')} tooltip={t('infer.nodeCountHint')}><InputNumber min={1} max={8} /></Form.Item>
-            <Form.Item name="adv_nccl_env" label={t('infer.ncclEnv')} tooltip={t('infer.ncclEnvHint')}
-              style={{ flex: 1, minWidth: 240, marginBottom: 0 }}>
-              <Input.TextArea placeholder={'{"NCCL_IB_DISABLE": "0"}'} autoSize={{ minRows: 1, maxRows: 2 }} style={{ width: '100%' }} />
-            </Form.Item>
-          </Space>
-
-          <SectionTitle>{t('infer.secParams')}</SectionTitle>
-          <Space wrap>
-            <Form.Item name="quantization" label={t('infer.quant')}>
-              <Select style={{ width: 120 }} options={['none', 'awq', 'gptq', 'int8'].map((q) => ({ value: q, label: q }))} />
-            </Form.Item>
-            <Form.Item name="max_model_len" label={t('infer.maxLen')}><InputNumber min={1024} step={1024} /></Form.Item>
-            <Form.Item name="gpu_mem_util" label={t('infer.memUtil')}><InputNumber step={0.05} min={0.3} max={0.95} /></Form.Item>
-          </Space>
-          <Form.Item name="lora_assets" label={t('infer.extraLora')} style={{ marginTop: 4 }}>
-            <Select mode="multiple" options={loraModels.map((m: any) => ({ value: m.id, label: m.name }))} placeholder={t('common.optional')} />
-          </Form.Item>
-          <Collapse ghost size="small" style={{ marginTop: 4, background: 'transparent' }} items={[{
-            key: 'adv',
-            label: <span style={{ fontWeight: 600 }}>{t('infer.advTitle')}</span>,
-            children: (
-              <div>
-                <div style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginBottom: 8 }}>{t('infer.advHint')}</div>
-                {eng === 'vllm' ? (
-                  <>
+        <Tabs activeKey={createTab} onChange={(k) => setCreateTab(k as 'quick' | 'expert')}
+          items={[
+            {
+              key: 'quick', label: t('infer.tabQuick'),
+              children: (
+                <Form form={form} layout="vertical" onValuesChange={() => setFormTick((n) => n + 1)}>
+                  <div style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginBottom: 12 }}>{t('infer.quickHint')}</div>
+                  <Group title={t('infer.cardBasic')}>
+                    <Form.Item name="name" label={t('infer.deployName')} rules={[{ required: true, pattern: /^[a-zA-Z0-9_-]+$/, message: t('infer.nameRule') }]}>
+                      <Input placeholder={t('infer.namePh')} maxLength={60} showCount />
+                    </Form.Item>
+                    <Form.Item name="model_asset_id" label={t('infer.modelAsset')} extra={t('infer.modelTip')} rules={[{ required: true }]}>
+                      <Select showSearch optionFilterProp="label"
+                        options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
+                    </Form.Item>
+                    <Form.Item name="description" label={t('infer.desc')}>
+                      <Input.TextArea placeholder={t('infer.descPh')} maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
+                    </Form.Item>
+                  </Group>
+                  <Group title={t('infer.cardResource')}>
                     <Row gutter={12}>
                       <Col span={8}>
-                        <Form.Item name="adv_max_num_seqs" label={t('infer.advMaxNumSeqs')}>
-                          <InputNumber min={1} step={1} placeholder={t('infer.advDefault')} style={{ width: '100%' }} />
+                        <Form.Item name="engine" label={t('infer.engine')}>
+                          <Select options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
                         </Form.Item>
                       </Col>
-                      <Col span={8}>
-                        <Form.Item name="adv_dtype" label={t('infer.advDtype')}>
-                          <Select allowClear placeholder={t('infer.advDefault')} options={[
-                            { value: 'auto', label: 'auto' }, { value: 'bf16', label: 'bf16' }, { value: 'fp16', label: 'fp16' },
-                          ]} />
+                      <Col span={16}>
+                        <Form.Item label={t('infer.dImage')}>
+                          <code style={{ fontSize: 12, background: 'var(--ant-color-fill-tertiary)', padding: '4px 8px', borderRadius: 4 }}>
+                            {(selBackendObj && selBackendObj.source === 'custom'
+                              ? (selBackendObj.versions.find((v: any) => v.version === selBackendVer)?.image
+                                || selBackendObj.current_image)
+                              : ENGINE_IMAGES[eng]) || '—'}
+                          </code>
                         </Form.Item>
                       </Col>
-                      <Col span={8}>
-                        <Form.Item name="adv_served_model_name" label={t('infer.advServedName')}>
+                    </Row>
+                    <Row gutter={12}>
+                      <Col span={6}><Form.Item name="tensor_parallel" label={t('infer.tp')} extra={t('infer.tpTip')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}><Form.Item name="replicas" label={t('infer.replicas')} extra={t('infer.replicasTip')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}><Form.Item name="max_model_len" label={t('infer.maxLen')} extra={t('infer.maxLenTip')}><InputNumber min={1024} step={1024} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}><Form.Item name="gpu_mem_util" label={t('infer.memUtil')} extra={t('infer.memUtilTip')}><InputNumber step={0.05} min={0.3} max={0.95} style={{ width: '100%' }} /></Form.Item></Col>
+                    </Row>
+                    <div style={{ color: 'var(--ant-color-text-secondary)', fontSize: 12, marginTop: -12 }}>
+                      <ThunderboltOutlined />{' '}
+                      {t('infer.gpuNeed', { n: gpuNeed, tp, r: rep })}
+                    </div>
+                  </Group>
+                  <Group title={t('infer.cardPreview')}
+                    extra={<span style={{ fontSize: 12, color: 'var(--ant-color-text-tertiary)' }}>{t('infer.previewTip')}</span>}>
+                    <LaunchPreview form={form} tick={formTick} loraModels={loraModels} t={t} />
+                  </Group>
+                </Form>
+              ),
+            },
+            {
+              key: 'expert', label: t('infer.tabExpert'),
+              children: (
+                <Form form={form} layout="vertical" onValuesChange={() => setFormTick((n) => n + 1)}>
+                  <Group title={t('infer.cardBasic')}>
+                    <Row gutter={12}>
+                      <Col span={12}>
+                        <Form.Item name="name" label={t('infer.deployName')} rules={[{ required: true, pattern: /^[a-zA-Z0-9_-]+$/, message: t('infer.nameRule') }]}>
+                          <Input placeholder={t('infer.namePh')} maxLength={60} showCount />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        <Form.Item name="adv_served_model_name" label={t('infer.servedName')} extra={t('infer.servedNameTip')}>
                           <Input placeholder={t('infer.advDefault')} maxLength={120} />
                         </Form.Item>
                       </Col>
                     </Row>
+                    <Form.Item name="model_asset_id" label={t('infer.modelAsset')} extra={t('infer.modelTip')} rules={[{ required: true }]}>
+                      <Select showSearch optionFilterProp="label"
+                        options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
+                    </Form.Item>
+                    <Form.Item name="description" label={t('infer.desc')}>
+                      <Input.TextArea placeholder={t('infer.descPh')} maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
+                    </Form.Item>
+                  </Group>
+
+                  <Group title={t('infer.cardNode')}>
                     <Row gutter={12}>
-                      <Col span={8}><Form.Item name="adv_enforce_eager" label={t('infer.advEnforceEager')} valuePropName="checked"><Switch /></Form.Item></Col>
-                      <Col span={8}><Form.Item name="adv_prefix_caching" label={t('infer.advPrefixCaching')} valuePropName="checked"><Switch /></Form.Item></Col>
-                      <Col span={8}><Form.Item name="adv_chunked_prefill" label={t('infer.advChunkedPrefill')} valuePropName="checked"><Switch /></Form.Item></Col>
+                      <Col span={12}>
+                        <Form.Item label={t('infer.formNode')} extra={t('infer.formNodeHint')}>
+                          <Input disabled value={nodeName || '—'} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        <Form.Item label={t('infer.rdmaStatus')} tooltip={t('infer.rdmaStatusHint')}>
+                          {rdma.present
+                            ? <Tag color="green">{t('infer.rdmaOn', { d: rdma.devices.join(', ') })}</Tag>
+                            : <Tag>{t('infer.rdmaOff')}</Tag>}
+                        </Form.Item>
+                      </Col>
                     </Row>
-                    <Form.Item name="adv_api_key" label={t('infer.advApiKey')}>
-                      <Input.Password placeholder={t('infer.advDefault')} autoComplete="off" maxLength={128} />
+                    <Row gutter={12}>
+                      <Col span={8}>
+                        <Form.Item name="node_count" label={t('infer.nodeCount')} extra={t('infer.nodeCountHint')}>
+                          <InputNumber min={1} max={8} style={{ width: '100%' }} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </Group>
+
+                  <Group title={t('infer.cardImage')}>
+                    <Row gutter={12}>
+                      <Col span={8}>
+                        <Form.Item name="engine" label={t('infer.engine')}>
+                          <Select options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={16}>
+                        <Form.Item label={t('infer.dImage')}>
+                          <code style={{ fontSize: 12, background: 'var(--ant-color-fill-tertiary)', padding: '4px 8px', borderRadius: 4 }}>
+                            {(selBackendObj && selBackendObj.source === 'custom'
+                              ? (selBackendObj.versions.find((v: any) => v.version === selBackendVer)?.image
+                                || selBackendObj.current_image)
+                              : ENGINE_IMAGES[eng]) || '—'}
+                          </code>
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </Group>
+
+                  <Group title={t('infer.cardBackend')}>
+                    <Row gutter={12}>
+                      <Col span={12}>
+                        <Form.Item name="backend_name" label={t('infer.backend')} tooltip={t('infer.backendHint')}>
+                          <Select allowClear showSearch optionFilterProp="label"
+                            placeholder={t('infer.backendDefault')}
+                            onChange={(v) => {
+                              if (v) form.setFieldsValue({ backend_version: '' })
+                              if (v && backends.find((b: any) => b.name === v)?.source === 'custom'
+                                && form.getFieldValue('pd_mode') === 'pd') {
+                                form.setFieldsValue({ pd_mode: 'off' })  // 自定义后端不支持 PD 分离
+                              }
+                            }}
+                            options={[
+                              ...backends.filter((b: any) => b.source === 'builtin').map((b: any) => ({
+                                value: '', label: t('infer.backendDefault'), disabled: true,
+                              })),
+                              ...backends.filter((b: any) => b.source === 'custom').map((b: any) => ({
+                                value: b.name, label: b.name,
+                              })),
+                            ]} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        {selBackendObj && selBackendObj.source === 'custom' && (
+                          <Form.Item name="backend_version" label={t('infer.backendVer')} tooltip={t('infer.backendVerHint')}>
+                            <Select allowClear placeholder={t('infer.backendVerDefault')}
+                              options={selBackendObj.versions.map((v: any) => ({
+                                value: v.version,
+                                label: v.is_default ? `${v.version} (${t('infer.defaultVer')})` : v.version,
+                              }))} />
+                          </Form.Item>
+                        )}
+                      </Col>
+                    </Row>
+                  </Group>
+
+                  <Group title={t('infer.cardResource')}>
+                    <Row gutter={12}>
+                      <Col span={6}><Form.Item name="tensor_parallel" label={t('infer.tp')} extra={t('infer.tpTip')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}><Form.Item name="replicas" label={t('infer.replicas')} extra={t('infer.replicasTip')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}><Form.Item name="max_model_len" label={t('infer.maxLen')} extra={t('infer.maxLenTip')}><InputNumber min={1024} step={1024} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}><Form.Item name="gpu_mem_util" label={t('infer.memUtil')} extra={t('infer.memUtilTip')}><InputNumber step={0.05} min={0.3} max={0.95} style={{ width: '100%' }} /></Form.Item></Col>
+                    </Row>
+                    <div style={{ color: 'var(--ant-color-text-secondary)', fontSize: 12, marginTop: -12 }}>
+                      <ThunderboltOutlined />{' '}
+                      {pdMode === 'pd'
+                        ? t('infer.gpuNeedPd', { p: prefillReplicas, pt: prefillTp, d: decodeReplicas, dt: decodeTp, n: gpuNeed })
+                        : t('infer.gpuNeed', { n: gpuNeed, tp, r: rep })}
+                    </div>
+                  </Group>
+
+                  <Group title={t('infer.cardParallel')}>
+                    <Row gutter={12}>
+                      <Col span={8}>
+                        <Form.Item name="pd_mode" label={t('infer.pdMode')}
+                          tooltip={selBackendObj && selBackendObj.source === 'custom'
+                            ? t('infer.pdDisabledCustom') : t('infer.pdModeHint')}>
+                          <Select
+                            disabled={!!selBackendObj && selBackendObj.source === 'custom'}
+                            options={[
+                              { value: 'off', label: t('infer.pdOff') },
+                              { value: 'pd', label: t('infer.pdOn') },
+                            ]} />
+                        </Form.Item>
+                      </Col>
+                      {pdMode === 'pd' && (
+                        <Col span={8}>
+                          <Form.Item name="kv_connector" label={t('infer.kvConnector')} tooltip={t('infer.kvConnectorHint')}>
+                            <Select options={[
+                              { value: 'nixl', label: 'NIXL' }, { value: 'mooncake', label: 'Mooncake' },
+                            ]} />
+                          </Form.Item>
+                        </Col>
+                      )}
+                    </Row>
+                    {pdMode === 'pd' && (
+                      <>
+                        <Row gutter={12}>
+                          <Col span={6}><Form.Item name="prefill_replicas" label={t('infer.prefillReplicas')} tooltip={t('infer.prefillReplicasHint')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                          <Col span={6}><Form.Item name="prefill_tp" label={t('infer.prefillTp')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                          <Col span={6}><Form.Item name="decode_replicas" label={t('infer.decodeReplicas')} tooltip={t('infer.decodeReplicasHint')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                          <Col span={6}><Form.Item name="decode_tp" label={t('infer.decodeTp')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                        </Row>
+                        <div style={{ color: 'var(--ant-color-text-secondary)', fontSize: 12, marginTop: -12 }}>
+                          <ThunderboltOutlined /> {t('infer.gpuNeedPd', { p: prefillReplicas, pt: prefillTp, d: decodeReplicas, dt: decodeTp, n: gpuNeed })}
+                        </div>
+                      </>
+                    )}
+                  </Group>
+
+                  <Group title={t('infer.cardKv')}>
+                    <Row gutter={12}>
+                      <Col span={12}>
+                        <Form.Item name="cache_service_id" label={t('infer.cacheSvc')} tooltip={t('infer.cacheSvcHint')}>
+                          <Select allowClear showSearch optionFilterProp="label"
+                            placeholder={t('infer.cacheSvcNone')}
+                            options={cacheServices.map((c: any) => ({ value: c.id, label: c.name }))} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        {eng === 'sglang' ? (
+                          <Form.Item name="adv_hicache_size" label={t('infer.hicacheSize')} tooltip={t('infer.hicacheSizeHint')}>
+                            <InputNumber min={1} max={512} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: '100%' }} />
+                          </Form.Item>
+                        ) : (
+                          <Form.Item name="adv_cpu_offload_gb" label={t('infer.cpuOffloadGb')} tooltip={t('infer.cpuOffloadGbHint')}>
+                            <InputNumber min={1} max={256} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: '100%' }} />
+                          </Form.Item>
+                        )}
+                      </Col>
+                    </Row>
+                  </Group>
+
+                  <Group title={t('infer.cardFeature')}>
+                    <Row gutter={12}>
+                      <Col span={8}>
+                        <Form.Item name="quantization" label={t('infer.quant')} extra={t('infer.quantTip')}>
+                          <Select options={['none', 'awq', 'gptq', 'int8'].map((q) => ({ value: q, label: q }))} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={16}>
+                        <Form.Item name="lora_assets" label={t('infer.extraLora')} extra={t('infer.loraTip')} style={{ marginBottom: 0 }}>
+                          <Select mode="multiple" options={loraModels.map((m: any) => ({ value: m.id, label: m.name }))} placeholder={t('common.optional')} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </Group>
+
+                  <Group title={t('infer.cardEnv')}>
+                    <Form.Item name="adv_nccl_env" label={t('infer.ncclEnv')} extra={t('infer.ncclEnvHint')} style={{ marginBottom: 0 }}>
+                      <Input.TextArea placeholder={'{"NCCL_IB_DISABLE": "0"}'} autoSize={{ minRows: 1, maxRows: 2 }} />
                     </Form.Item>
-                  </>
-                ) : (
-                  <Row gutter={12}>
-                    <Col span={12}>
-                      <Form.Item name="adv_mem_fraction_static" label={t('infer.advMemFraction')}>
-                        <InputNumber step={0.05} min={0.3} max={0.95} placeholder={t('infer.advDefault')} style={{ width: '100%' }} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}><Form.Item name="adv_disable_cuda_graph" label={t('infer.advDisableCudaGraph')} valuePropName="checked"><Switch /></Form.Item></Col>
-                  </Row>
-                )}
-                {/* 扩展 KV 缓存加速（部署级）：vLLM CPU 卸载 / SGLang HiCache 层级 */}
-                <Space wrap align="start" style={{ marginTop: 8 }}>
-                  {eng === 'sglang' ? (
-                    <Form.Item name="adv_hicache_size" label={t('infer.hicacheSize')} tooltip={t('infer.hicacheSizeHint')}>
-                      <InputNumber min={1} max={512} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: 180 }} />
+                  </Group>
+
+                  <Group title={t('infer.cardTuning')}
+                    extra={<span style={{ fontSize: 12, color: 'var(--ant-color-text-tertiary)' }}>{t('infer.tuningCardTip')}</span>}>
+                    {eng === 'vllm' ? (
+                      <>
+                        <Row gutter={12}>
+                          <Col span={8}>
+                            <Form.Item name="adv_max_num_seqs" label={t('infer.advMaxNumSeqs')}>
+                              <InputNumber min={1} step={1} placeholder={t('infer.advDefault')} style={{ width: '100%' }} />
+                            </Form.Item>
+                          </Col>
+                          <Col span={8}>
+                            <Form.Item name="adv_dtype" label={t('infer.advDtype')}>
+                              <Select allowClear placeholder={t('infer.advDefault')} options={[
+                                { value: 'auto', label: 'auto' }, { value: 'bf16', label: 'bf16' }, { value: 'fp16', label: 'fp16' },
+                              ]} />
+                            </Form.Item>
+                          </Col>
+                          <Col span={8}>
+                            <Form.Item name="adv_api_key" label={t('infer.advApiKey')}>
+                              <Input.Password placeholder={t('infer.advDefault')} autoComplete="off" maxLength={128} />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                        <Row gutter={12}>
+                          <Col span={8}><Form.Item name="adv_enforce_eager" label={t('infer.advEnforceEager')} valuePropName="checked"><Switch /></Form.Item></Col>
+                          <Col span={8}><Form.Item name="adv_prefix_caching" label={t('infer.advPrefixCaching')} valuePropName="checked"><Switch /></Form.Item></Col>
+                          <Col span={8}><Form.Item name="adv_chunked_prefill" label={t('infer.advChunkedPrefill')} valuePropName="checked"><Switch /></Form.Item></Col>
+                        </Row>
+                      </>
+                    ) : (
+                      <Row gutter={12}>
+                        <Col span={12}>
+                          <Form.Item name="adv_mem_fraction_static" label={t('infer.advMemFraction')}>
+                            <InputNumber step={0.05} min={0.3} max={0.95} placeholder={t('infer.advDefault')} style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}><Form.Item name="adv_disable_cuda_graph" label={t('infer.advDisableCudaGraph')} valuePropName="checked"><Switch /></Form.Item></Col>
+                      </Row>
+                    )}
+                    <Form.Item name="adv_extra_args" label={t('infer.advExtraArgs')} tooltip={t('infer.advExtraArgsHint')} style={{ marginTop: 8 }}>
+                      <Input.TextArea placeholder={t('infer.advExtraArgsPh')} autoSize={{ minRows: 1, maxRows: 3 }} />
                     </Form.Item>
-                  ) : (
-                    <Form.Item name="adv_cpu_offload_gb" label={t('infer.cpuOffloadGb')} tooltip={t('infer.cpuOffloadGbHint')}>
-                      <InputNumber min={1} max={256} step={1} placeholder={t('infer.advDefault')} addonAfter="GB" style={{ width: 180 }} />
-                    </Form.Item>
-                  )}
-                </Space>
-                <Form.Item name="adv_extra_args" label={t('infer.advExtraArgs')} tooltip={t('infer.advExtraArgsHint')} style={{ marginTop: 8 }}>
-                  <Input.TextArea placeholder={t('infer.advExtraArgsPh')} autoSize={{ minRows: 1, maxRows: 3 }} />
-                </Form.Item>
-              </div>
-            ),
-          }]} />
-        </Form>
+                  </Group>
+
+                  <Group title={t('infer.cardPreview')}
+                    extra={<span style={{ fontSize: 12, color: 'var(--ant-color-text-tertiary)' }}>{t('infer.previewTip')}</span>}>
+                    <LaunchPreview form={form} tick={formTick} loraModels={loraModels} t={t} />
+                  </Group>
+                </Form>
+              ),
+            },
+          ]} />
       </Drawer>
 
       {/* 编辑部署（右侧 Drawer）：即时字段（名/描述/自动重启/后端）直改；参数字段触发实例重建（后端判定） */}

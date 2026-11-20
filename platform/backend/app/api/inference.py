@@ -189,6 +189,103 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
     return _brief(d, db)
 
 
+class PreviewReq(BaseModel):
+    """启动配置预览（不建部署）：参数面与 DeployReq 一致；name/model 可缺省用占位符"""
+    name: str = ""
+    model_asset_id: int | None = None
+    engine: str = "vllm"
+    quantization: str = "none"
+    tensor_parallel: int = 1
+    max_model_len: int = 8192
+    gpu_mem_util: float = 0.85
+    enable_lora: bool = False
+    lora_adapters: list[dict] = []
+    replicas: int = 1
+    advanced: dict = {}
+    pd_mode: str = "off"
+    prefill_replicas: int = 1
+    decode_replicas: int = 1
+    prefill_tp: int = 1
+    decode_tp: int = 1
+    kv_connector: str = "nixl"
+    node_count: int = 1
+    nccl_env: dict = {}
+    backend_name: str | None = None
+    backend_version: str | None = None
+    cache_service_id: int | None = None
+    kv_cache_ext: dict = {}
+
+
+@router.post("/api/inference/deployments/preview")
+def preview_deploy(req: PreviewReq, db=Depends(get_db), user=Depends(get_current_user)):
+    """按当前表单拼真实启动命令（与 build_cmd 同一代码路径，保证预览 == 实际启动）。
+    运行时才确定的值（PD 端口基于部署 id、worker 容器 IP）以占位符展示。"""
+    from types import SimpleNamespace
+    import shlex as _shlex
+    from ..services import backend_registry as br
+    from ..services import cache_service as cs
+    if req.engine not in ("vllm", "sglang"):
+        raise HTTPException(400, "engine 需为 vllm/sglang")
+    pd_mode = req.pd_mode if req.pd_mode in ("off", "pd") else "off"
+    try:
+        backend_name, backend_version = br.validate_choice(
+            db, req.backend_name, req.backend_version, pd_mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    asset = db.get(ModelAsset, req.model_asset_id) if req.model_asset_id else None
+    model_path = (inf.resolve_model_path(asset, db) or "") if asset else ""
+    model_path = model_path or "<model_path>"
+    dep = SimpleNamespace(
+        id=0, name=req.name or "<部署名>",
+        engine=req.engine, quantization=req.quantization,
+        tensor_parallel=max(1, req.tensor_parallel or 1),
+        max_model_len=req.max_model_len, gpu_mem_util=req.gpu_mem_util,
+        enable_lora=bool(req.enable_lora), lora_adapters=req.lora_adapters or [],
+        advanced=req.advanced or {},
+        pd_mode=pd_mode,
+        prefill_replicas=max(1, req.prefill_replicas or 1),
+        decode_replicas=max(1, req.decode_replicas or 1),
+        prefill_tp=max(1, req.prefill_tp or 1), decode_tp=max(1, req.decode_tp or 1),
+        kv_connector=req.kv_connector if req.kv_connector in ("nixl", "mooncake") else "nixl",
+        node_count=max(1, req.node_count or 1),
+        nccl_env={str(k): str(v) for k, v in (req.nccl_env or {}).items()},
+        kv_cache_ext=req.kv_cache_ext or {},
+        backend_name=backend_name, backend_version=backend_version,
+        cache_service_id=req.cache_service_id,
+    )
+    try:
+        if br.is_custom_name(backend_name):
+            bc = br.backend_context(backend_name, backend_version)
+            image = bc["image"]
+        else:
+            bc = {}
+            image = upgrade_service.current_image("vllm") if req.engine == "vllm" \
+                else upgrade_service.current_image("sglang")
+    except Exception as e:  # RuntimeError（后端/版本缺失）等 → 400
+        raise HTTPException(400, str(e))
+    base_env = bc.get("env") or {"VLLM_LOGGING_LEVEL": "warning",
+                                 "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1"}
+    env = {**base_env, **dep.nccl_env, **cs.cache_env_for(dep)}
+
+    def _fmt(argv: list[str]) -> str:
+        # vLLM/自定义 = bash -lc 脚本串（去掉尾部 2>&1）；SGLang = argv 加引号拼接
+        if len(argv) >= 3 and argv[0] == "bash" and argv[1] == "-lc":
+            return argv[2].removesuffix(" 2>&1")
+        return " ".join(_shlex.quote(a) for a in argv)
+
+    cmds: list[dict] = []
+    if pd_mode == "pd" and not br.is_custom_name(backend_name):
+        cmds.append({"label": "prefill p0", "gpus": dep.prefill_tp,
+                     "cmd": _fmt(inf.build_cmd(dep, model_path, role="prefill", idx=0))})
+        cmds.append({"label": "decode d0", "gpus": dep.decode_tp,
+                     "cmd": _fmt(inf.build_cmd(dep, model_path, role="decode", idx=0))})
+    else:
+        cmds.append({"label": "replica r0", "gpus": dep.tensor_parallel,
+                     "cmd": _fmt(inf.build_cmd(dep, model_path,
+                                               worker_ip="<worker_ip>" if bc else ""))})
+    return {"image": image, "model_path": model_path, "env": env, "commands": cmds}
+
+
 @router.get("/api/inference/deployments")
 def list_deploys(project_id: int | None = None, db=Depends(get_db), user=Depends(get_current_user)):
     if project_id:

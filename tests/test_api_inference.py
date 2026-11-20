@@ -357,6 +357,60 @@ def test_create_missing_422(admin_tok):
     assert r.status_code == 422
 
 
+def test_preview_launch_config(admin_tok):
+    """启动配置预览（GPUWorks 式部署页）：与 build_cmd 同一命令拼装路径，
+    不建部署/不占卡。协同=单副本命令+env+真实模型路径；PD=prefill/decode
+    双角色命令（KV 传输参数在位）；无模型=占位符；未知后端 400。"""
+    base = {
+        "name": "preview-demo", "model_asset_id": BASE_MODEL_ASSET_ID,
+        "engine": "vllm", "tensor_parallel": 2, "replicas": 1,
+        "max_model_len": 8192, "gpu_mem_util": 0.85,
+        "advanced": {"max_num_seqs": 32},
+    }
+    r = requests.post(f"{BASE}/api/inference/deployments/preview",
+                      headers=H(admin_tok), timeout=15, json=base)
+    r.raise_for_status()
+    d = r.json()
+    assert d["image"].startswith("vllm/")
+    assert d["model_path"] and "<model_path>" not in d["model_path"]
+    assert "VLLM_ALLOW_RUNTIME_LORA_UPDATING" in d["env"]
+    assert len(d["commands"]) == 1
+    c0 = d["commands"][0]
+    assert c0["label"] == "replica r0" and c0["gpus"] == 2
+    assert "vllm serve" in c0["cmd"] and "--max-model-len 8192" in c0["cmd"]
+    assert "--max-num-seqs 32" in c0["cmd"]
+    assert "--tensor-parallel-size 2" in c0["cmd"]
+
+    # PD 分离：prefill/decode 双角色命令 + KV 传输参数（mooncake）
+    r2 = requests.post(f"{BASE}/api/inference/deployments/preview",
+                       headers=H(admin_tok), timeout=15,
+                       json={**base, "pd_mode": "pd", "kv_connector": "mooncake",
+                             "prefill_replicas": 2, "prefill_tp": 1,
+                             "decode_replicas": 1, "decode_tp": 2})
+    r2.raise_for_status()
+    d2 = r2.json()
+    assert [c["label"] for c in d2["commands"]] == ["prefill p0", "decode d0"]
+    p, dd = d2["commands"]
+    assert p["gpus"] == 1 and dd["gpus"] == 2
+    assert "kv_producer" in p["cmd"] and "MooncakeConnector" in p["cmd"]
+    assert "kv_consumer" in dd["cmd"]
+
+    # 无模型资产 → 占位符路径；SGLang argv 形态
+    r4 = requests.post(f"{BASE}/api/inference/deployments/preview",
+                       headers=H(admin_tok), timeout=15,
+                       json={"engine": "sglang", "max_model_len": 4096})
+    r4.raise_for_status()
+    d4 = r4.json()
+    assert "<model_path>" in d4["commands"][0]["cmd"]
+    assert "sglang.launch_server" in d4["commands"][0]["cmd"]
+
+    # 未知自定义后端 → 400
+    r3 = requests.post(f"{BASE}/api/inference/deployments/preview",
+                       headers=H(admin_tok), timeout=15,
+                       json={**base, "backend_name": "nope-custom"})
+    assert r3.status_code == 400
+
+
 def test_logs_200(admin_tok):
     r = requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}/logs",
                      headers=H(admin_tok), timeout=15)
