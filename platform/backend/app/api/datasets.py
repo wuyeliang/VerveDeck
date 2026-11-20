@@ -61,14 +61,13 @@ def _create_version(db, dset: Dataset, rows: list[dict], uid: int, fmt: str,
     db.add(ver)
     db.commit()
     # 单副本语义：未选择→仅本地 /data（不再镜像主对象存储）；path 型→已在挂载点上；
-    # object 型→唯一副本上传到所选桶，全量成功后删除本地工作目录（上传不完整则
-    # 保留本地防丢数据，读取侧 ensure_local 仍按本地优先）。失败静默降级为本地。
-    from ..models import StorageBackend
+    # object 型（含内置 rustfs，id=0）→唯一副本上传到该桶，全量成功后删除本地工作
+    # 目录（上传不完整则保留本地防丢数据，读取侧 ensure_local 仍按本地优先）。
     from ..services import storage
-    b = db.get(StorageBackend, dset.storage_backend_id) if dset.storage_backend_id else None
-    if b is not None and b.type == "object":
+    kind, cfg, _ = storage.location(dset.storage_backend_id, db)
+    if kind == "object":
         n_files = sum(len(files) for _, _, files in os.walk(vdir))
-        ok_n = storage.put_dir(vdir, b.config or {})
+        ok_n = storage.put_dir(vdir, cfg)
         if n_files and ok_n >= n_files:
             import shutil
             shutil.rmtree(vdir, ignore_errors=True)  # 桶内为唯一副本，清理本地工作目录
@@ -103,17 +102,21 @@ def list_datasets(project_id: int | None = None, q: str = "", db=Depends(get_db)
     if kw:
         q = q.filter(Dataset.name.ilike(f"%{kw}%"))
     from ..models import StorageBackend
+    from ..services import storage as _st
     bmap = {b.id: f"{b.name}（{b.type}）" for b in db.query(StorageBackend).all()}
+    if _st.enabled():
+        bmap[_st.BUILTIN_ID] = _st.BUILTIN_NAME
     out = []
     for d in q.all():
         vers = db.query(DatasetVersion).filter_by(dataset_id=d.id).all()
         latest = max((v.version for v in vers), default=0)
         latest_status = next((v.status for v in vers if v.version == latest), "")
+        bid = d.storage_backend_id
         out.append({"id": d.id, "project_id": d.project_id, "name": d.name,
                     "description": d.description, "versions": len(vers),
                     "kind": d.kind, "scenario": d.scenario,
-                    "storage_backend_id": d.storage_backend_id,
-                    "storage_backend": bmap.get(d.storage_backend_id or 0, ""),
+                    "storage_backend_id": bid,
+                    "storage_backend": bmap.get(bid, "") if bid is not None else "",
                     "latest_version": latest, "samples": sum(v.sample_count for v in vers),
                     "published": latest_status == "committed",
                     "created_at": str(d.created_at)})
@@ -129,7 +132,10 @@ def create_dataset(req: DsReq, db=Depends(get_db), user=Depends(get_current_user
         raise HTTPException(400, "scenario 仅支持 text/vlm")
     from ..models import StorageBackend
     from ..services import storage
-    if req.storage_backend_id:
+    if req.storage_backend_id == storage.BUILTIN_ID:
+        if not storage.enabled():
+            raise HTTPException(400, "平台内置对象存储未启用（未配置 S3_ENDPOINT）")
+    elif req.storage_backend_id:
         b = db.get(StorageBackend, req.storage_backend_id)
         if not b:
             raise HTTPException(400, f"存储后端 #{req.storage_backend_id} 不存在")
@@ -171,13 +177,12 @@ def delete_dataset(dsid: int, db=Depends(get_db), user=Depends(require_role("sup
     #      默认→清理存量旧镜像（新版本不再写主桶，无匹配对象时为 no-op）；path 型无需；
     #      最后删本地仓库目录（path 型即挂载点目录）+ 解析上传缓存
     import shutil
-    from ..models import StorageBackend
     from ..services import storage
-    b = db.get(StorageBackend, bid) if bid else None
-    if b is not None and b.type == "object":
-        storage.delete_dir(repo, b.config or {}, force=True)
-    elif b is None:
-        storage.delete_dir(repo)
+    kind, cfg, _ = storage.location(bid, db)
+    if kind == "object":
+        storage.delete_dir(repo, cfg, force=True)  # 桶内唯一副本（含内置 rustfs）
+    elif kind == "local":
+        storage.delete_dir(repo)  # 清理存量旧镜像（新版本不再写主桶，无匹配对象时 no-op）
     shutil.rmtree(repo, ignore_errors=True)
     shutil.rmtree(os.path.join(settings.data_dir, "uploads", str(dsid)), ignore_errors=True)
     return {"ok": True}
@@ -282,13 +287,13 @@ def import_s3(req: ImportS3Req, db=Depends(get_db), user=Depends(get_current_use
 def get_dataset(dsid: int, db=Depends(get_db), user=Depends(get_current_user)):
     d = _get_ds(db, dsid, user)
     vers = db.query(DatasetVersion).filter_by(dataset_id=dsid).order_by(DatasetVersion.version.desc()).all()
-    from ..models import StorageBackend
-    b = db.get(StorageBackend, d.storage_backend_id) if d.storage_backend_id else None
+    from ..services import storage as _st
+    _, _, label = _st.location(d.storage_backend_id, db)
     return {**{
         "id": d.id, "project_id": d.project_id, "name": d.name, "description": d.description,
         "kind": d.kind, "scenario": d.scenario,
         "storage_backend_id": d.storage_backend_id,
-        "storage_backend": f"{b.name}（{b.type}）" if b else "",
+        "storage_backend": label,
         "created_at": str(d.created_at)},
         "versions": [_ver_brief(v) for v in vers]}
 

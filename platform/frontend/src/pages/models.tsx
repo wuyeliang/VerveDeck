@@ -93,8 +93,10 @@ export default function ModelRepo() {
 
   const submitManual = async () => {
     const v = await form.validateFields()
+    const sbid = v.storage_backend_id === undefined || v.storage_backend_id === '' || v.storage_backend_id === null
+      ? null : Number(v.storage_backend_id)  // 0=内置对象存储，须保留（不可 || null 吞掉）
     await api.post('/api/models/base', { project_id: projectId, ...v,
-      storage_backend_id: v.storage_backend_id || null })
+      storage_backend_id: sbid })
     message.success(t('models.downloadSubmitted'))
     closeWizard()
   }
@@ -111,7 +113,8 @@ export default function ModelRepo() {
     fd.append('note', upNote)
     fd.append('category', upCat)
     fd.append('tags', upTags)
-    if (upStorage) fd.append('storage_backend_id', String(upStorage))
+    if (upStorage !== '' && upStorage !== undefined && upStorage !== null)
+      fd.append('storage_backend_id', String(upStorage))  // "0"=内置对象存储，须上报
     fd.append('file', file)
     setUpPct(0)
     try {

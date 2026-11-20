@@ -32,9 +32,15 @@ def _check_project(db, pid: int, user: User):
 
 
 def _resolve_backend(db, storage_backend_id: int | None):
-    """存储位置后端：空 → None（平台默认）；非空必须存在且（path 型）挂载点在
-    backend 容器内可见（FUSE 子挂载需同路径 bind，内置 /data/juicefs 已预配）"""
-    if not storage_backend_id:
+    """存储位置校验（写路径）：None → 默认本地；0 → 内置 rustfs（须启用）；
+    >0 必须存在且（path 型）挂载点在 backend 容器内可见（FUSE 子挂载需同路径 bind，
+    内置 /data/juicefs 已预配）。返回后端行；内置/未选择返回 None（object 判定用
+    storage.location）。"""
+    if storage_backend_id is None:
+        return None
+    if storage_backend_id == storage.BUILTIN_ID:
+        if not storage.enabled():
+            raise HTTPException(400, "平台内置对象存储未启用（未配置 S3_ENDPOINT）")
         return None
     b = db.get(StorageBackend, storage_backend_id)
     if not b:
@@ -59,7 +65,7 @@ def _model_hub_root(db: Session, storage_backend_id: int | None) -> str:
 
 def _brief(a: ModelAsset, db: Session) -> dict:
     base = db.get(ModelAsset, a.parent_asset_id) if a.parent_asset_id else None
-    b = db.get(StorageBackend, a.storage_backend_id) if a.storage_backend_id else None
+    _, _, label = storage.location(a.storage_backend_id, db)
     return {
         "id": a.id, "project_id": a.project_id, "name": a.name, "type": a.type,
         "category": a.category or "", "tags": a.tags or [],
@@ -67,7 +73,7 @@ def _brief(a: ModelAsset, db: Session) -> dict:
         "size_bytes": a.size_bytes, "status": a.status,
         "parent_name": base.name if base else "",
         "storage_backend_id": a.storage_backend_id,
-        "storage_backend": f"{b.name}（{b.type}）" if b else "",
+        "storage_backend": label,
         "job_id": a.job_id, "dataset_version_ids": a.dataset_version_ids or [],
         "note": a.note, "created_at": str(a.created_at),
     }
@@ -200,20 +206,20 @@ def search_models(source: str = "hf", q: str = "", limit: int = 20,
 async def upload_model(project_id: int = Form(...), name: str = Form(...),
                        note: str = Form(""), category: str = Form(""),
                        tags: str = Form(""),
-                       storage_backend_id: int = Form(0),
+                       storage_backend_id: int | None = Form(None),
                        file: UploadFile = File(...),
                        db=Depends(get_db), user=Depends(get_current_user)):
     """本地上传：zip 包（含 config.json / *.safetensors 的完整模型目录）→ 解压入仓
 
-    storage_backend_id>0 且为 path 型后端时解压到该后端挂载点下（唯一副本）；
-    object 型后端：先上传到该桶，全量成功后删除本地副本（桶内为唯一权威副本，
-    本地模型仓库路径变为服务缓存，训练/推理启动前自动拉回）。
+    storage_backend_id 缺省→仅本地；0=内置 rustfs 主桶；>0 且 path 型后端时解压到
+    该挂载点下（唯一副本）；object 型（含内置）：先上传到该桶，全量成功后删除本地
+    副本（桶内为唯一权威副本，本地模型仓库路径变为服务缓存，训练/推理启动前自动拉回）。
     """
     import io
     import re
     import zipfile
     _check_project(db, project_id, user)
-    sbid = int(storage_backend_id) if storage_backend_id else None
+    sbid = int(storage_backend_id) if storage_backend_id is not None else None
     b = _resolve_backend(db, sbid)
     if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$", name or ""):
         raise HTTPException(400, "模型名仅允许字母数字 . _ -（1-80 位）")
@@ -250,10 +256,11 @@ async def upload_model(project_id: int = Form(...), name: str = Form(...),
         _abort()
         raise HTTPException(400, "zip 不是完整模型目录（缺 config.json 或 *.safetensors）")
     size = _size(dest)
-    # object 型单副本：全量上传该桶后删除本地副本（上传不完整则保留本地防丢数据）
-    if b is not None and b.type == "object":
+    # object 型单副本（含内置 rustfs）：全量上传该桶后删除本地副本（不完整则保留）
+    kind, cfg, _ = storage.location(sbid, db)
+    if kind == "object":
         n_files = sum(len(fs) for _, _, fs in os.walk(dest))
-        ok_n = storage.put_dir(dest, b.config or {})
+        ok_n = storage.put_dir(dest, cfg)
         if n_files and ok_n >= n_files:
             shutil.rmtree(dest, ignore_errors=True)  # 桶内为唯一权威副本
         elif ok_n:
@@ -403,15 +410,16 @@ def delete_model(aid: int, db=Depends(get_db), user=Depends(require_role("super_
         raise HTTPException(400, f"模型有 {children} 个子模型（血缘依赖），请先删除子模型")
     path = a.path
     bid = a.storage_backend_id
-    b = db.get(StorageBackend, bid) if bid else None
+    b = db.get(StorageBackend, bid) if bid and bid != storage.BUILTIN_ID else None
     db.delete(a)
     db.commit()
-    # 清理：object 型后端桶内唯一副本（force：本地缓存可能已删，不依赖本地存在）
+    # 清理：object 型桶内唯一副本（含内置 rustfs；force：本地缓存可能已删）
     #      + 本地目录（限平台数据目录或 path 型后端挂载点内）
     import shutil
     try:
-        if b is not None and b.type == "object":
-            storage.delete_dir(path, b.config or {}, force=True)
+        kind, cfg, _ = storage.location(bid, db)
+        if kind == "object":
+            storage.delete_dir(path, cfg, force=True)
         allowed_roots = [os.path.realpath(settings.data_dir)]
         if b is not None and b.type in storage.PATH_BASED_TYPES:
             allowed_roots.append(os.path.realpath(storage.backend_root(b)))

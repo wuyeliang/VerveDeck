@@ -86,8 +86,10 @@ export default function DataCenter() {
   const onCreate = async () => {
     try { await createForm.validateFields() } catch { return }
     const v = createForm.getFieldsValue()
+    const sbid = v.storage_backend_id === undefined || v.storage_backend_id === '' || v.storage_backend_id === null
+      ? null : Number(v.storage_backend_id)  // 0=内置对象存储，须保留（不可 || null 吞掉）
     const r = await api.post('/api/datasets', { project_id: projectId, ...v,
-      storage_backend_id: v.storage_backend_id || null })
+      storage_backend_id: sbid })
     const did = r.data.id
     try {
       if (createTab === 'local' && upFile) {

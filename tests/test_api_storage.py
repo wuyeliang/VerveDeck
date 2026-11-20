@@ -315,3 +315,17 @@ def test_dataset_unknown_backend_400(admin_tok):
                             "storage_backend_id": 99999999})
     assert r.status_code == 400
     assert "不存在" in r.json()["detail"]
+
+
+def test_backends_options_includes_builtin(s3, admin_tok):
+    """内置对象存储（id=0）是默认可选项（S3 启用时出现在下拉首位），且不可删除"""
+    r = requests.get(f"{BASE}/api/storage/backends/options", headers=H(admin_tok), timeout=15)
+    r.raise_for_status()
+    opts = r.json()
+    b = next((o for o in opts if o["id"] == 0), None)
+    assert b is not None, "options 应含内置对象存储（id=0）"
+    assert b["type"] == "object"
+    assert "rustfs" in b["name"]
+    # 内置不可删除
+    r2 = requests.delete(f"{BASE}/api/storage/backends/0", headers=H(admin_tok), timeout=15)
+    assert r2.status_code == 400

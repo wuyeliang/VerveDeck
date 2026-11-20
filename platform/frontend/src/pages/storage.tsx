@@ -114,7 +114,12 @@ export default function StoragePage() {
             <Table size="small" rowKey="id" dataSource={backends} pagination={false}
               locale={{ emptyText: t('storage.backendEmpty') }}
               columns={[
-                { title: t('common.name'), dataIndex: 'name', width: 140 },
+                {
+                  title: t('common.name'), dataIndex: 'name', width: 200,
+                  render: (v: string, r: any) => (
+                    <span>{v}{r.system && <Tag color="blue" style={{ marginLeft: 6 }}>{t('storage.builtIn', { defaultValue: '内置' })}</Tag>}</span>
+                  ),
+                },
                 {
                   title: t('storage.colType'), dataIndex: 'type', width: 100,
                   render: (v: string) => <Tag color={TYPE_COLOR[v] || 'default'}>{t(`storage.type${v[0].toUpperCase()}${v.slice(1)}`, { defaultValue: v })}</Tag>,
@@ -144,7 +149,7 @@ export default function StoragePage() {
                 },
                 {
                   title: t('common.actions'), width: 130,
-                  render: (_: any, r: any) => (
+                  render: (_: any, r: any) => r.system ? null : (
                     <Space size={4}>
                       <Button size="small" icon={<ApiOutlined />} onClick={() => testBackend(r.id)}>{t('storage.test')}</Button>
                       <Popconfirm title={t('storage.delBackendConfirm')} onConfirm={() => delBackend(r.id)}>

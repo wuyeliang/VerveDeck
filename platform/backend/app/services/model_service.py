@@ -14,15 +14,18 @@ log = logging.getLogger("model_service")
 
 
 def model_backend(asset, db):
-    """模型的存储后端行（未选择/未传 db/后端已删除 → None，按平台默认处理）"""
+    """模型的存储后端行（未选择/未传 db/内置(0)/后端已删除 → None，按平台默认处理）"""
     if asset is None or db is None or not getattr(asset, "storage_backend_id", None):
         return None
+    if asset.storage_backend_id == 0:
+        return None  # 内置 rustfs：无后端行，桶配置取 settings 主存储
     from ..models import StorageBackend
     return db.get(StorageBackend, asset.storage_backend_id)
 
 
 def ensure_model_local(asset, db) -> bool:
-    """保证模型目录本地可用：object 型后端且本地缺失 → 从桶下载（单副本拉取）。
+    """保证模型目录本地可用：object 型（含内置 rustfs，id=0）且本地缺失 → 从桶下载
+    （单副本拉取）。
 
     返回 True = 本地可用（已存在或拉取成功）；False = 不可用
     （object 型拉取失败/桶内无对象，或非 object 型且本地不存在——
@@ -32,12 +35,12 @@ def ensure_model_local(asset, db) -> bool:
         return False
     if os.path.exists(asset.path):
         return True
-    b = model_backend(asset, db)
-    if b is None or b.type != "object":
-        return False
     from . import storage
+    kind, cfg, _ = storage.location(getattr(asset, "storage_backend_id", None), db)
+    if kind != "object":
+        return False
     try:
-        n = storage.get_dir(asset.path, b.config or {})
+        n = storage.get_dir(asset.path, cfg)
     except Exception as e:
         log.error("模型 %s 桶内拉取失败: %s", asset.name, e)
         return False

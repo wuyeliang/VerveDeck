@@ -492,3 +492,49 @@ def test_upload_object_backend_bucket_only(admin_tok, mobj_backend):
     # 删除后桶前缀清理（此时本地缓存仍在/已删均不应影响，force 删除）
     keys = _mobj_bucket_keys(mobj_backend["bucket"], prefix)
     assert keys == [], f"删除模型后桶前缀应清理: {keys[:5]}"
+
+
+def test_upload_builtin_object_bucket_only(admin_tok):
+    """内置对象存储（storage_backend_id=0）上传模型：唯一副本入主桶、本地清理、
+    用时 ensure_model_local 自动拉回、删除后主桶前缀清理"""
+    if not os.environ.get("S3_ENDPOINT", ""):
+        pytest.skip("S3 未启用（纯本地模式）")
+    from test_api_storage import _minio_client
+    main_bucket = os.environ.get("S3_BUCKET", "vervedeck-datasets")
+
+    def _mk_bucket_keys(prefix):
+        c = _minio_client()
+        return [o.object_name for o in c.list_objects(main_bucket, prefix=prefix, recursive=True)]
+
+    name = f"mbtup-{SUF}"
+    files = {"file": _mk_model_zip(f"{name}.zip")}
+    data = {"project_id": str(DEFAULT_PROJECT), "name": name,
+            "storage_backend_id": "0"}
+    r = requests.post(f"{BASE}/api/models/upload", headers=H(admin_tok), timeout=60,
+                      data=data, files=files)
+    r.raise_for_status()
+    a = r.json()
+    prefix = os.path.relpath(a["path"], os.environ.get("DATA_DIR", "/data")) + "/"
+    try:
+        assert a["status"] == "ready"
+        assert a["storage_backend_id"] == 0
+        assert not os.path.exists(a["path"]), f"本地副本应已清理（单副本）: {a['path']}"
+        keys = _mk_bucket_keys(prefix)
+        assert any(k.endswith("config.json") for k in keys), f"主桶应含 config.json: {keys[:5]}"
+        try:
+            from app.database import SessionLocal
+            from app.models import ModelAsset
+            from app.services import model_service
+        except Exception:
+            pytest.skip("非 backend 容器内运行，跳过进程内拉取断言")
+        db = SessionLocal()
+        try:
+            asset = db.get(ModelAsset, a["id"])
+            assert model_service.ensure_model_local(asset, db), "ensure_model_local 应拉取成功"
+            assert os.path.exists(os.path.join(a["path"], "config.json")), "拉取后本地文件应存在"
+        finally:
+            db.close()
+    finally:
+        requests.delete(f"{BASE}/api/models/{a['id']}", headers=H(admin_tok), timeout=30)
+    keys = _mk_bucket_keys(prefix)
+    assert keys == [], f"删除模型后主桶前缀应清理: {keys[:5]}"

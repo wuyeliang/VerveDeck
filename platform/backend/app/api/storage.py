@@ -167,17 +167,39 @@ def _validate(type_: str, cfg: dict) -> None:
             raise HTTPException(400, "块存储必须提供 device（如 /dev/vdb）")
 
 
+def _builtin_row() -> dict | None:
+    """平台内置对象存储（rustfs 主桶）虚拟后端行：id=0 保留值、system=True 不可删。
+    主存储未启用（S3_ENDPOINT 空）时返回 None（下拉里不出现可选项）"""
+    if not storage.enabled():
+        return None
+    return {
+        "id": storage.BUILTIN_ID, "name": storage.BUILTIN_NAME, "type": "object",
+        "config": {"endpoint": settings.s3_endpoint, "bucket": settings.s3_bucket},
+        "status": "ok", "detail": "平台内置主存储（.env S3_* 配置）",
+        "size_used": 0, "size_total": 0, "created_at": "", "system": True,
+    }
+
+
 @router.get("/backends")
 def list_backends(db: Session = Depends(get_db), user=Depends(_admin)):
-    rows = db.query(StorageBackend).order_by(StorageBackend.id.asc()).all()
-    return [_row(b) for b in rows]
+    out = []
+    b = _builtin_row()
+    if b:
+        out.append(b)
+    out += [_row(x) for x in db.query(StorageBackend).order_by(StorageBackend.id.asc()).all()]
+    return out
 
 
 @router.get("/backends/options")
 def backend_options(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """数据集/模型创建页的「存储位置」下拉：任意登录用户可读，仅 id/name/type（不含 config 凭证）"""
-    rows = db.query(StorageBackend).order_by(StorageBackend.id.asc()).all()
-    return [{"id": b.id, "name": b.name, "type": b.type, "status": b.status} for b in rows]
+    out = []
+    b = _builtin_row()
+    if b:
+        out.append({"id": b["id"], "name": b["name"], "type": b["type"], "status": b["status"]})
+    out += [{"id": x.id, "name": x.name, "type": x.type, "status": x.status}
+            for x in db.query(StorageBackend).order_by(StorageBackend.id.asc()).all()]
+    return out
 
 
 @router.post("/backends")
@@ -185,6 +207,8 @@ def add_backend(req: BackendReq, db: Session = Depends(get_db), user=Depends(_ad
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(400, "name 必填")
+    if name == storage.BUILTIN_NAME:
+        raise HTTPException(400, "该名称为平台内置存储保留")
     if req.type not in BACKEND_TYPES:
         raise HTTPException(400, f"type 需为 {'/'.join(BACKEND_TYPES)}")
     if db.query(StorageBackend).filter(StorageBackend.name == name).first():
@@ -215,6 +239,8 @@ def test_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
 
 @router.delete("/backends/{bid}")
 def delete_backend(bid: int, db: Session = Depends(get_db), user=Depends(_admin)):
+    if bid <= 0:
+        raise HTTPException(400, "内置存储不可删除")
     b = _get_backend_or_404(bid, db)
     # 引用检查：被数据集/模型选为存储位置的后端不可删除（避免存量文件"失联"）
     from ..models import Dataset, ModelAsset

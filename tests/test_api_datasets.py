@@ -314,6 +314,43 @@ def test_object_type_dataset_bucket_only(admin_tok, ds_obj_backend):
     assert keys == [], f"删除数据集后桶前缀应清理: {keys[:5]}"
 
 
+def test_builtin_object_dataset_bucket_only(admin_tok):
+    """内置对象存储（storage_backend_id=0，平台 rustfs 主桶）：选它后单副本存主桶、
+    本地工作副本清理、预览自动拉回、删除后主桶前缀清理"""
+    import os
+    if not os.environ.get("S3_ENDPOINT", ""):
+        pytest.skip("S3 未启用（纯本地模式）")
+    from test_api_storage import _minio_client
+    main_bucket = os.environ.get("S3_BUCKET", "vervedeck-datasets")
+    name = f"dsbtd-{SUF}"
+    data_dir = os.environ.get("DATA_DIR", "/data")
+    r = requests.post(f"{BASE}/api/datasets", headers=H(admin_tok), timeout=30,
+                      json={"project_id": DEFAULT_PROJECT, "name": name,
+                            "storage_backend_id": 0})
+    r.raise_for_status()
+    dsid = r.json()["id"]
+    prefix = f"datasets/p{DEFAULT_PROJECT}/{name}/"
+    try:
+        _upload(admin_tok, dsid, ALPACA_ROWS[:2])
+        vfile = f"{data_dir}/datasets/p{DEFAULT_PROJECT}/{name}/v1/data.jsonl"
+        assert not os.path.exists(vfile), f"本地工作副本应已清理（单副本）: {vfile}"
+        c = _minio_client()
+        keys = [o.object_name for o in c.list_objects(main_bucket, prefix=prefix, recursive=True)]
+        assert any(k.endswith("/v1/data.jsonl") for k in keys), f"主桶应含版本文件: {keys[:5]}"
+        vers = requests.get(f"{BASE}/api/datasets/{dsid}/versions",
+                            headers=H(admin_tok), timeout=15).json()
+        v = next(x for x in vers if x["version"] == 1)
+        r2 = requests.get(f"{BASE}/api/datasets/{dsid}/versions/{v['id']}/samples",
+                          headers=H(admin_tok), timeout=60)
+        assert r2.status_code == 200, f"预览应自动从主桶拉回: {r2.text[:200]}"
+        assert r2.json()["total"] == len(ALPACA_ROWS[:2])
+    finally:
+        requests.delete(f"{BASE}/api/datasets/{dsid}", headers=H(admin_tok), timeout=30)
+    c = _minio_client()
+    keys = [o.object_name for o in c.list_objects(main_bucket, prefix=prefix, recursive=True)]
+    assert keys == [], f"删除数据集后主桶前缀应清理: {keys[:5]}"
+
+
 # ---------- 上传 / 版本 ----------
 
 def test_upload_alpaca_count(admin_tok, dctx):

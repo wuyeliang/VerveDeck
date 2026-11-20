@@ -28,6 +28,36 @@ def enabled() -> bool:
     return bool(settings.s3_endpoint)
 
 
+# 存储位置保留值：storage_backend_id == 0 表示平台内置对象存储（rustfs 主桶）。
+# None = 未选择（仅本地 /data）；0 = 内置；>0 = 注册后端行。Postgres 序列从 1 起，不冲突。
+BUILTIN_ID = 0
+BUILTIN_NAME = "平台内置对象存储（rustfs）"
+
+
+def location(backend_id, db):
+    """解析存储位置 → (kind, cfg, label)。读路径专用（宽容：未知/已删后端降级本地）。
+
+    kind: "local"=仅本地 /data | "path"=挂载点（无同步） | "object"=对象存储
+    cfg:  object 型专用——None=平台主存储（内置 rustfs），dict=注册后端配置
+    label: 列表/详情接口展示名
+    """
+    if backend_id is None:
+        return "local", None, ""
+    if backend_id == BUILTIN_ID:
+        if not enabled():
+            return "local", None, ""  # 内置对象存储未启用（S3_ENDPOINT 空）→ 按默认本地
+        return "object", None, BUILTIN_NAME
+    if db is not None:
+        from ..models import StorageBackend
+        b = db.get(StorageBackend, backend_id)
+        if b is not None:
+            label = f"{b.name}（{b.type}）"
+            if b.type == "object":
+                return "object", b.config or {}, label
+            return "path", None, label  # local/nfs/block/juicefs 均落挂载点
+    return "local", None, ""
+
+
 def client():
     """惰性初始化 minio 客户端（兼容 rustfs/minio/任意 S3 实现）
 

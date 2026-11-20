@@ -367,22 +367,19 @@ def _model_downloads(db):
             if ok:
                 if not asset.size_bytes:
                     asset.size_bytes = _dir_size(asset.path)
-                # 单副本：object 型后端下载全量入桶后删本地（本地变服务缓存，
-                # 用时 ensure_model_local 拉回）；同步不完整保留本地防丢数据
-                if asset.storage_backend_id:
+                # 单副本：object 型（含内置 rustfs，id=0）下载全量入桶后删本地（本地变
+                # 服务缓存，用时 ensure_model_local 拉回）；同步不完整保留本地防丢数据
+                from .services import storage as st2
+                kind, cfg, _ = st2.location(asset.storage_backend_id, db)
+                if kind == "object":
                     import shutil as _shutil
-                    from .models import StorageBackend
-                    from .services import storage as st2
-                    b = db.get(StorageBackend, asset.storage_backend_id)
-                    if b is not None and b.type == "object":
-                        cfg = b.config or {}
-                        n_files = sum(len(fs) for _, _, fs in os.walk(asset.path))
-                        ok_n = st2.put_dir(asset.path, cfg)
-                        if n_files and ok_n >= n_files:
-                            _shutil.rmtree(asset.path, ignore_errors=True)
-                        elif ok_n:
-                            log.warning("模型 %s 桶同步不完整（%d/%d），保留本地副本",
-                                        asset.name, ok_n, n_files)
+                    n_files = sum(len(fs) for _, _, fs in os.walk(asset.path))
+                    ok_n = st2.put_dir(asset.path, cfg)
+                    if n_files and ok_n >= n_files:
+                        _shutil.rmtree(asset.path, ignore_errors=True)
+                    elif ok_n:
+                        log.warning("模型 %s 桶同步不完整（%d/%d），保留本地副本",
+                                    asset.name, ok_n, n_files)
             db.commit()
             continue
         if st["known"]:
