@@ -9,6 +9,7 @@
   完成后记录退出码，供调度器轮询收敛任务状态。
 """
 import os
+import re
 import time
 import threading
 import logging
@@ -242,10 +243,63 @@ def assign_gpus(n: int) -> list[int]:
         return free[:n]
 
 
+def _parse_size(s: str) -> int:
+    """docker 尺寸字符串 → 字节（支持 b/k/m/g 后缀，纯数字=字节）"""
+    s = str(s).strip().lower()
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)([bkmgt]?)", s)
+    if not m:
+        raise ValueError(f"非法尺寸: {s}")
+    n = float(m.group(1))
+    mult = {"": 1, "b": 1, "k": 1024, "m": 1024 ** 2,
+            "g": 1024 ** 3, "t": 1024 ** 4}[m.group(2)]
+    return int(n * mult)
+
+
+# docker run 参数白名单 → docker-py kwargs（部署「Docker 参数」逐行解析；
+# 只放行安全可控的运行参数，未知 flag 拒绝——避免把任意 daemon 参数面暴露给前端）
+def parse_docker_args(args) -> dict:
+    """解析 docker 参数列表为 docker-py kwargs。未知参数/非法值抛 ValueError。
+
+    支持：--ipc=host|private|shareable / --shm-size=16g / --cap-add=X（可多次）
+          --cap-drop=X（可多次）/ --pids-limit=N / --security-opt=X（可多次）
+    与内置行为的关系：用户显式参数最后应用（可覆盖 RDMA 自动注入的 ipc=host 等）。"""
+    out: dict = {}
+    for raw in args or []:
+        s = str(raw).strip()
+        if not s:
+            continue
+        if not s.startswith("--"):
+            raise ValueError(f"不支持的 Docker 参数: {s}（须为 --flag=value 形式）")
+        flag, _, val = s[2:].partition("=")
+        flag, val = flag.lower(), val.strip()
+        if flag == "ipc":
+            if val not in ("host", "private", "shareable"):
+                raise ValueError(f"不支持的 --ipc 取值: {val}（host/private/shareable）")
+            out["ipc_mode"] = val
+        elif flag == "shm-size":
+            out["shm_size"] = _parse_size(val)
+        elif flag in ("cap-add", "cap-drop"):
+            if not val:
+                raise ValueError(f"--{flag} 需要能力名（如 SYS_PTRACE）")
+            out.setdefault("cap_add" if flag == "cap-add" else "cap_drop", []).append(val.upper())
+        elif flag == "pids-limit":
+            out["pids_limit"] = int(val)
+        elif flag == "security-opt":
+            if not val:
+                raise ValueError("--security-opt 需要取值（如 apparmor=unconfined）")
+            out.setdefault("security_opt", []).append(val)
+        else:
+            raise ValueError(
+                f"不支持的 Docker 参数: --{flag}"
+                f"（支持: ipc / shm-size / cap-add / cap-drop / pids-limit / security-opt）")
+    return out
+
+
 def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = None,
                      mem_gb: float | None = None, env: dict | None = None,
                      volumes: dict | None = None, labels: dict | None = None,
-                     gpu_ids: list[int] | None = None, use_image_entrypoint: bool = False) -> str:
+                     gpu_ids: list[int] | None = None, use_image_entrypoint: bool = False,
+                     extra_kwargs: dict | None = None) -> str:
     """创建 pause 占位容器（主进程 sleep infinity），返回容器 id。
 
     镜像懒加载：本地缺失时自动后台拉取/构建并抛 ImageNotReady，
@@ -257,6 +311,9 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
     use_image_entrypoint=True 时不覆盖 ENTRYPOINT，直接按镜像默认入口运行
     （缓存加速服务等"无自定义启动命令、用现成服务镜像"的场景）；
     返回后容器已在跑（而非 sleep 占位等待 exec）。
+
+    extra_kwargs：docker-py run 额外 kwargs（部署「Docker 参数」经
+    parse_docker_args 白名单解析而来；最后应用，用户显式参数优先于内置行为）。
     """
     from . import image_ops
     st = image_ops.ensure_image(image)
@@ -326,6 +383,9 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
         kwargs["cpu_period"] = 100000
     if mem_gb:
         kwargs["mem_limit"] = f"{int(mem_gb * 1024 ** 3)}"
+    # 部署级 Docker 参数（白名单解析后的 kwargs；用户显式参数覆盖内置默认）
+    if extra_kwargs:
+        kwargs.update(extra_kwargs)
     ctr = client.containers.run(**kwargs)
     log.info("created placeholder container %s (id=%s, gpus=%s)", name, ctr.id[:12], gpus)
     return ctr.id

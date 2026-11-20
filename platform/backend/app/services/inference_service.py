@@ -85,15 +85,56 @@ def pd_bootstrap_port(dep: Deployment, idx: int) -> int:
     return 8900 + (dep.id * 7) % 100 + idx
 
 
+def _pp(dep) -> int:
+    """流水线并行度（默认 1=关闭；存量部署无该字段/为 0 时同样归一为 1）"""
+    return max(1, int(getattr(dep, "pipeline_parallel", None) or 1))
+
+
 def deployment_gpu_need(dep: Deployment) -> int:
     """部署占用 GPU 总数（调度准入 / 扩缩容复检 / GPU 看板）。
 
-    协同：replicas × tensor_parallel；PD：prefill 池 + decode 池
+    协同：replicas × TP × PP；PD：(prefill 池 + decode 池) 各角色 TP × PP
     （router 容器 CPU-only 不计卡；node_count 是放置分组维度，不乘算）"""
+    pp = _pp(dep)
     if _is_pd(dep):
-        return (max(1, dep.prefill_replicas or 1) * max(1, dep.prefill_tp or 1)
-                + max(1, dep.decode_replicas or 1) * max(1, dep.decode_tp or 1))
-    return (dep.tensor_parallel or 1) * max(dep.replicas, 1)
+        return (max(1, dep.prefill_replicas or 1) * max(1, dep.prefill_tp or 1) * pp
+                + max(1, dep.decode_replicas or 1) * max(1, dep.decode_tp or 1) * pp)
+    return (dep.tensor_parallel or 1) * pp * max(dep.replicas, 1)
+
+
+def estimate_tp(asset, gpu_count: int = 0) -> tuple[int, str]:
+    """TP 自动估算（GPUWorks「TP 自动」）：模型权重体积 ÷ 单卡可分配显存，向上取整。
+
+    口径：单卡可分配 = DCGM FB_TOTAL（MiB）× 0.9（权重+KV+运行开销留 10% 余量，
+    与 gpu_mem_util 默认 0.85 同量级）；结果夹在 [1, 节点卡数]。
+    数据缺失（模型未记录 size_bytes / DCGM 不可用）回退 TP=1 并在 reason 说明。
+    返回 (tp, reason)；reason 供前端「自动选择结果」展示。"""
+    import math
+    vram_mib = 0.0
+    try:
+        from . import prom_service
+        for r in prom_service.prom_instant("DCGM_FI_DEV_FB_TOTAL"):
+            v = r["value"][1]
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                x = 0.0
+            if x > vram_mib:
+                vram_mib = x
+    except Exception:
+        pass
+    size_gb = (getattr(asset, "size_bytes", 0) or 0) / 1024 ** 3
+    per_gb = vram_mib / 1024 * 0.9
+    if size_gb > 0 and per_gb > 0:
+        tp = max(1, math.ceil(size_gb / per_gb))
+        reason = (f"模型权重 ≈{size_gb:.1f}GB，单卡 {vram_mib / 1024:.0f}GB"
+                  f"（90% 可分配 ≈{per_gb:.1f}GB）→ 估算 TP={tp}")
+    else:
+        tp = 1
+        reason = "模型体积或单卡显存未知，TP 自动按 1 处理"
+    if gpu_count > 0:
+        tp = max(1, min(tp, int(gpu_count)))
+    return tp, reason
 
 
 def pd_instance_ips(dep: Deployment) -> tuple[list[str], list[str]]:
@@ -123,11 +164,13 @@ def start_pd_instance(dep: Deployment, role: str, idx: int, model_path: str) -> 
     name = pd_instance_name(dep, role, idx)
     tc.remove_container(name, force=True)
     tp = dep.prefill_tp if role == "prefill" else dep.decode_tp
+    per = max(tp or 1, 1) * _pp(dep)  # 每实例卡数 = 角色 TP × PP
     cid = tc.create_container(
         name=name,
-        image=upgrade_service.current_image("vllm") if dep.engine == "vllm"
-        else upgrade_service.current_image("sglang"),  # PD 仅 builtin 引擎（自定义后端 API 层拦截）
-        gpus=max(tp, 1),
+        # PD 仅 builtin 引擎（自定义后端 API 层拦截）；image_ref 自定义镜像同样生效
+        image=_engine_image(dep),
+        gpus=per,
+        extra_kwargs=_dep_docker_kwargs(dep),  # 部署级 Docker 参数（白名单）
         cpus=8, mem_gb=20,
         env={"VLLM_LOGGING_LEVEL": "warning",
              "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1",
@@ -237,9 +280,19 @@ def _backend_context(dep: Deployment) -> dict:
 
 
 def _engine_image(dep: Deployment, bc: dict | None = None) -> str:
-    """部署生效引擎镜像：自定义后端→版本镜像；builtin→pin 系统（运行时升级生效）"""
+    """部署生效引擎镜像（优先级从高到低）：
+    ① image_ref 自定义镜像引用（部署「镜像选择=自定义」，覆盖一切来源）
+    ② 自定义后端→版本镜像  ③ engine_version 引擎版本（builtin vllm/sglang 指定 tag，
+    如 v0.33.0 → vllm/vllm-openai:v0.33.0）  ④ builtin→pin 系统（运行时升级生效）"""
+    ref = str(getattr(dep, "image_ref", "") or "").strip()
+    if ref:
+        return ref
     if bc and bc.get("image"):
         return bc["image"]
+    ev = str(getattr(dep, "engine_version", "") or "").strip()
+    if ev and dep.engine in ("vllm", "sglang"):
+        hub = upgrade_service.COMPONENTS[dep.engine]["hub"]
+        return f"{hub}:{ev}"
     return upgrade_service.current_image("vllm") if dep.engine == "vllm" \
         else upgrade_service.current_image("sglang")
 
@@ -260,7 +313,14 @@ def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: in
     - SGLang: --disaggregation-mode prefill|decode
                     --disaggregation-transfer-backend nixl|mooncake
                     --disaggregation-bootstrap-port <port>（仅 prefill 侧）
+
+    编辑命令文本（cmd_override，仅协同 role=None）：用户显式编辑的启动命令
+    直接以 bash -lc 执行，覆盖一切自动拼装（含自定义后端模板）——
+    预览接口与真实启动共用本路径，保证所见即所得。
     """
+    override = str(getattr(dep, "cmd_override", "") or "").strip()
+    if override and role is None:
+        return ["bash", "-lc", override]
     if backend_registry.is_custom_name(getattr(dep, "backend_name", "")):
         return backend_registry.custom_cmd(dep, model_path, role, idx, worker_ip,
                                            _served_name(dep))
@@ -271,6 +331,7 @@ def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: in
     tp = dep.tensor_parallel
     if pd:
         tp = dep.prefill_tp if role == "prefill" else dep.decode_tp
+    pp = _pp(dep)
     if dep.engine == "sglang":
         # 官方 sglang 镜像内只有 python3（无 python 别名）
         cmd = ["python3", "-m", "sglang.launch_server",
@@ -285,6 +346,8 @@ def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: in
             cmd += ["--quantization", dep.quantization]
         if tp > 1:
             cmd += ["--tp", str(tp)]
+        if pp > 1:
+            cmd += ["--pp-size", str(pp)]
         # 部署级扩展 KV 缓存：SGLang HiCache（host 内存二级 KV，GiB）
         hic = _kv_ext(dep).get("hicache_size")
         if hic not in (None, "", 0, "0"):
@@ -312,6 +375,8 @@ def build_cmd(dep: Deployment, model_path: str, role: str | None = None, idx: in
         parts.append(f"--quantization {dep.quantization}")
     if tp > 1:
         parts.append(f"--tensor-parallel-size {tp}")
+    if pp > 1:
+        parts.append(f"--pipeline-parallel-size {pp}")
     # 部署级扩展 KV 缓存：vLLM CPU offload（GiB）
     off = _kv_ext(dep).get("cpu_offload_gb")
     if off not in (None, "", 0, "0"):
@@ -353,6 +418,25 @@ def deployment_endpoint(dep: Deployment) -> str:
     return _ep_url(dep, "/v1")
 
 
+def _dep_gpu_slice(dep, replica: int, per: int) -> list[int] | None:
+    """指定副本的手动卡号（协同模式 gpu_ids）：len 须 = per × 副本数，
+    副本 i 取第 i 段（卡号连续切分）；未手动选卡返回 None（自动分配）。
+    数量不符抛 ValueError（API 层已前置 400，此处为重建/扩容路径的防御）。"""
+    gids = [int(x) for x in (getattr(dep, "gpu_ids", None) or [])]
+    if not gids:
+        return None
+    reps = max(1, getattr(dep, "replicas", None) or 1)
+    if len(gids) != per * reps:
+        raise ValueError(f"GPU 选择：提供了 {len(gids)} 个卡号，需要 {per * reps}"
+                         f"（每实例卡数 × 副本数）")
+    return gids[replica * per:(replica + 1) * per]
+
+
+def _dep_docker_kwargs(dep) -> dict | None:
+    """部署「Docker 参数」→ docker-py kwargs（白名单解析；未知参数抛 ValueError）"""
+    return tc.parse_docker_args(getattr(dep, "docker_args", None) or []) or None
+
+
 def start_replica(dep: Deployment, replica: int, model_path: str) -> str:
     name = deployment_container_name(dep, replica)
     tc.remove_container(name, force=True)
@@ -362,10 +446,13 @@ def start_replica(dep: Deployment, replica: int, model_path: str) -> str:
     # "仅本地开发使用"），平台需要它实现 LoRA 热加载，故显式开启（仅 builtin 注入）。
     base_env = bc.get("env") or {"VLLM_LOGGING_LEVEL": "warning",
                                  "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "1"}
+    per = max(dep.tensor_parallel or 1, 1) * _pp(dep)  # 每副本卡数 = TP × PP
     cid = tc.create_container(
         name=name,
         image=_engine_image(dep, bc),
-        gpus=max(dep.tensor_parallel, 1),
+        gpus=per,
+        gpu_ids=_dep_gpu_slice(dep, replica, per),  # 手动卡号（空=自动分配空闲卡）
+        extra_kwargs=_dep_docker_kwargs(dep),        # 部署级 Docker 参数（白名单）
         cpus=8, mem_gb=20,
         env={**base_env,
              **(dep.nccl_env or {}),   # NCCL/UCX/NIXL 覆盖（多机 TP / RDMA 调优）
@@ -436,19 +523,47 @@ def _pd_all_ready(dep: Deployment) -> bool:
     return True
 
 
-def launch(dep: Deployment, model_path: str) -> None:
+def launch(dep: Deployment, model_path: str, abort=None) -> bool:
+    """创建并启动部署全部实例，成功返回 True。
+
+    abort：零参 callable，返回 True 表示「stop/delete 已生效」（stop 作废旧启动
+    令牌）。每次建容器前后复检：命中则清理已建容器并返回 False——堵住
+    stop+delete 与启动线程的竞态（此前线程在令牌作废后仍会建出孤儿容器，
+    永久占卡导致后续部署「空闲 GPU 不足」）。
+    """
     from . import prom_service
-    ids = []
+    ids: list[str] = []
+
+    def _aborted() -> bool:
+        return bool(abort is not None and abort())
+
+    def _cleanup_partial() -> None:
+        for c in ids:
+            tc.remove_container(c, force=True)
+        prom_service.drop_infer_sd(dep.id)
+
+    def _spawn(fn) -> bool:
+        if _aborted():
+            return False
+        ids.append(fn())
+        if _aborted():  # stop 落在建容器窗口内：回滚本批
+            _cleanup_partial()
+            return False
+        return True
+
     if _is_pd(dep):
         # PD 拓扑：P 池 → D 池（container_ids 布局 [p0..pA, d0..dB]，代理寻址依赖此序）
         for i in range(max(1, dep.prefill_replicas or 1)):
-            ids.append(start_pd_instance(dep, "prefill", i, model_path))
+            if not _spawn(lambda: start_pd_instance(dep, "prefill", i, model_path)):
+                return False
         for j in range(max(1, dep.decode_replicas or 1)):
-            ids.append(start_pd_instance(dep, "decode", j, model_path))
+            if not _spawn(lambda: start_pd_instance(dep, "decode", j, model_path)):
+                return False
         dep.container_ids = ids  # start_pd_router 按此布局解析 P/D 容器 IP
         # SGLang：router 容器统一入口；vLLM：路由内置 backend 代理，入口=首个 D 实例
         if dep.engine == "sglang":
-            ids.append(start_pd_router(dep, model_path))
+            if not _spawn(lambda: start_pd_router(dep, model_path)):
+                return False
             rt_ip = tc.container_ip(ids[-1])
             dep.endpoint = f"{rt_ip}:8000" if rt_ip else ""
         else:
@@ -456,12 +571,16 @@ def launch(dep: Deployment, model_path: str) -> None:
             dep.endpoint = f"{d0}:8000" if d0 else ""
     else:
         for i in range(dep.replicas):
-            ids.append(start_replica(dep, i, model_path))
+            if not _spawn(lambda: start_replica(dep, i, model_path)):
+                return False
         # 等待首副本就绪后登记 endpoint（IP 在创建后即可取）
         for i in range(dep.replicas):
             ip = tc.container_ip(ids[i])
             if ip and not dep.endpoint:
                 dep.endpoint = f"{ip}:8000"
+    if _aborted():  # 最后一道门：登记/写库前再复检，防止行已删容器白建
+        _cleanup_partial()
+        return False
     # 登记 Prometheus file_sd target（所有引擎实例 /metrics，与 OpenAI API 同端口 8000）
     targets = [f"{tc.container_ip(c)}:8000" for c in ids if tc.container_ip(c)]
     first = deployment_container_name(dep, 0) if not _is_pd(dep) else pd_instance_name(dep, "prefill", 0)
@@ -469,12 +588,14 @@ def launch(dep: Deployment, model_path: str) -> None:
     db = SessionLocal()
     try:
         d = db.get(Deployment, dep.id)
-        d.container_ids = ids
-        d.endpoint = dep.endpoint
-        d.status = "creating"  # 就绪由 wait_ready/调度器翻转，避免 running 早于端点可用
+        if d:  # 行在创建间隙被删（stop+delete）：容器已建，交由调用方/stopping 清理
+            d.container_ids = ids
+            d.endpoint = dep.endpoint
+            d.status = "creating"  # 就绪由 wait_ready/调度器翻转，避免 running 早于端点可用
         db.commit()
     finally:
         db.close()
+    return True
 
 
 def _pd_container_names(dep: Deployment) -> list[str]:
@@ -492,6 +613,13 @@ def stop(dep: Deployment) -> None:
         targets = set(dep.container_ids or []) | set(_pd_container_names(dep))
     else:
         targets = {deployment_container_name(dep, i) for i in range(max(dep.replicas, 1))}
+    # 兜底：按部署标签再扫一遍，防命名漂移/stop 与启动线程竞态漏删孤儿容器
+    try:
+        for c in tc.docker_client().containers.list(
+                filters={"label": f"fintune.deployment={dep.id}"}):
+            targets.add(c.name.lstrip("/"))
+    except Exception:
+        pass
     for t in targets:
         tc.remove_container(t, force=True)
     prom_service.drop_infer_sd(dep.id)  # 摘除 Prometheus target
@@ -551,21 +679,27 @@ def ensure_deployment_model(asset: ModelAsset, db) -> None:
                            "（object 型后端桶内为唯一副本，请确认模型已上传成功）")
 
 
-def wait_engine_image(dep: Deployment, db2) -> str:
+def wait_engine_image(dep: Deployment, db2, abort=None) -> str:
     """引擎镜像按需下载（懒加载）：本地缺失自动后台拉取并等待就绪。
 
     返回 "ready" 继续建容器；拉取失败/超时回写 failed 并返回 "stop"。
+    abort：stop/delete 已生效（启动令牌作废）时静默返回 "stop"，
+    不回写状态、不再继续下载等待。
     """
     from . import image_ops
     try:
         img = _engine_image(dep, _backend_context(dep))
     except Exception as e:  # 后端/版本被删等 → 直接 failed（清晰报错）
+        if abort is not None and abort():
+            return "stop"
         dep.status = "failed"
         dep.error = str(e)[:4000]
         db2.commit()
         return "stop"
     deadline = time.time() + 3600
     while True:
+        if abort is not None and abort():
+            return "stop"
         ist = image_ops.ensure_image(img)
         if ist == "ready":
             return "ready"
@@ -624,9 +758,12 @@ def launch_thread(did: int, note: str = "") -> str:
                                  "（object 型后端桶内为唯一副本，请确认模型已上传成功）")
                     db2.commit()
                     return
-            if wait_engine_image(dep, db2) != "ready":
+            if wait_engine_image(dep, db2, abort=lambda: launch_stale(did, tok)) != "ready":
                 return
-            launch(dep, path)
+            if launch_stale(did, tok):
+                return  # stop/delete 已生效：不再建容器（孤儿容器会永久占卡）
+            if not launch(dep, path, abort=lambda: launch_stale(did, tok)):
+                return
             ready = wait_ready(dep, timeout=1200)
             if launch_stale(did, tok):
                 return

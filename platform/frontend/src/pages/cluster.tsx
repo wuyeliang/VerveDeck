@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs, Segmented, Modal, Form, Input, InputNumber, Steps, Tooltip, message } from 'antd'
-import { PlusOutlined, CopyOutlined, DeleteOutlined, ToolOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { Row, Col, Card, Statistic, Table, Tag, Button, Progress, Space, Tabs, Segmented, Modal, Form, Input, InputNumber, Steps, Tooltip, message, Select } from 'antd'
+import { PlusOutlined, CopyOutlined, DeleteOutlined, ToolOutlined, CheckCircleOutlined, TagOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
@@ -95,6 +95,22 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
   const [maintOpen, setMaintOpen] = useState<any>(null)   // 维护弹窗目标节点
   const [maintMsg, setMaintMsg] = useState('')
   const [maintBusy, setMaintBusy] = useState(false)
+  // 节点标签编辑（key=value 列表；部署页「节点标签约束」按子集匹配）
+  const [labelOpen, setLabelOpen] = useState<any>(null)
+  const [labelDraft, setLabelDraft] = useState<string[]>([])
+  const [labelBusy, setLabelBusy] = useState(false)
+  const submitLabels = async () => {
+    const n = labelOpen
+    if (!n) return
+    setLabelBusy(true)
+    try {
+      await api.put(`/api/cluster/nodes/${n.id}`, { labels: labelDraft })
+      message.success(t('cluster.labelsSaved'))
+      setLabelOpen(null); load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || e?.message || t('api.requestFailed'))
+    } finally { setLabelBusy(false) }
+  }
   const submitMaint = async () => {
     const n = maintOpen
     if (!n) return
@@ -135,6 +151,10 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
               title={<Space><span>{n.name}</span>{n.local && <Tag style={{ fontSize: 10 }}>{t('cluster.nodeLocal')}</Tag>}{nodeStatusTag(n, t)}</Space>}
               extra={
                 <Space size={6}>
+                  <Tooltip title={t('cluster.labelEdit')}>
+                    <Button size="small" type="text" icon={<TagOutlined />}
+                      onClick={() => { setLabelOpen(n); setLabelDraft(n.labels || []) }} />
+                  </Tooltip>
                   <Tooltip title={t('cluster.maintHint')}>
                     <Button size="small" type="text" icon={<ToolOutlined />}
                       onClick={() => { setMaintOpen(n); setMaintMsg(n.maintenance_message || '') }} />
@@ -149,6 +169,13 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
               <div style={{ textAlign: 'right', color: '#aaa', fontSize: 11, marginTop: -18, marginBottom: 4 }}>
                 {t('cluster.heartbeat', { ts: n.last_heartbeat ? n.last_heartbeat.replace('T', ' ').slice(0, 19) : '-' })}
               </div>
+              {(n.labels || []).length > 0 && (
+                <div style={{ marginBottom: 6 }}>
+                  {(n.labels || []).map((l: string) => (
+                    <Tag key={l} color="geekblue" style={{ fontSize: 11, marginBottom: 4 }}>{l}</Tag>
+                  ))}
+                </div>
+              )}
               {n.maintenance && (
                 <div style={{ fontSize: 12, color: '#ad6800', background: 'rgba(250,173,20,0.1)',
                   border: '1px solid rgba(250,173,20,0.4)', borderRadius: 6, padding: '4px 8px', marginBottom: 8 }}>
@@ -208,6 +235,16 @@ function NodesView({ nodes, queue, load }: { nodes: any[]; queue: any; load: () 
 
       {/* 添加节点向导：节点信息 → 环境检查 → 接入命令（参照 GPUStack Add Worker 向导） */}
       <AddNodeWizard open={addOpen} onClose={() => setAddOpen(false)} load={load} />
+
+      {/* 节点标签编辑（key=value 列表；部署页「节点标签约束」筛选依据） */}
+      <Modal title={`${t('cluster.labelEdit')} · ${labelOpen?.name || ''}`}
+        open={!!labelOpen} onCancel={() => setLabelOpen(null)} onOk={submitLabels}
+        confirmLoading={labelBusy} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+        <p style={{ marginTop: 0, fontSize: 13, color: '#666' }}>{t('cluster.labelTip')}</p>
+        <Select mode="tags" open={false} style={{ width: '100%' }}
+          placeholder={t('cluster.labelPh')} tokenSeparators={[',', '\n']}
+          value={labelDraft} onChange={setLabelDraft} />
+      </Modal>
 
       {/* 维护模式（参照 GPUStack maintenance） */}
       <Modal title={maintOpen?.maintenance ? t('cluster.maintEnd') : t('cluster.maint')}

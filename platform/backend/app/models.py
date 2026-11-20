@@ -236,6 +236,28 @@ class Deployment(Base):
     # NCCL/UCX/NIXL 通信环境变量覆盖（TrainingJob.nccl_env 同机制；
     # 如 NCCL_IB_HCA / NCCL_SOCKET_IFNAME / UCX_NET_DEVICES / VLLM_NIXL_SIDE_CHANNEL_HOST）
     nccl_env: Mapped[dict] = mapped_column(JSON, default=dict)
+    # ---------- 部署放置（GPUWorks 同构：目标节点 / 标签约束 / GPU 选择） ----------
+    # 目标节点（空=自动选择=本节点；当前仅本节点可调度容器，指定其他节点被 API 层拒绝）
+    node_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 节点标签约束（"key=value" 列表；目标节点须全部命中，否则创建被拒）
+    node_labels: Mapped[list] = mapped_column(JSON, default=list)
+    # 手动 GPU 卡号（空=自动分配空闲卡；仅协同模式，数量须=TP×PP×副本数，
+    # 副本 i 取第 i 段；指定卡被外部占用时不拦截，由引擎启动报错兜底）
+    gpu_ids: Mapped[list] = mapped_column(JSON, default=list)
+    # 流水线并行（vLLM --pipeline-parallel-size / SGLang --pp-size；1=关闭，
+    # 每实例卡数 = TP×PP；跨卡 PCIe 通信，用于单卡装不下且 TP 受限的大模型）
+    pipeline_parallel: Mapped[int] = mapped_column(Integer, default=1)
+    # 自定义镜像引用（空=自动：自定义后端版本镜像 / 系统 pin 镜像；非空时覆盖一切来源）
+    image_ref: Mapped[str] = mapped_column(String(255), default="")
+    # Docker 运行时参数（白名单 flag 列表，每行一个；如 ["--ipc=host"]，
+    # taskcontainer.parse_docker_args 解析为 docker-py kwargs，未知参数 400）
+    docker_args: Mapped[list] = mapped_column(JSON, default=list)
+    # 编辑命令文本（仅协同模式；非空时 build_cmd 直接以 bash -lc 执行该文本，
+    # 覆盖自动拼装；PD 模式多实例命令不可覆盖，API 层拒绝）
+    cmd_override: Mapped[str] = mapped_column(Text, default="")
+    # 引擎版本（builtin vllm/sglang 的镜像 tag，如 v0.33.0；空=跟随平台当前 pin 版本。
+    # 优先级低于 image_ref 自定义镜像与自定义后端版本镜像，高于系统 pin）
+    engine_version: Mapped[str] = mapped_column(String(64), default="")
     port: Mapped[int] = mapped_column(Integer, default=0)  # 容器内端口(固定8000), host 端口池位
     endpoint: Mapped[str] = mapped_column(String(128), default="")  # ip:port
     replicas: Mapped[int] = mapped_column(Integer, default=1)
@@ -380,6 +402,9 @@ class GpuNode(Base):
     # 维护模式（参照 GPUStack maintenance）：人工摘除服务——不判离线、不告警、调度不占容量
     maintenance: Mapped[bool] = mapped_column(Boolean, default=False)
     maintenance_message: Mapped[str] = mapped_column(String(256), default="")
+    # 节点标签（"key=value" 列表，参照 GPUStack worker labels）：
+    # 部署「节点标签约束」按子集匹配（部署标签须全部命中节点标签）
+    labels: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class NodeToken(Base):

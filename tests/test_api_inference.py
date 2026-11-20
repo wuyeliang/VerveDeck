@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """推理部署 API：部署管理 / OpenAI 兼容代理（鉴权×护栏×流式）/ 多 LoRA 热加载 / 扩缩容
 
-依赖常驻部署（qwen25-05b-base, running）。本文件只真实创建 1 个部署
-（test_deploy_advanced_params_real：验证 advanced 参数被真实 vLLM 容器接受），
-在空闲卡上与常驻部署并行，finally 内 stop+delete 清理，不占卡、不污染常驻部署。
+依赖常驻部署（qwen25-05b-base, running）。本文件真实创建 2 个部署：
+- test_deploy_advanced_params_real：验证 advanced 参数被真实 vLLM 容器接受（等终态+chat）
+- test_update_placement_fields_real：放置/运行环境新字段 update 200 回显（不等终态）
+均与常驻部署并行（占用空闲卡），finally 内 stop+delete 清理，不污染常驻部署。
 """
 import time
 
@@ -521,6 +522,323 @@ def _wait_terminal(admin_tok, did, timeout=900, interval=5):
             return last
         time.sleep(interval)
     return last
+
+
+# ---------- 部署放置 / 运行环境（目标节点 / 标签约束 / GPU 选择 / PP / 镜像 / Docker 参数 / 命令编辑） ----------
+
+def test_brief_placement_fields(admin_tok):
+    """_brief 回显放置/运行环境新字段（存量部署取默认值）"""
+    d = requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",
+                     headers=H(admin_tok), timeout=15).json()
+    for k in ("node_name", "node_labels", "gpu_ids", "pipeline_parallel",
+              "image_ref", "docker_args", "cmd_override"):
+        assert k in d, f"缺字段 {k}"
+    assert d["pipeline_parallel"] >= 1
+
+
+def test_preview_placement_pp(admin_tok):
+    """PP：vllm 命令含 --pipeline-parallel-size，gpus = TP×PP；PD 两角色同样 ×PP"""
+    r = requests.post(f"{BASE}/api/inference/deployments/preview",
+                      headers=H(admin_tok), timeout=15,
+                      json={"name": "pp-demo", "model_asset_id": BASE_MODEL_ASSET_ID,
+                            "engine": "vllm", "tensor_parallel": 1, "replicas": 1,
+                            "pipeline_parallel": 2})
+    r.raise_for_status()
+    c0 = r.json()["commands"][0]
+    assert c0["gpus"] == 2, f"每实例卡数应为 TP×PP=2: {c0}"
+    assert "--pipeline-parallel-size 2" in c0["cmd"]
+    r2 = requests.post(f"{BASE}/api/inference/deployments/preview",
+                       headers=H(admin_tok), timeout=15,
+                       json={"name": "pp-demo", "model_asset_id": BASE_MODEL_ASSET_ID,
+                             "engine": "vllm", "pd_mode": "pd", "pipeline_parallel": 2,
+                             "prefill_tp": 1, "decode_tp": 1})
+    r2.raise_for_status()
+    cmds = r2.json()["commands"]
+    assert cmds[0]["gpus"] == 2 and cmds[1]["gpus"] == 2, f"PD 角色卡数应 ×PP: {cmds}"
+
+
+def test_preview_cmd_override(admin_tok):
+    """编辑命令文本：预览命令 == 用户编辑内容（bash -lc 原样执行）"""
+    r = requests.post(f"{BASE}/api/inference/deployments/preview",
+                      headers=H(admin_tok), timeout=15,
+                      json={"name": "ov-demo", "model_asset_id": BASE_MODEL_ASSET_ID,
+                            "engine": "vllm",
+                            "cmd_override": "echo hi && vllm serve /models/x"})
+    r.raise_for_status()
+    assert r.json()["commands"][0]["cmd"] == "echo hi && vllm serve /models/x"
+
+
+def test_preview_image_ref(admin_tok):
+    """自定义镜像引用：最高优先级，覆盖系统 pin 镜像"""
+    r = requests.post(f"{BASE}/api/inference/deployments/preview",
+                      headers=H(admin_tok), timeout=15,
+                      json={"name": "img-demo", "model_asset_id": BASE_MODEL_ASSET_ID,
+                            "engine": "vllm",
+                            "image_ref": "registry.local:5000/vervedeck/vllm:custom"})
+    r.raise_for_status()
+    assert r.json()["image"] == "registry.local:5000/vervedeck/vllm:custom"
+
+
+def test_engine_versions_endpoint(admin_tok):
+    """引擎版本列表端点：当前生效 tag + 可用 tag（拉取网络失败时 versions 为空但不报错）"""
+    for eng in ("vllm", "sglang"):
+        r = requests.get(f"{BASE}/api/inference/engine-versions",
+                         headers=H(admin_tok), timeout=60, params={"engine": eng})
+        r.raise_for_status()
+        d = r.json()
+        assert d["engine"] == eng
+        assert d["current"], "平台当前版本 tag 不应为空"
+        assert isinstance(d["versions"], list)
+    r2 = requests.get(f"{BASE}/api/inference/engine-versions", headers=H(admin_tok),
+                      timeout=15, params={"engine": "llamafactory"})
+    assert r2.status_code == 400
+
+
+def test_preview_engine_version(admin_tok):
+    """引擎版本：builtin 引擎指定 tag → 镜像 = hub:tag；非法格式 400"""
+    r = requests.post(f"{BASE}/api/inference/deployments/preview",
+                      headers=H(admin_tok), timeout=30,
+                      json={"name": "ev-demo", "model_asset_id": BASE_MODEL_ASSET_ID,
+                            "engine": "vllm", "engine_version": "v0.33.0"})
+    r.raise_for_status()
+    assert r.json()["image"] == "vllm/vllm-openai:v0.33.0"
+    r2 = requests.post(f"{BASE}/api/inference/deployments/preview",
+                       headers=H(admin_tok), timeout=15,
+                       json={"name": "ev-bad", "model_asset_id": BASE_MODEL_ASSET_ID,
+                             "engine": "vllm", "engine_version": "not-a-version"})
+    assert r2.status_code == 400
+
+
+def test_preview_engine_version_pd_min(admin_tok):
+    """PD 分离：引擎版本低于参数面下限（vLLM <0.30）→ 400"""
+    r = requests.post(f"{BASE}/api/inference/deployments/preview",
+                      headers=H(admin_tok), timeout=15,
+                      json={"name": "ev-pd", "model_asset_id": BASE_MODEL_ASSET_ID,
+                            "engine": "vllm", "pd_mode": "pd", "engine_version": "v0.25.0"})
+    assert r.status_code == 400
+
+
+def test_preview_tp_auto_and_node(admin_tok):
+    """TP 自动（0）：返回 tp_auto 估算结果；node 返回节点名/卡数/空闲/标签。
+    PD 模式不支持 TP 自动 → 400。"""
+    r = requests.post(f"{BASE}/api/inference/deployments/preview",
+                      headers=H(admin_tok), timeout=15,
+                      json={"name": "tp-auto-demo", "model_asset_id": BASE_MODEL_ASSET_ID,
+                            "engine": "vllm", "tensor_parallel": 0})
+    r.raise_for_status()
+    d = r.json()
+    assert d["tp_auto"] and d["tp_auto"]["value"] >= 1 and d["tp_auto"]["reason"]
+    assert d["node"] and d["node"]["name"] and d["node"]["total"] >= 0
+    assert "labels" in d["node"] and "free" in d["node"]
+    r2 = requests.post(f"{BASE}/api/inference/deployments/preview",
+                       headers=H(admin_tok), timeout=15,
+                       json={"name": "tp-auto-pd", "engine": "vllm",
+                             "pd_mode": "pd", "tensor_parallel": 0})
+    assert r2.status_code == 400
+
+
+def _plc_body(**kw):
+    b = {"project_id": DEFAULT_PROJECT, "name": f"500plc-{SUF}",
+         "model_asset_id": BASE_MODEL_ASSET_ID, "engine": "vllm",
+         "tensor_parallel": 1, "replicas": 1}
+    b.update(kw)
+    return b
+
+
+def test_create_gpu_ids_mismatch_400(admin_tok):
+    """手动 GPU：数量须 = TP×PP×副本"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(gpu_ids=[0, 1]))
+    assert r.status_code == 400
+
+
+def test_create_gpu_ids_range_400(admin_tok):
+    """手动 GPU：卡号超出节点卡数范围"""
+    nodes = requests.get(f"{BASE}/api/cluster/nodes",
+                         headers=H(admin_tok), timeout=15).json()
+    local = next((n for n in nodes if n.get("local")), {"gpu_count": 2})
+    out = (local.get("gpu_count") or 2) + 10
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(gpu_ids=[out]))
+    assert r.status_code == 400
+
+
+def test_create_gpu_ids_dup_400(admin_tok):
+    """手动 GPU：卡号重复"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15,
+                      json=_plc_body(tensor_parallel=2, gpu_ids=[0, 0]))
+    assert r.status_code == 400
+
+
+def test_create_pd_gpu_ids_400(admin_tok):
+    """PD 分离不支持手动 GPU 选择"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(pd_mode="pd", gpu_ids=[0]))
+    assert r.status_code == 400
+
+
+def test_create_node_name_remote_400(admin_tok):
+    """目标节点：非本节点不可调度（当前单节点可调度）"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(node_name="remote-no-such"))
+    assert r.status_code == 400
+
+
+def test_create_label_missing_400(admin_tok):
+    """节点标签约束：本节点缺标签 → 400"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15,
+                      json=_plc_body(node_labels=["zz-no-such-label=1"]))
+    assert r.status_code == 400
+
+
+def test_create_bad_image_ref_400(admin_tok):
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(image_ref="no-slash-at-all!!"))
+    assert r.status_code == 400
+
+
+def test_create_bad_docker_args_400(admin_tok):
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(docker_args=["--no-such-flag=1"]))
+    assert r.status_code == 400
+
+
+def test_create_bad_engine_version_400(admin_tok):
+    """引擎版本：非完整 semver tag（如仅 0.33）→ 400"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(engine_version="0.33"))
+    assert r.status_code == 400
+
+
+def test_update_bad_engine_version_400(admin_tok):
+    """编辑：非法引擎版本 → 400（校验前置，不触发实例重建）"""
+    lst = requests.get(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                       timeout=15, params={"project_id": DEFAULT_PROJECT}).json()
+    assert lst, "至少应有一个部署"
+    did = lst[0]["id"]
+    r = requests.put(f"{BASE}/api/inference/deployments/{did}", headers=H(admin_tok),
+                     timeout=15, json={"engine_version": "bad-tag"})
+    assert r.status_code == 400
+
+
+def test_create_pd_cmd_override_400(admin_tok):
+    """PD 分离不支持编辑命令文本"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15,
+                      json=_plc_body(pd_mode="pd", cmd_override="echo hi"))
+    assert r.status_code == 400
+
+
+def test_create_pd_tp_auto_400(admin_tok):
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=15, json=_plc_body(pd_mode="pd", tensor_parallel=0))
+    assert r.status_code == 400
+
+
+def test_update_placement_400s(admin_tok):
+    """update 放置新字段走同口径校验：校验失败 400（不触发重建，常驻部署不受影响）"""
+    bodies = [{"node_name": "remote-no-such"},
+              {"node_labels": ["zz-no-such-label=1"]},
+              {"docker_args": ["--no-such-flag=1"]},
+              {"image_ref": "no-slash-at-all!!"}]
+    # gpu_ids 数量不符：按当前 gpu_need 多构造 1 张（协同模式才校验卡号数量）
+    d0 = requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",
+                      headers=H(admin_tok), timeout=15).json()
+    if d0.get("pd_mode", "off") != "pd":
+        bodies.append({"gpu_ids": list(range(d0["gpu_need"] + 1))})
+    for body in bodies:
+        r = requests.put(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",
+                         headers=H(admin_tok), timeout=15, json=body)
+        assert r.status_code == 400, f"{body} 应 400: {r.status_code} {r.text[:200]}"
+    # 常驻部署未被误改
+    d = requests.get(f"{BASE}/api/inference/deployments/{DEPLOY_ID}",
+                     headers=H(admin_tok), timeout=15).json()
+    assert d["image_ref"] == "" and d["cmd_override"] == "" and d["docker_args"] == []
+
+
+PLC_NAME = f"plc500-{SUF}"
+
+
+def test_update_placement_fields_real(admin_tok):
+    """update 放置/运行环境新字段 200 路径：轻量部署 → 命令编辑/自定义镜像/Docker
+    参数回显 + 清空语义（""/[] 恢复自动）→ stop+delete 清理。不等终态避免长时间占卡。
+    PP 提 2 需 1 张增量卡：仅在本机有空闲卡时验证（双卡机常驻部署占 1 卡时跳过该项）。"""
+    r = requests.post(f"{BASE}/api/inference/deployments", headers=H(admin_tok),
+                      timeout=30, json=_plc_body(name=PLC_NAME))
+    r.raise_for_status()
+    did = r.json()["id"]
+    try:
+        nodes = requests.get(f"{BASE}/api/cluster/nodes",
+                             headers=H(admin_tok), timeout=15).json()
+        local = next((n for n in nodes if n.get("local")), {})
+        free = (local.get("gpu_count") or 0) - (local.get("gpu_in_use") or 0)
+        put_body = {"cmd_override": "echo plc-test",
+                    "image_ref": "registry.local:5000/vervedeck/vllm:custom",
+                    "docker_args": ["--shm-size=2g"]}
+        want_pp = 2 if free >= 1 else 1
+        if want_pp > 1:
+            put_body["pipeline_parallel"] = 2
+        r = requests.put(f"{BASE}/api/inference/deployments/{did}",
+                         headers=H(admin_tok), timeout=30, json=put_body)
+        r.raise_for_status()
+        d = r.json()
+        assert d["pipeline_parallel"] == want_pp
+        assert d["gpu_need"] == want_pp, f"gpu_need=tp1×pp{want_pp}×rep1: {d['gpu_need']}"
+        assert d["cmd_override"] == "echo plc-test"
+        assert d["image_ref"] == "registry.local:5000/vervedeck/vllm:custom"
+        assert d["docker_args"] == ["--shm-size=2g"]
+        # 清空语义：空串/[] 恢复自动拼装/自动镜像/无参数
+        r = requests.put(f"{BASE}/api/inference/deployments/{did}",
+                         headers=H(admin_tok), timeout=30,
+                         json={"cmd_override": "", "image_ref": "", "docker_args": []})
+        r.raise_for_status()
+        d = r.json()
+        assert d["cmd_override"] == "" and d["image_ref"] == "" and d["docker_args"] == []
+        time.sleep(5)  # 给重建线程留出建容器窗口，避免清理竞态
+    finally:
+        try:
+            requests.post(f"{BASE}/api/inference/deployments/{did}/stop",
+                          headers=H(admin_tok), timeout=120)
+        except Exception:
+            pass
+        requests.delete(f"{BASE}/api/inference/deployments/{did}",
+                        headers=H(admin_tok), timeout=60)
+
+
+def test_node_labels_set_read_clear(admin_tok):
+    """节点标签：设置 → 回读 → 标签约束 preview 联动（满足 200 / 缺失 400）→ 恢复原值；
+    非 key=value 格式 400。"""
+    nodes = requests.get(f"{BASE}/api/cluster/nodes",
+                         headers=H(admin_tok), timeout=15).json()
+    node = next((n for n in nodes if n.get("local")), None)
+    if not node:
+        pytest.skip("无本节点")
+    assert "labels" in node, "nodes 响应应含 labels 字段"
+    orig = node.get("labels") or []
+    nid = node["id"]
+    try:
+        r = requests.put(f"{BASE}/api/cluster/nodes/{nid}", headers=H(admin_tok),
+                         timeout=15, json={"labels": ["env=test", "gpu=4090"]})
+        r.raise_for_status()
+        assert r.json().get("labels") == ["env=test", "gpu=4090"]
+        # 标签约束满足 → preview 200；缺失 → 400
+        rp = requests.post(f"{BASE}/api/inference/deployments/preview",
+                           headers=H(admin_tok), timeout=15,
+                           json={"name": "lbl-demo", "node_labels": ["env=test"]})
+        assert rp.status_code == 200, rp.text[:200]
+        rp2 = requests.post(f"{BASE}/api/inference/deployments/preview",
+                            headers=H(admin_tok), timeout=15,
+                            json={"name": "lbl-demo", "node_labels": ["env=prod"]})
+        assert rp2.status_code == 400
+    finally:
+        requests.put(f"{BASE}/api/cluster/nodes/{nid}", headers=H(admin_tok),
+                     timeout=15, json={"labels": orig})
+    # 非 key=value 格式拒绝
+    r = requests.put(f"{BASE}/api/cluster/nodes/{nid}", headers=H(admin_tok),
+                     timeout=15, json={"labels": ["bad-label-no-eq"]})
+    assert r.status_code == 400
 
 
 def test_deploy_advanced_params_real(admin_tok):

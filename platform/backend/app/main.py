@@ -87,6 +87,16 @@ def _migrate_columns():
                 ("backend_name", "VARCHAR(64)"),
                 ("backend_version", "VARCHAR(64)"),
                 ("cache_service_id", "INTEGER"),
+                # 部署放置（GPUWorks 同构：目标节点/标签约束/GPU 选择）+ 镜像/容器运行时/命令覆盖
+                # 默认值全部保持存量部署行为不变（自动选择/自动分卡/系统镜像/自动拼装命令）
+                ("node_name", "VARCHAR(64)"),
+                ("node_labels", f"{json_type} NOT NULL DEFAULT '[]'"),
+                ("gpu_ids", f"{json_type} NOT NULL DEFAULT '[]'"),
+                ("pipeline_parallel", "INTEGER NOT NULL DEFAULT 1"),
+                ("image_ref", "VARCHAR(255) NOT NULL DEFAULT ''"),
+                ("docker_args", f"{json_type} NOT NULL DEFAULT '[]'"),
+                ("cmd_override", "TEXT NOT NULL DEFAULT ''"),
+                ("engine_version", "VARCHAR(64) NOT NULL DEFAULT ''"),
             ],
             "users": [("must_change_password", "BOOLEAN NOT NULL DEFAULT 'false'")],
             "model_assets": [
@@ -101,6 +111,8 @@ def _migrate_columns():
                 ("state_message", "VARCHAR(512) NOT NULL DEFAULT ''"),
                 ("maintenance", "BOOLEAN NOT NULL DEFAULT 'false'"),
                 ("maintenance_message", "VARCHAR(256) NOT NULL DEFAULT ''"),
+                # 节点标签（"key=value" 列表）：部署「节点标签约束」子集匹配的数据源
+                ("labels", f"{json_type} NOT NULL DEFAULT '[]'"),
             ],
             "api_keys": [("model_ids", f"{json_type} NOT NULL DEFAULT '[]'")],
             # 告警规则分类 + 事件人工确认（存量库补列；新库由 create_all 建出）

@@ -54,6 +54,100 @@ def _served_name(d: Deployment) -> str:
     return (adv.get("served_model_name") or "").strip() or d.name
 
 
+_IMAGE_REF_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._\-]*(?::\d+)?(?:/[A-Za-z0-9._\-]+)+"
+    r"(?::[A-Za-z0-9._\-]+)?(?:@[A-Za-z0-9][A-Za-z0-9._\-]+)?$")
+
+
+def _normalize_placement(db, *, pd_mode: str, tp: int, pp: int, replicas: int,
+                         node_name, node_labels, gpu_ids,
+                         image_ref, docker_args, cmd_override) -> dict:
+    """部署放置/运行环境新字段归一化 + 校验（create/preview/update 共用口径）。
+
+    规则（对齐 GPUWorks 专家部署页，收窄范围后不含健康检查/共享内存/启动超时等）：
+    - 目标节点：空=自动（本节点）；显式指定必须=本节点（当前仅本节点可调度容器）
+    - 节点标签约束：目标（本）节点 labels 须全部命中，缺标签 400
+    - 手动 GPU：仅协同模式；数量须 = TP×PP×副本数；不重复、在节点卡数范围内
+      （不校验空闲——用户显式指定，被外部占用由引擎启动报错兜底）
+    - 镜像引用：基础格式校验（registry[:port]/name[:tag]@digest）
+    - Docker 参数：白名单 flag（taskcontainer.parse_docker_args），未知 400
+    - 命令编辑：仅协同模式（PD 多实例命令不可单条覆盖）
+    返回归一化 dict（node_name/node_labels/gpu_ids/pipeline_parallel/
+    image_ref/docker_args/cmd_override）。"""
+    from ..models import GpuNode
+    node = db.query(GpuNode).filter_by(name=settings.node_name).first()
+    total = (node.gpu_count or 0) if node else 0
+    nn = (node_name or "").strip() or None
+    if nn and nn != settings.node_name:
+        raise HTTPException(400, f"目标节点 {nn} 不可调度：当前仅本节点"
+                                 f"（{settings.node_name}）可调度推理容器")
+    if nn:
+        target = db.query(GpuNode).filter_by(name=nn).first()
+        if not target or target.status != "online":
+            raise HTTPException(400, f"目标节点 {nn} 不存在或未在线")
+    labels = [str(x).strip() for x in (node_labels or []) if str(x).strip()]
+    node_labels_val = [str(x) for x in (node.labels or [])] if node else []
+    missing = [l for l in labels if l not in node_labels_val]
+    if missing:
+        raise HTTPException(400, f"目标节点不满足标签约束：缺少 {', '.join(missing)}")
+    try:
+        gids = [int(x) for x in (gpu_ids or [])]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "GPU 选择：卡号须为整数")
+    if pd_mode == "pd":
+        if gids:
+            raise HTTPException(400, "PD 分离模式不支持手动 GPU 选择（P/D 实例按角色分组）")
+        gids = []
+    else:
+        need_n = max(1, tp) * max(1, pp) * max(1, replicas)
+        if gids and len(gids) != need_n:
+            raise HTTPException(400, f"GPU 选择：提供了 {len(gids)} 个卡号，"
+                                     f"需要 {need_n} 个（每实例 TP×PP 卡数 × 副本数）")
+        if gids:
+            if len(set(gids)) != len(gids):
+                raise HTTPException(400, "GPU 选择：卡号重复")
+            if total and any(x < 0 or x >= total for x in gids):
+                raise HTTPException(400, f"GPU 选择：卡号超出范围（0-{total - 1}）")
+    ref = str(image_ref or "").strip()
+    if ref and not _IMAGE_REF_RE.match(ref):
+        raise HTTPException(400, "镜像引用格式不正确（如 registry:5000/image:tag）")
+    try:
+        tc.parse_docker_args(docker_args or [])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    cmd_ov = str(cmd_override or "").strip()
+    if pd_mode == "pd" and cmd_ov:
+        raise HTTPException(400, "PD 分离模式不支持编辑命令文本（多实例命令不可单条覆盖）")
+    return {"node_name": nn, "node_labels": labels, "gpu_ids": gids,
+            "pipeline_parallel": max(1, int(pp or 1)), "image_ref": ref,
+            "docker_args": [str(x).strip() for x in (docker_args or []) if str(x).strip()],
+            "cmd_override": cmd_ov}
+
+
+_ENGINE_VERSION_RE = re.compile(r"^v?\d+\.\d+\.\d+$")
+# PD 分离参数面（kv-transfer-config / --disaggregation-mode）的最低引擎版本
+_PD_MIN_VERSION = {"vllm": (0, 30, 0), "sglang": (0, 4, 9)}
+
+
+def _check_engine_version(engine: str, ev, pd_mode: str) -> str:
+    """引擎版本（builtin vllm/sglang 镜像 tag）校验，返回归一化值（空=跟随平台当前版本）。
+
+    规则：空=跟随平台 pin；非空须为 semver tag（v0.33.0 / 0.33.0）；
+    PD 分离模式要求 vLLM ≥0.30 / SGLang ≥0.4.9（KV 传输参数面），低于则 400。"""
+    ev = str(ev or "").strip()
+    if not ev:
+        return ""
+    if not _ENGINE_VERSION_RE.match(ev):
+        raise HTTPException(400, f"引擎版本格式不正确：{ev}（应为 v0.33.0 / 0.33.0 这类完整 tag）")
+    if pd_mode == "pd" and engine in _PD_MIN_VERSION:
+        ver = tuple(int(x) for x in ev.lstrip("v").split("."))
+        if ver < _PD_MIN_VERSION[engine]:
+            lo = ".".join(str(x) for x in _PD_MIN_VERSION[engine])
+            raise HTTPException(400, f"PD 分离模式要求 {engine} ≥{lo}（KV 传输参数面），"
+                                     f"当前选择 {ev} 不满足")
+    return ev
+
+
 def _brief(d: Deployment, db: Session) -> dict:
     asset = db.get(ModelAsset, d.model_asset_id)
     return {
@@ -71,6 +165,12 @@ def _brief(d: Deployment, db: Session) -> dict:
         "prefill_tp": d.prefill_tp or 1, "decode_tp": d.decode_tp or 1,
         "kv_connector": d.kv_connector or "nixl",
         "node_count": d.node_count or 1, "nccl_env": d.nccl_env or {},
+        # 部署放置（目标节点 / 标签约束 / GPU 选择 / PP）+ 运行环境（镜像 / Docker 参数 / 命令编辑）
+        "node_name": d.node_name, "node_labels": d.node_labels or [],
+        "gpu_ids": d.gpu_ids or [], "pipeline_parallel": d.pipeline_parallel or 1,
+        "image_ref": d.image_ref or "", "docker_args": d.docker_args or [],
+        "cmd_override": d.cmd_override or "",
+        "engine_version": d.engine_version or "",
         "gpu_need": inf.deployment_gpu_need(d),
         "served_model_name": _served_name(d),
         "endpoint": d.endpoint, "status": d.status, "error": d.error,
@@ -92,13 +192,28 @@ def _brief(d: Deployment, db: Session) -> dict:
 
 # ---------- 部署管理 ----------
 
+@router.get("/api/inference/engine-versions")
+def engine_versions(engine: str = "vllm", user=Depends(get_current_user)):
+    """builtin 引擎可用版本（Docker Hub tags 降序前 10，缓存 10 分钟）+ 平台当前生效 tag。
+    供部署页引擎版本选择器；选空=跟随平台当前版本。"""
+    if engine not in ("vllm", "sglang"):
+        raise HTTPException(400, "engine 需为 vllm/sglang")
+    from ..services import upgrade_service as up
+    current = up.current_image(engine).split(":")[-1]
+    try:
+        versions = up.check_latest(engine)
+    except Exception:
+        versions = []
+    return {"engine": engine, "current": current, "versions": versions}
+
+
 class DeployReq(BaseModel):
     project_id: int
     name: str
     model_asset_id: int
     engine: str = "vllm"
     quantization: str = "none"
-    tensor_parallel: int = 1
+    tensor_parallel: int = 1  # 0=TP 自动（按模型体积/单卡显存估算；仅协同模式）
     max_model_len: int = 8192
     gpu_mem_util: float = 0.85
     enable_lora: bool = False
@@ -115,6 +230,16 @@ class DeployReq(BaseModel):
     kv_connector: str = "nixl"  # PD KV 传输：nixl / mooncake
     node_count: int = 1  # 实例池跨逻辑节点数（放置分组；单实例单机闭环）
     nccl_env: dict = {}  # NCCL/UCX/NIXL 环境变量覆盖
+    # ---------- 部署放置（目标节点 / 标签约束 / GPU 选择 / PP） ----------
+    node_name: str | None = None  # 目标节点（空=自动选择=本节点；当前仅本节点可调度）
+    node_labels: list[str] = []  # 节点标签约束（key=value 列表，子集匹配）
+    gpu_ids: list[int] = []  # 手动 GPU 卡号（空=自动分配；仅协同，数量=TP×PP×副本）
+    pipeline_parallel: int = 1  # 流水线并行 PP（1=关闭；每实例卡数=TP×PP）
+    # ---------- 运行环境（镜像 / Docker 参数 / 命令编辑） ----------
+    image_ref: str = ""  # 自定义镜像引用（空=自动选择）
+    engine_version: str = ""  # 引擎版本 tag（builtin vllm/sglang；空=跟随平台当前版本）
+    docker_args: list[str] = []  # Docker 参数（白名单 flag，每行一个）
+    cmd_override: str = ""  # 编辑命令文本（仅协同模式；空=自动拼装）
     # ---------- 推理重构（后端注册表/缓存加速） ----------
     backend_name: str | None = None  # 推理后端（空=builtin 引擎；自定义须以 -custom 结尾）
     backend_version: str | None = None  # 后端版本（空=默认版本）
@@ -138,13 +263,33 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
     pd_mode = req.pd_mode if req.pd_mode in ("off", "pd") else "off"
     if pd_mode == "pd" and req.kv_connector not in ("nixl", "mooncake"):
         raise HTTPException(400, "kv_connector 需为 nixl/mooncake")
+    if req.pipeline_parallel < 1:
+        raise HTTPException(400, "PP 需为 ≥1")
+    pp = max(1, int(req.pipeline_parallel or 1))
+    if req.tensor_parallel < 0:
+        raise HTTPException(400, "TP 需为 ≥0（0=自动估算）")
+    # TP 自动（0）：仅协同模式，按模型体积/单卡显存估算（估算结果落库为具体值）
+    tp = req.tensor_parallel
+    if tp == 0:
+        if pd_mode == "pd":
+            raise HTTPException(400, "PD 分离模式须显式指定 P/D 实例卡数（不支持 TP 自动）")
+        from ..models import GpuNode
+        node0 = db.query(GpuNode).filter_by(name=settings.node_name).first()
+        tp, _reason = inf.estimate_tp(asset, node0.gpu_count if node0 else 0)
     if pd_mode == "pd":
         if min(req.prefill_replicas, req.decode_replicas, req.prefill_tp, req.decode_tp) < 1:
             raise HTTPException(400, "PD 分离：各角色实例数/卡数均需 ≥1")
-        need = max(1, req.prefill_replicas) * max(1, req.prefill_tp) \
-            + max(1, req.decode_replicas) * max(1, req.decode_tp)
+        need = (max(1, req.prefill_replicas) * max(1, req.prefill_tp) * pp
+                + max(1, req.decode_replicas) * max(1, req.decode_tp) * pp)
     else:
-        need = max(1, req.tensor_parallel) * max(1, req.replicas)
+        need = max(1, tp) * pp * max(1, req.replicas)
+    # 部署放置/运行环境新字段（目标节点/标签约束/GPU 选择/镜像/Docker 参数/命令编辑）
+    norm = _normalize_placement(
+        db, pd_mode=pd_mode, tp=tp, pp=pp, replicas=req.replicas,
+        node_name=req.node_name, node_labels=req.node_labels, gpu_ids=req.gpu_ids,
+        image_ref=req.image_ref, docker_args=req.docker_args,
+        cmd_override=req.cmd_override)
+    engine_version = _check_engine_version(req.engine, req.engine_version, pd_mode)
     # 推理后端 / 缓存服务选型校验（自定义后端须存在且不可 PD；builtin 归一为空）
     from ..services import backend_registry as br
     from ..models import CacheService
@@ -165,7 +310,7 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
                                  f"{max(0, (node.gpu_count or 0) - scheduler._gpu_in_use(db))}")
     d = Deployment(
         project_id=req.project_id, name=req.name, model_asset_id=asset.id,
-        engine=req.engine, quantization=req.quantization, tensor_parallel=req.tensor_parallel,
+        engine=req.engine, quantization=req.quantization, tensor_parallel=max(1, tp),
         max_model_len=req.max_model_len, gpu_mem_util=req.gpu_mem_util,
         enable_lora=req.enable_lora, lora_adapters=req.lora_adapters,
         replicas=max(1, req.replicas), description=req.description,
@@ -177,6 +322,12 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         kv_connector=req.kv_connector if req.kv_connector in ("nixl", "mooncake") else "nixl",
         node_count=max(1, req.node_count),
         nccl_env={str(k): str(v) for k, v in (req.nccl_env or {}).items()},
+        # 部署放置（目标节点/标签约束/GPU 选择/PP）+ 运行环境（镜像/Docker 参数/命令编辑）
+        node_name=norm["node_name"], node_labels=norm["node_labels"],
+        gpu_ids=norm["gpu_ids"], pipeline_parallel=norm["pipeline_parallel"],
+        image_ref=norm["image_ref"], engine_version=engine_version,
+        docker_args=norm["docker_args"],
+        cmd_override=norm["cmd_override"],
         # 推理重构（后端注册表/缓存加速）
         backend_name=backend_name, backend_version=backend_version,
         cache_service_id=cache_service_id,
@@ -195,7 +346,7 @@ class PreviewReq(BaseModel):
     model_asset_id: int | None = None
     engine: str = "vllm"
     quantization: str = "none"
-    tensor_parallel: int = 1
+    tensor_parallel: int = 1  # 0=TP 自动（按模型体积/单卡显存估算；仅协同模式）
     max_model_len: int = 8192
     gpu_mem_util: float = 0.85
     enable_lora: bool = False
@@ -210,6 +361,16 @@ class PreviewReq(BaseModel):
     kv_connector: str = "nixl"
     node_count: int = 1
     nccl_env: dict = {}
+    # ---------- 部署放置（目标节点 / 标签约束 / GPU 选择 / PP） ----------
+    node_name: str | None = None
+    node_labels: list[str] = []
+    gpu_ids: list[int] = []
+    pipeline_parallel: int = 1
+    # ---------- 运行环境（镜像 / Docker 参数 / 命令编辑） ----------
+    image_ref: str = ""
+    engine_version: str = ""
+    docker_args: list[str] = []
+    cmd_override: str = ""
     backend_name: str | None = None
     backend_version: str | None = None
     cache_service_id: int | None = None
@@ -222,6 +383,8 @@ def preview_deploy(req: PreviewReq, db=Depends(get_db), user=Depends(get_current
     运行时才确定的值（PD 端口基于部署 id、worker 容器 IP）以占位符展示。"""
     from types import SimpleNamespace
     import shlex as _shlex
+    from ..models import GpuNode
+    from .. import scheduler
     from ..services import backend_registry as br
     from ..services import cache_service as cs
     if req.engine not in ("vllm", "sglang"):
@@ -232,13 +395,33 @@ def preview_deploy(req: PreviewReq, db=Depends(get_db), user=Depends(get_current
             db, req.backend_name, req.backend_version, pd_mode)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # 并行度校验 + TP 自动（0=估算，仅协同；与创建同口径）
+    if req.pipeline_parallel < 1:
+        raise HTTPException(400, "PP 需为 ≥1")
+    pp = max(1, int(req.pipeline_parallel or 1))
+    if req.tensor_parallel < 0:
+        raise HTTPException(400, "TP 需为 ≥0（0=自动估算）")
     asset = db.get(ModelAsset, req.model_asset_id) if req.model_asset_id else None
+    tp = req.tensor_parallel
+    reason = ""
+    node0 = db.query(GpuNode).filter_by(name=settings.node_name).first()
+    if tp == 0:
+        if pd_mode == "pd":
+            raise HTTPException(400, "PD 分离模式须显式指定 P/D 实例卡数（不支持 TP 自动）")
+        tp, reason = inf.estimate_tp(asset, node0.gpu_count if node0 else 0)
+    # 部署放置/运行环境（与创建同口径校验；preview 不建库仅做展示）
+    norm = _normalize_placement(
+        db, pd_mode=pd_mode, tp=tp, pp=pp, replicas=req.replicas,
+        node_name=req.node_name, node_labels=req.node_labels, gpu_ids=req.gpu_ids,
+        image_ref=req.image_ref, docker_args=req.docker_args,
+        cmd_override=req.cmd_override)
+    engine_version = _check_engine_version(req.engine, req.engine_version, pd_mode)
     model_path = (inf.resolve_model_path(asset, db) or "") if asset else ""
     model_path = model_path or "<model_path>"
     dep = SimpleNamespace(
         id=0, name=req.name or "<部署名>",
         engine=req.engine, quantization=req.quantization,
-        tensor_parallel=max(1, req.tensor_parallel or 1),
+        tensor_parallel=max(1, tp),
         max_model_len=req.max_model_len, gpu_mem_util=req.gpu_mem_util,
         enable_lora=bool(req.enable_lora), lora_adapters=req.lora_adapters or [],
         advanced=req.advanced or {},
@@ -250,17 +433,19 @@ def preview_deploy(req: PreviewReq, db=Depends(get_db), user=Depends(get_current
         node_count=max(1, req.node_count or 1),
         nccl_env={str(k): str(v) for k, v in (req.nccl_env or {}).items()},
         kv_cache_ext=req.kv_cache_ext or {},
+        # 部署放置 / 运行环境（build_cmd 读 cmd_override；镜像优先级与真实启动一致）
+        node_name=norm["node_name"], node_labels=norm["node_labels"],
+        gpu_ids=norm["gpu_ids"], pipeline_parallel=norm["pipeline_parallel"],
+        image_ref=norm["image_ref"], engine_version=engine_version,
+        docker_args=norm["docker_args"],
+        cmd_override=norm["cmd_override"],
         backend_name=backend_name, backend_version=backend_version,
         cache_service_id=req.cache_service_id,
     )
     try:
-        if br.is_custom_name(backend_name):
-            bc = br.backend_context(backend_name, backend_version)
-            image = bc["image"]
-        else:
-            bc = {}
-            image = upgrade_service.current_image("vllm") if req.engine == "vllm" \
-                else upgrade_service.current_image("sglang")
+        bc = br.backend_context(backend_name, backend_version) \
+            if br.is_custom_name(backend_name) else {}
+        image = inf._engine_image(dep, bc)  # 镜像优先级与真实启动同一路径
     except Exception as e:  # RuntimeError（后端/版本缺失）等 → 400
         raise HTTPException(400, str(e))
     base_env = bc.get("env") or {"VLLM_LOGGING_LEVEL": "warning",
@@ -275,15 +460,22 @@ def preview_deploy(req: PreviewReq, db=Depends(get_db), user=Depends(get_current
 
     cmds: list[dict] = []
     if pd_mode == "pd" and not br.is_custom_name(backend_name):
-        cmds.append({"label": "prefill p0", "gpus": dep.prefill_tp,
+        cmds.append({"label": "prefill p0", "gpus": dep.prefill_tp * pp,
                      "cmd": _fmt(inf.build_cmd(dep, model_path, role="prefill", idx=0))})
-        cmds.append({"label": "decode d0", "gpus": dep.decode_tp,
+        cmds.append({"label": "decode d0", "gpus": dep.decode_tp * pp,
                      "cmd": _fmt(inf.build_cmd(dep, model_path, role="decode", idx=0))})
     else:
-        cmds.append({"label": "replica r0", "gpus": dep.tensor_parallel,
+        cmds.append({"label": "replica r0", "gpus": dep.tensor_parallel * pp,
                      "cmd": _fmt(inf.build_cmd(dep, model_path,
                                                worker_ip="<worker_ip>" if bc else ""))})
-    return {"image": image, "model_path": model_path, "env": env, "commands": cmds}
+    # 自动选择结果（目标节点卡数/空闲/标签 + TP 自动估算值），供前端「自动选择结果」展示
+    total = (node0.gpu_count or 0) if node0 else 0
+    node_info = {"name": settings.node_name, "total": total,
+                 "free": max(0, total - scheduler._gpu_in_use(db)),
+                 "labels": (node0.labels or []) if node0 else []}
+    return {"image": image, "model_path": model_path, "env": env, "commands": cmds,
+            "tp_auto": {"value": tp, "reason": reason} if req.tensor_parallel == 0 else None,
+            "node": node_info}
 
 
 @router.get("/api/inference/deployments")
@@ -553,14 +745,48 @@ def update_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curr
     if "cache_service_id" in req and req["cache_service_id"] \
             and not db.get(CacheService, req["cache_service_id"]):
         raise HTTPException(400, "关联的缓存服务不存在")
-    # GPU 需求增量预检（重建后需求变大才查容量）
+    # 并行度（PP 校验 + TP 自动估算，与创建同口径）
+    if req.get("pipeline_parallel", d.pipeline_parallel or 1) < 1:
+        raise HTTPException(400, "PP 需为 ≥1")
+    pp = max(1, int(req.get("pipeline_parallel", d.pipeline_parallel or 1) or 1))
+    tp_eff = req.get("tensor_parallel", d.tensor_parallel)
+    if tp_eff < 0:
+        raise HTTPException(400, "TP 需为 ≥0（0=自动估算）")
+    if tp_eff == 0:
+        if pd_mode == "pd":
+            raise HTTPException(400, "PD 分离模式须显式指定 P/D 实例卡数（不支持 TP 自动）")
+        from ..models import GpuNode
+        _node = db.query(GpuNode).filter_by(name=settings.node_name).first()
+        _asset = db.get(ModelAsset, req.get("model_asset_id", d.model_asset_id))
+        tp_eff, _reason = inf.estimate_tp(_asset, _node.gpu_count if _node else 0)
+        req["tensor_parallel"] = max(1, tp_eff)  # 估算结果落库为具体值
+    # 部署放置/运行环境新字段：出现即按全量生效集（req 覆盖 + 现有值）做同口径校验，
+    # 归一化结果仅回写 req 中出现的 key（""/[] 清空语义由 _normalize_placement 处理）
+    _PLACEMENT_KEYS = ("node_name", "node_labels", "gpu_ids", "pipeline_parallel",
+                       "image_ref", "docker_args", "cmd_override")
+    if any(k in req for k in _PLACEMENT_KEYS):
+        norm = _normalize_placement(
+            db, pd_mode=pd_mode, tp=tp_eff, pp=pp,
+            replicas=req.get("replicas", d.replicas),
+            node_name=req.get("node_name", d.node_name),
+            node_labels=req.get("node_labels", d.node_labels or []),
+            gpu_ids=req.get("gpu_ids", d.gpu_ids or []),
+            image_ref=req.get("image_ref", d.image_ref or ""),
+            docker_args=req.get("docker_args", d.docker_args or []),
+            cmd_override=req.get("cmd_override", d.cmd_override or ""))
+        for k in _PLACEMENT_KEYS:
+            if k in req:
+                req[k] = norm[k]
+    # 引擎版本（出现即同口径校验；""=清除，恢复跟随平台当前版本）
+    if "engine_version" in req:
+        req["engine_version"] = _check_engine_version(engine, req.get("engine_version"), pd_mode)
+    # GPU 需求增量预检（重建后需求变大才查容量；含 PP）
     new_need = (max(1, req.get("prefill_replicas", d.prefill_replicas or 1))
-                * max(1, req.get("prefill_tp", d.prefill_tp or 1))
+                * max(1, req.get("prefill_tp", d.prefill_tp or 1)) * pp
                 + max(1, req.get("decode_replicas", d.decode_replicas or 1))
-                * max(1, req.get("decode_tp", d.decode_tp or 1))) \
+                * max(1, req.get("decode_tp", d.decode_tp or 1)) * pp) \
         if pd_mode == "pd" \
-        else max(1, req.get("tensor_parallel", d.tensor_parallel)) \
-        * max(1, req.get("replicas", d.replicas))
+        else max(1, tp_eff) * pp * max(1, req.get("replicas", d.replicas))
     if rebuild and new_need > inf.deployment_gpu_need(d):
         from ..models import GpuNode
         from .. import scheduler

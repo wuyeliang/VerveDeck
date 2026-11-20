@@ -96,6 +96,7 @@ def nodes(db=Depends(get_db), user=Depends(get_current_user)):
         out.append({
             "id": n.id, "name": n.name, "local": n.name == settings.node_name,
             "gpu_count": n.gpu_count, "status": n.status,
+            "labels": n.labels or [],          # 节点标签（key=value 列表；部署标签约束按子集匹配）
             "last_heartbeat": str(n.last_heartbeat) if n.last_heartbeat else "",
             "meta": meta,
             "driver": meta.get("driver", ""),   # gpu-agent 采集（nvidia-smi）
@@ -117,6 +118,7 @@ class NodeReq(BaseModel):
     status: str = ""        # online/offline（空=不修改）
     meta: dict = {}         # 扩展信息：names / IB-RDMA 网络（ib_hca, net_ifname, gid_index...）
     token: str = ""         # 注册令牌（add-node.sh 携带；页面注册必须）
+    labels: list[str] | None = None    # 节点标签（key=value 列表；None=不修改，[]=清空）
     maintenance: bool | None = None          # 维护模式开关（None=不修改）
     maintenance_message: str | None = None   # 维护原因
 
@@ -138,7 +140,7 @@ class HeartbeatReq(BaseModel):
 
 def _node_brief(n: GpuNode) -> dict:
     return {"id": n.id, "name": n.name, "gpu_count": n.gpu_count,
-            "status": n.status, "meta": n.meta or {},
+            "status": n.status, "meta": n.meta or {}, "labels": n.labels or [],
             "state_message": n.state_message or "",
             "maintenance": bool(n.maintenance),
             "maintenance_message": n.maintenance_message or ""}
@@ -289,6 +291,19 @@ def update_node(nid: int, req: NodeReq, db=Depends(get_db), user=Depends(get_cur
         n.status = req.status
     if req.meta:
         n.meta = {**(n.meta or {}), **req.meta}
+    # 节点标签（key=value 列表；None=不修改，[]=清空）
+    if req.labels is not None:
+        seen: set[str] = set()
+        labels = []
+        for x in req.labels:
+            s = str(x).strip()
+            if not s or "=" not in s:
+                raise HTTPException(400, f"标签须为 key=value 格式：{s}")
+            if s in seen:
+                continue
+            seen.add(s)
+            labels.append(s)
+        n.labels = labels
     # 维护模式（参照 GPUStack maintenance）：摘除服务——不判离线、不告警、调度不占容量
     if req.maintenance is not None:
         n.maintenance = bool(req.maintenance)

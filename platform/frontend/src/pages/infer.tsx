@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Select, Drawer,
   Descriptions, message, Popconfirm, Card, Tabs, Row, Col, Statistic,
-  Switch, Tooltip, Dropdown,
+  Switch, Tooltip, Dropdown, Collapse, AutoComplete,
 } from 'antd'
 import {
   PlusOutlined, PoweroffOutlined, PlayCircleOutlined, CopyOutlined,
@@ -33,14 +33,37 @@ const Group = ({ title, extra, children }: {
   </Card>
 )
 
+// 放置/运行环境字段（提交与预览共用口径）：TP 自动（0=估算）/ PP / 目标节点 /
+// 标签约束 / 手动 GPU 卡号 / 自定义镜像 / Docker 参数 / 命令编辑（PD 模式置空）
+function buildPlacement(v: any): Record<string, any> {
+  return {
+    tensor_parallel: v.tp_auto ? 0 : (v.tensor_parallel || 1),
+    pipeline_parallel: v.pipeline_parallel || 1,
+    node_name: v.node_target === 'manual' ? (v.node_name || null) : null,
+    node_labels: (v.node_labels || []).map((x: any) => String(x).trim()).filter(Boolean),
+    gpu_ids: v.gpu_select === 'manual'
+      ? String(v.gpu_ids_str || '').split(/[,，\s]+/).filter(Boolean).map(Number)
+        .filter((x: number) => !Number.isNaN(x))
+      : [],
+    image_ref: v.image_select === 'custom' ? String(v.image_ref || '').trim() : '',
+    // 引擎版本（builtin vllm/sglang tag；空=跟随平台当前版本）
+    engine_version: v.engine_version || '',
+    docker_args: String(v.docker_args || '').split('\n').map((x: string) => x.trim()).filter(Boolean),
+    cmd_override: (v.pd_mode || 'off') === 'pd' ? '' : String(v.cmd_override || '').trim(),
+  }
+}
+
 // 启动配置预览：表单字段变化（防抖 500ms）调后端 /preview（与 build_cmd 同一命令拼装路径，
 // 保证预览 == 实际启动命令），深色代码块渲染 镜像 / 容器环境变量 / 各实例启动命令（可复制）
-function LaunchPreview({ form, tick, loraModels, t }: {
+function LaunchPreview({ form, tick, loraModels, t, onPreview }: {
   form: any; tick: number; loraModels: any[]; t: (k: string, o?: Record<string, any>) => string;
+  onPreview?: (pv: any) => void;
 }) {
   const [pv, setPv] = useState<any>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  // 上抛预览结果（tp_auto 估算 / 节点卡数与标签），供资源配置子 tab 与配置评估卡展示
+  useEffect(() => { onPreview?.(pv) }, [pv, onPreview])
   useEffect(() => {
     if (!tick) return
     let stop = false
@@ -83,7 +106,7 @@ function LaunchPreview({ form, tick, loraModels, t }: {
         const r = await api.post('/api/inference/deployments/preview', {
           name: v.name || '', model_asset_id: v.model_asset_id ?? null,
           engine: v.engine || 'vllm', quantization: v.quantization || 'none',
-          tensor_parallel: v.tensor_parallel || 1, max_model_len: v.max_model_len || 8192,
+          max_model_len: v.max_model_len || 8192,
           gpu_mem_util: v.gpu_mem_util ?? 0.85,
           enable_lora: adapters.length > 0, lora_adapters: adapters,
           advanced: adv,
@@ -95,6 +118,7 @@ function LaunchPreview({ form, tick, loraModels, t }: {
           backend_name: v.backend_name || null, backend_version: v.backend_version || null,
           cache_service_id: v.cache_service_id ?? null,
           kv_cache_ext: kv,
+          ...buildPlacement(v),
         })
         if (!stop) { setPv(r.data); setErr(''); setBusy(false) }
       } catch (e: any) {
@@ -183,6 +207,10 @@ export default function Inference() {
   const [nodeName, setNodeName] = useState('')
   const [rdma, setRdma] = useState<any>({ present: false, devices: [] as string[] })
   const [nodeGpu, setNodeGpu] = useState<{ total: number; used: number }>({ total: 0, used: 0 })
+  const [nodeLabels, setNodeLabels] = useState<string[]>([])
+  const [previewRes, setPreviewRes] = useState<any>(null)  // 预览结果（自动选择结果：TP 估算 / 节点）
+  // 引擎版本（builtin vllm/sglang 可选 tag；空=跟随平台当前版本）
+  const [engVersions, setEngVersions] = useState<Record<string, { current: string; versions: string[] }>>({})
   // 推理重构：后端注册表 / 缓存服务 / 编辑抽屉 / 实例视角
   const [backends, setBackends] = useState<any[]>([])
   const [cacheServices, setCacheServices] = useState<any[]>([])
@@ -200,8 +228,19 @@ export default function Inference() {
   const prefillTp = Form.useWatch('prefill_tp', form) || 1
   const decodeReplicas = Form.useWatch('decode_replicas', form) || 1
   const decodeTp = Form.useWatch('decode_tp', form) || 1
-  // GPU 需求预估：协同 = TP×副本；PD = P实例×P_TP + D实例×D_TP
-  const gpuNeed = pdMode === 'pd' ? prefillReplicas * prefillTp + decodeReplicas * decodeTp : tp * rep
+  // 部署放置/运行环境：PP / TP 自动 / 目标节点 / 标签约束 / GPU 选择 / 镜像选择
+  const pp = Form.useWatch('pipeline_parallel', form) || 1
+  const tpAuto = !!Form.useWatch('tp_auto', form)
+  const nodeTarget = Form.useWatch('node_target', form) || 'auto'
+  const nodeLabelsSel: string[] = Form.useWatch('node_labels', form) || []
+  const gpuSelect = Form.useWatch('gpu_select', form) || 'auto'
+  const imageSelect = Form.useWatch('image_select', form) || 'auto'
+  // GPU 需求预估：协同 = TP×副本×PP；PD = (P实例×P_TP + D实例×D_TP)×PP
+  const gpuNeed = (pdMode === 'pd'
+    ? prefillReplicas * prefillTp + decodeReplicas * decodeTp
+    : tp * rep) * pp
+  // 标签约束匹配（本节点标签子集检查；与后端 preview 400 同口径的前置展示）
+  const missingNodeLabels = nodeLabelsSel.filter((l) => !nodeLabels.includes(l))
   // 创建表单：后端选择联动（custom 后端 → 版本；PD 互斥提示）
   const selBackend = Form.useWatch('backend_name', form) || ''
   const selBackendVer = Form.useWatch('backend_version', form)
@@ -211,6 +250,16 @@ export default function Inference() {
   const editBackendVer = Form.useWatch('backend_version', editForm)
   const editBackendObj = backends.find((b: any) => b.name === editBackend)
   const editEngine = Form.useWatch('engine', editForm) || 'vllm'
+  // 引擎版本选项（空值=跟随平台当前版本；当前生效 tag 标「当前」）
+  const evOptions = (e: string) => {
+    const info = engVersions[e]
+    return [
+      { value: '', label: t('infer.engineVersionFollow', { v: info?.current || '—' }) },
+      ...(info?.versions || []).map((v: string) => ({
+        value: v, label: v === info?.current ? `${v} (${t('infer.curTag')})` : v,
+      })),
+    ]
+  }
 
   // 状态文案（状态点统一走共享色板：绿=在服 琥珀=未就绪 红=失败 灰=停止）
   const stLabel = (s: string) => {
@@ -222,6 +271,11 @@ export default function Inference() {
   const loadRefs = useCallback(() => {
     api.get('/api/inference/backends').then((r) => setBackends(r.data || [])).catch(() => {})
     api.get('/api/cache/services').then((r) => setCacheServices(r.data || [])).catch(() => {})
+    // 引擎版本列表（Docker Hub tags 前 10，后端缓存 10 分钟；失败不阻塞页面）
+    ;(['vllm', 'sglang'] as const).forEach((e) => {
+      api.get('/api/inference/engine-versions', { params: { engine: e } })
+        .then((r) => setEngVersions((p) => ({ ...p, [e]: r.data }))).catch(() => {})
+    })
   }, [])
   useEffect(() => { loadRefs() }, [loadRefs])
 
@@ -259,6 +313,7 @@ export default function Inference() {
       setNodeName(n.name || '')
       setRdma(n.rdma || { present: false, devices: [] })
       setNodeGpu({ total: n.gpu_count || 0, used: n.gpu_in_use || 0 })
+      setNodeLabels(n.labels || [])
     }).catch(() => {})
   }, [])
 
@@ -333,6 +388,8 @@ export default function Inference() {
       gpu_mem_util: 0.85, replicas: 1,
       pd_mode: 'off', prefill_replicas: 1, prefill_tp: 1, decode_replicas: 1, decode_tp: 1,
       kv_connector: 'nixl', node_count: 1, nccl_env_rows: [],
+      pipeline_parallel: 1, tp_auto: false, node_target: 'auto', node_labels: [],
+      gpu_select: 'auto', image_select: 'auto',
     })
     try {
       const m = await api.get('/api/models', { params: { project_id: projectId } })
@@ -391,7 +448,7 @@ export default function Inference() {
       const ncclEnv = envRowsToObj(v.nccl_env_rows)
       const r = await api.post('/api/inference/deployments', {
         project_id: projectId, name: v.name, model_asset_id: v.model_asset_id,
-        engine: v.engine, quantization: v.quantization, tensor_parallel: v.tensor_parallel,
+        engine: v.engine, quantization: v.quantization,
         max_model_len: v.max_model_len, gpu_mem_util: v.gpu_mem_util,
         enable_lora: adapters.length > 0, lora_adapters: adapters, replicas: v.replicas,
         description: v.description || '', advanced: adv,
@@ -404,6 +461,8 @@ export default function Inference() {
         backend_name: v.backend_name || null, backend_version: v.backend_version || null,
         cache_service_id: v.cache_service_id ?? null,
         kv_cache_ext: kv,
+        // 部署放置 / 运行环境（TP 自动 / PP / 目标节点 / 标签约束 / GPU 选择 / 镜像 / Docker 参数 / 命令编辑）
+        ...buildPlacement(v),
       })
       message.success(t('infer.created'))
       setView('list')
@@ -428,6 +487,7 @@ export default function Inference() {
       backend_name: d.backend_name || '', backend_version: d.backend_version || '',
       cache_service_id: d.cache_service_id || undefined,
       engine: d.engine, quantization: d.quantization,
+      engine_version: d.engine_version || '',
       tensor_parallel: d.tensor_parallel, replicas: d.replicas,
       max_model_len: d.max_model_len, gpu_mem_util: d.gpu_mem_util,
       kv_cpu_offload_gb: d.kv_cache_ext?.cpu_offload_gb ?? undefined,
@@ -452,6 +512,7 @@ export default function Inference() {
       backend_name: v.backend_name || null, backend_version: v.backend_version || null,
       cache_service_id: v.cache_service_id ?? null,
       engine: v.engine, quantization: v.quantization,
+      engine_version: v.engine_version || '',
       tensor_parallel: v.tensor_parallel, replicas: v.replicas,
       max_model_len: v.max_model_len, gpu_mem_util: v.gpu_mem_util,
       kv_cache_ext: kv,
@@ -742,9 +803,17 @@ console.log(resp.choices[0].message.content)`
                       options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
                   </Form.Item>
                 </Col>
-                <Col span={12}>
+                <Col span={6}>
                   <Form.Item name="engine" label={t('infer.engine')}>
-                    <Select options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
+                    <Select options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]}
+                      onChange={() => form.setFieldsValue({ engine_version: '' })} />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item name="engine_version" label={t('infer.engineVersion')} extra={t('infer.engineVersionTip')}>
+                    {/* AutoComplete：列表可用时选 tag；离线（Docker Hub 不可达）仍可手输 */}
+                    <AutoComplete style={{ width: '100%' }} options={evOptions(eng)}
+                      placeholder={t('infer.engineVersionFollow', { v: engVersions[eng]?.current || '—' })} />
                   </Form.Item>
                 </Col>
               </Row>
@@ -757,6 +826,15 @@ console.log(resp.choices[0].message.content)`
                 <Col span={12}>
                   <Form.Item name="description" label={t('infer.desc')}>
                     <Input placeholder={t('infer.descPh')} maxLength={200} showCount />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={24}>
+                  <Form.Item name="lora_assets" label={t('infer.extraLora')} extra={t('infer.loraTip')}>
+                    <Select mode="multiple"
+                      options={loraModels.map((m: any) => ({ value: m.id, label: m.name }))}
+                      placeholder={t('common.optional')} />
                   </Form.Item>
                 </Col>
               </Row>
@@ -774,7 +852,7 @@ console.log(resp.choices[0].message.content)`
               </div>
             </Group>
             <Group title={t('infer.cardPreview')}>
-              <LaunchPreview form={form} tick={formTick} loraModels={loraModels} t={t} />
+              <LaunchPreview form={form} tick={formTick} loraModels={loraModels} t={t} onPreview={setPreviewRes} />
             </Group>
           </Form>
         </>
@@ -788,9 +866,16 @@ console.log(resp.choices[0].message.content)`
                     options={models.map((m: any) => ({ value: m.id, label: `${m.name} (${m.type})` }))} />
                 </Form.Item>
               </Col>
-              <Col span={12}>
+              <Col span={6}>
                 <Form.Item name="engine" label={t('infer.engine')}>
-                  <Select options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
+                  <Select options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]}
+                    onChange={() => form.setFieldsValue({ engine_version: '' })} />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item name="engine_version" label={t('infer.engineVersion')} extra={t('infer.engineVersionTip')}>
+                  <AutoComplete style={{ width: '100%' }} options={evOptions(eng)}
+                    placeholder={t('infer.engineVersionFollow', { v: engVersions[eng]?.current || '—' })} />
                 </Form.Item>
               </Col>
             </Row>
@@ -898,8 +983,18 @@ console.log(resp.choices[0].message.content)`
                 key: 'res', label: t('infer.cardResource'), children: (
                   <>
                     <Row gutter={16}>
-                      <Col span={6}><Form.Item name="tensor_parallel" label={t('infer.tp')} extra={t('infer.tpTip')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
-                      <Col span={6}><Form.Item name="replicas" label={t('infer.replicas')} extra={t('infer.replicasTip')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}>
+                        <Form.Item name="tp_auto" label={t('infer.tpAuto')} extra={t('infer.tpAutoTip')} valuePropName="checked">
+                          <Switch checkedChildren="ON" unCheckedChildren="OFF" />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item name="tensor_parallel" label={t('infer.tp')}
+                          extra={tpAuto ? t('infer.tpAutoOn') : t('infer.tpTip')}>
+                          <InputNumber min={1} max={8} disabled={tpAuto || pdMode === 'pd'} style={{ width: '100%' }} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}><Form.Item name="replicas" label={t('infer.replicas')} extra={t('infer.replicasTip')}><InputNumber min={1} max={8} disabled={pdMode === 'pd'} style={{ width: '100%' }} /></Form.Item></Col>
                       <Col span={6}>
                         <Form.Item name="pd_mode" label={t('infer.pdMode')}
                           tooltip={selBackendObj && selBackendObj.source === 'custom'
@@ -910,24 +1005,78 @@ console.log(resp.choices[0].message.content)`
                           ]} />
                         </Form.Item>
                       </Col>
-                      {pdMode === 'pd' && (
-                        <Col span={6}>
-                          <Form.Item name="kv_connector" label={t('infer.kvConnector')} tooltip={t('infer.kvConnectorHint')}>
-                            <Select options={[
-                              { value: 'nixl', label: 'NIXL' }, { value: 'mooncake', label: 'Mooncake' },
-                            ]} />
-                          </Form.Item>
-                        </Col>
-                      )}
                     </Row>
+                    {tpAuto && pdMode !== 'pd' && previewRes?.tp_auto && (
+                      <div style={{ color: 'var(--ant-color-text-secondary)', fontSize: 12, marginBottom: 12 }}>
+                        <ThunderboltOutlined /> {t('infer.tpAutoResult')}：TP = <b>{previewRes.tp_auto.value}</b>
+                        <span style={{ color: 'var(--ant-color-text-tertiary)' }}>（{previewRes.tp_auto.reason}）</span>
+                      </div>
+                    )}
                     {pdMode === 'pd' && (
                       <Row gutter={16}>
                         <Col span={6}><Form.Item name="prefill_replicas" label={t('infer.prefillReplicas')} tooltip={t('infer.prefillReplicasHint')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
                         <Col span={6}><Form.Item name="prefill_tp" label={t('infer.prefillTp')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
                         <Col span={6}><Form.Item name="decode_replicas" label={t('infer.decodeReplicas')} tooltip={t('infer.decodeReplicasHint')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
                         <Col span={6}><Form.Item name="decode_tp" label={t('infer.decodeTp')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                        <Col span={6}><Form.Item name="kv_connector" label={t('infer.kvConnector')} tooltip={t('infer.kvConnectorHint')}><Select options={[
+                          { value: 'nixl', label: 'NIXL' }, { value: 'mooncake', label: 'Mooncake' },
+                        ]} /></Form.Item></Col>
                       </Row>
                     )}
+                    <Row gutter={16}>
+                      <Col span={6}><Form.Item name="pipeline_parallel" label={t('infer.pp')} extra={t('infer.ppTip')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
+                      <Col span={6}>
+                        <Form.Item name="node_target" label={t('infer.targetNode')} extra={t('infer.targetNodeTip')}>
+                          <Select options={[
+                            { value: 'auto', label: t('infer.targetNodeAuto') },
+                            { value: 'manual', label: t('infer.targetNodeManual') },
+                          ]} />
+                        </Form.Item>
+                      </Col>
+                      {nodeTarget === 'manual' && (
+                        <Col span={6}>
+                          <Form.Item name="node_name" label={t('infer.nodePick')} rules={[{ required: true }]}>
+                            <Select options={[{ value: nodeName, label: `${nodeName} (${t('cluster.nodeLocal')})` }]} />
+                          </Form.Item>
+                        </Col>
+                      )}
+                      <Col span={6}>
+                        <Form.Item label={t('infer.autoSelectResult')}>
+                          {previewRes?.node ? (
+                            <Space size={4} wrap>
+                              <Tag color="blue">{previewRes.node.name}</Tag>
+                              <span style={{ fontSize: 12, color: 'var(--ant-color-text-secondary)' }}>
+                                {t('infer.nodeTotalFree', { total: previewRes.node.total, free: previewRes.node.free })}
+                              </span>
+                            </Space>
+                          ) : <span style={{ color: 'var(--ant-color-text-quaternary)' }}>—</span>}
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        <Form.Item name="node_labels" label={t('infer.nodeLabels')} tooltip={t('infer.nodeLabelsTip')}>
+                          <Select mode="tags" open={false} placeholder={t('infer.nodeLabelsPh')}
+                            tokenSeparators={[',', '\n']} style={{ minWidth: 160 }} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item name="gpu_select" label={t('infer.gpuSelect')}
+                          extra={pdMode === 'pd' ? t('infer.gpuPdDisabled') : t('infer.gpuSelectTip')}>
+                          <Select disabled={pdMode === 'pd'} options={[
+                            { value: 'auto', label: t('infer.gpuSelectAuto') },
+                            { value: 'manual', label: t('infer.gpuSelectManual') },
+                          ]} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        <Form.Item name="gpu_ids_str" label={t('infer.gpuIds')} extra={t('infer.gpuIdsTip')}>
+                          <Input placeholder={t('infer.gpuIdsPh')}
+                            disabled={pdMode === 'pd' || gpuSelect !== 'manual'}
+                            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 12 }} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
                     <Row gutter={16}>
                       <Col span={6}><Form.Item name="node_count" label={t('infer.nodeCount')} extra={t('infer.nodeCountHint')}><InputNumber min={1} max={8} style={{ width: '100%' }} /></Form.Item></Col>
                       <Col span={6}>
@@ -947,7 +1096,7 @@ console.log(resp.choices[0].message.content)`
                       <ThunderboltOutlined />{' '}
                       {pdMode === 'pd'
                         ? t('infer.gpuNeedPd', { p: prefillReplicas, pt: prefillTp, d: decodeReplicas, dt: decodeTp, n: gpuNeed })
-                        : t('infer.gpuNeed', { n: gpuNeed, tp, r: rep })}
+                        : t('infer.gpuNeed', { n: tpAuto ? t('infer.auto') : gpuNeed, tp: tpAuto ? t('infer.auto') : tp, r: rep })}
                     </div>
                   </>
                 ),
@@ -957,14 +1106,30 @@ console.log(resp.choices[0].message.content)`
                   <>
                     <Row gutter={16}>
                       <Col span={8}>
-                        <Form.Item label={t('infer.dImage')} extra={t('infer.imageAutoTip')}>
-                          <code style={{ fontSize: 12, background: 'var(--ant-color-fill-tertiary)', padding: '4px 8px', borderRadius: 4 }}>
-                            {(selBackendObj && selBackendObj.source === 'custom'
-                              ? (selBackendObj.versions.find((v: any) => v.version === selBackendVer)?.image
-                                || selBackendObj.current_image)
-                              : ENGINE_IMAGES[eng]) || '—'}
-                          </code>
+                        <Form.Item name="image_select" label={t('infer.imageSelect')}>
+                          <Select options={[
+                            { value: 'auto', label: t('infer.imageSelectAuto') },
+                            { value: 'custom', label: t('infer.imageSelectCustom') },
+                          ]} />
                         </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        {imageSelect === 'custom' ? (
+                          <Form.Item name="image_ref" label={t('infer.imageRef')} extra={t('infer.imageRefTip')}
+                            rules={[{ required: true, message: t('infer.imageRefReq') }]}>
+                            <Input placeholder={t('infer.imageRefPh')} maxLength={255}
+                              style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 12 }} />
+                          </Form.Item>
+                        ) : (
+                          <Form.Item label={t('infer.dImage')} extra={t('infer.imageAutoTip')}>
+                            <code style={{ fontSize: 12, background: 'var(--ant-color-fill-tertiary)', padding: '4px 8px', borderRadius: 4 }}>
+                              {(selBackendObj && selBackendObj.source === 'custom'
+                                ? (selBackendObj.versions.find((v: any) => v.version === selBackendVer)?.image
+                                  || selBackendObj.current_image)
+                                : ENGINE_IMAGES[eng]) || '—'}
+                            </code>
+                          </Form.Item>
+                        )}
                       </Col>
                       <Col span={8}>
                         <Form.Item name="backend_name" label={t('infer.backend')} tooltip={t('infer.backendHint')}>
@@ -987,6 +1152,8 @@ console.log(resp.choices[0].message.content)`
                             ]} />
                         </Form.Item>
                       </Col>
+                    </Row>
+                    <Row gutter={16}>
                       <Col span={8}>
                         {selBackendObj && selBackendObj.source === 'custom' && (
                           <Form.Item name="backend_version" label={t('infer.backendVer')} tooltip={t('infer.backendVerHint')}>
@@ -998,13 +1165,17 @@ console.log(resp.choices[0].message.content)`
                           </Form.Item>
                         )}
                       </Col>
-                    </Row>
-                    <Row gutter={16}>
                       <Col span={8}>
                         <Form.Item name="cache_service_id" label={t('infer.cacheSvc')} tooltip={t('infer.cacheSvcHint')}>
                           <Select allowClear showSearch optionFilterProp="label"
                             placeholder={t('infer.cacheSvcNone')}
                             options={cacheServices.map((c: any) => ({ value: c.id, label: c.name }))} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item name="docker_args" label={t('infer.dockerArgs')} tooltip={t('infer.dockerArgsTip')}>
+                          <Input.TextArea placeholder={t('infer.dockerArgsPh')} autoSize={{ minRows: 2, maxRows: 4 }}
+                            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 12 }} />
                         </Form.Item>
                       </Col>
                     </Row>
@@ -1036,6 +1207,26 @@ console.log(resp.choices[0].message.content)`
                       )}
                     </Form.List>
                     <div style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginTop: 4 }}>{t('infer.envVarTip')}</div>
+                    {/* 本次部署的启动设置：编辑命令文本（覆盖自动拼装；仅协同模式） */}
+                    <Collapse ghost size="small" style={{ marginTop: 12, background: 'var(--ant-color-fill-quaternary)', borderRadius: 6 }}
+                      items={[{
+                        key: 'launch',
+                        label: <span style={{ fontWeight: 600, fontSize: 13 }}>{t('infer.launchSettings')}</span>,
+                        children: pdMode === 'pd' ? (
+                          <div style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12 }}>{t('infer.cmdPdDisabled')}</div>
+                        ) : (
+                          <>
+                            <Form.Item name="cmd_override" label={t('infer.editCmd')} tooltip={t('infer.cmdOverrideTip')} style={{ marginBottom: 4 }}>
+                              <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} placeholder={t('infer.cmdOverridePh')}
+                                style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 12 }} />
+                            </Form.Item>
+                            <Button size="small" type="link" style={{ paddingLeft: 0 }}
+                              onClick={() => form.setFieldsValue({ cmd_override: '' })}>
+                              {t('infer.restoreCmd')}
+                            </Button>
+                          </>
+                        ),
+                      }]} />
                   </>
                 ),
               },
@@ -1048,11 +1239,16 @@ console.log(resp.choices[0].message.content)`
             {selModel ? (
               <Space size={20} wrap>
                 <span style={{ fontSize: 13 }}>
-                  {t('infer.evalGpu')}：<b>{gpuNeed}</b>
+                  {t('infer.evalGpu')}：<b>{tpAuto && pdMode !== 'pd' ? t('infer.auto') : gpuNeed}</b>
                 </span>
                 <span style={{ fontSize: 13, color: 'var(--ant-color-text-secondary)' }}>
-                  {t('infer.evalNode')}：{nodeName || '—'}
+                  {t('infer.evalTargetNode')}：{nodeTarget === 'manual' ? (nodeName || '—') : t('infer.targetNodeAuto')}
                 </span>
+                {nodeLabelsSel.length > 0 && (
+                  missingNodeLabels.length > 0
+                    ? <Tag color="red">{t('infer.nodeLabelsMiss', { l: missingNodeLabels.join(', ') })}</Tag>
+                    : <Tag color="green">{t('infer.nodeLabelsMatch')}</Tag>
+                )}
                 {nodeGpu.total > 0 && (
                   <span style={{ fontSize: 13, color: 'var(--ant-color-text-secondary)' }}>
                     {t('infer.evalGpuAvail', { avail: Math.max(0, nodeGpu.total - nodeGpu.used), total: nodeGpu.total })}
@@ -1070,7 +1266,7 @@ console.log(resp.choices[0].message.content)`
           </Card>
 
           <Group title={t('infer.cardPreview')}>
-            <LaunchPreview form={form} tick={formTick} loraModels={loraModels} t={t} />
+            <LaunchPreview form={form} tick={formTick} loraModels={loraModels} t={t} onPreview={setPreviewRes} />
           </Group>
         </Form>
       )}
@@ -1184,7 +1380,12 @@ console.log(resp.choices[0].message.content)`
           <Space wrap>
             <Form.Item name="engine" label={t('infer.engine')}
               rules={[{ required: true }]}>
-              <Select style={{ width: 130 }} options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]} />
+              <Select style={{ width: 130 }} options={[{ value: 'vllm', label: 'vLLM' }, { value: 'sglang', label: 'SGLang' }]}
+                onChange={() => editForm.setFieldsValue({ engine_version: '' })} />
+            </Form.Item>
+            <Form.Item name="engine_version" label={t('infer.engineVersion')} tooltip={t('infer.engineVersionTip')}>
+              <AutoComplete style={{ width: 220 }} options={evOptions(editEngine)}
+                placeholder={t('infer.engineVersionFollow', { v: engVersions[editEngine]?.current || '—' })} />
             </Form.Item>
             <Form.Item name="quantization" label={t('infer.quant')}>
               <Select style={{ width: 120 }} options={['none', 'awq', 'gptq', 'int8'].map((q) => ({ value: q, label: q }))} />
@@ -1235,7 +1436,26 @@ console.log(resp.choices[0].message.content)`
                           )
                           : <Space size={4}><Tag>{t('infer.pdOff')}</Tag><Tag>{t('infer.gpuNeedShort', { n: detail.gpu_need })}</Tag></Space>,
                       },
-                      { key: 'img', label: t('infer.dImage'), children: <code style={{ fontSize: 12 }}>{ENGINE_IMAGES[detail.engine] || detail.engine}</code> },
+                      { key: 'img', label: t('infer.dImage'), children: <code style={{ fontSize: 12 }}>{detail.image_ref || ENGINE_IMAGES[detail.engine] || detail.engine}</code> },
+                      {
+                        key: 'placement', label: t('infer.dPlacement'),
+                        children: (
+                          <Space size={4} wrap>
+                            <Tag>{t('infer.evalTargetNode')}：{detail.node_name || t('infer.targetNodeAuto')}</Tag>
+                            {(detail.node_labels || []).map((l: string) => <Tag key={l} color="geekblue">{l}</Tag>)}
+                            <Tag>{detail.gpu_ids?.length
+                              ? t('infer.gpuIdsAssigned', { g: detail.gpu_ids.join(', ') })
+                              : t('infer.gpuAutoAlloc')}</Tag>
+                            {(detail.pipeline_parallel || 1) > 1 && <Tag>PP {detail.pipeline_parallel}</Tag>}
+                            {(detail.docker_args || []).map((a: string) => <Tag key={a}>{a}</Tag>)}
+                          </Space>
+                        ),
+                      },
+                      ...(detail.cmd_override
+                        ? [{ key: 'cmdOv', label: t('infer.editCmd'), children: (
+                          <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail.cmd_override}</pre>
+                        ) }]
+                        : []),
                       { key: 'node', label: t('infer.colNode'), children: nodeName || '-' },
                       { key: 4, label: t('infer.colModel'), children: detail.model },
                       { key: 5, label: t('infer.dMaxLen'), children: `${detail.max_model_len} / ${detail.gpu_mem_util}` },
