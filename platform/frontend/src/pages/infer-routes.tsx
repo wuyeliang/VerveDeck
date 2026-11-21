@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Form, Input, InputNumber, Select, Drawer,
-  message, Modal, Switch, Tooltip, Dropdown, Radio,
+  message, Modal, Switch, Tooltip, Dropdown, Radio, Tabs,
 } from 'antd'
 import {
   PlusOutlined, CopyOutlined, EditOutlined, DeleteOutlined,
@@ -12,11 +12,14 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { StatusDot, SectionTitle } from './infer-shared'
+import { useStatusLabel } from '../status'
 
 /** 模型路由：服务名 → 多部署目标（负载均衡权重 / 优先级级联）+ 路由级缓存加速。
+ *  编辑表单三标签页：基本信息 / 路由方式 / 路由目标。
  *  部署创建时自动生成同名路由（auto），数据面走 Higress 网关（/v1/<名>/）。 */
 export default function InferRoutes() {
   const { t } = useTranslation()
+  const st = useStatusLabel()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
   const [deploys, setDeploys] = useState<any[]>([])
@@ -24,6 +27,7 @@ export default function InferRoutes() {
   const [kw, setKw] = useState('')
   const [open, setOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
+  const [activeTab, setActiveTab] = useState('basic')
   const [form] = Form.useForm()
 
   const load = useCallback(() => {
@@ -48,31 +52,49 @@ export default function InferRoutes() {
     form.setFieldsValue({
       name: '', description: '', enabled: true, policy: 'lb',
       cache_service_id: undefined,
-      targets: [{ deployment_id: undefined, weight: 100, is_fallback: false }],
+      lb_main: [{ deployment_id: undefined, weight: 100 }],
+      lb_fallback: [],
+      pr_list: [],
     })
     setEditId(null)
+    setActiveTab('basic')
     setOpen(true)
   }
 
   const openEdit = (r: any) => {
     form.resetFields()
+    const isLb = (r.policy || 'lb') === 'lb'
     form.setFieldsValue({
       name: r.name, description: r.description || '',
       enabled: r.enabled, policy: r.policy || 'lb',
       cache_service_id: r.cache_service_id || undefined,
-      targets: r.targets.length
-        ? r.targets.map((x: any) => ({ deployment_id: x.deployment_id, weight: x.weight, is_fallback: x.is_fallback }))
-        : [{ deployment_id: undefined, weight: 100, is_fallback: false }],
+      lb_main: isLb
+        ? r.targets.filter((x: any) => !x.is_fallback).map((x: any) => ({ deployment_id: x.deployment_id, weight: x.weight }))
+        : [],
+      lb_fallback: isLb
+        ? r.targets.filter((x: any) => x.is_fallback).map((x: any) => ({ deployment_id: x.deployment_id, weight: x.weight }))
+        : [],
+      pr_list: !isLb
+        ? r.targets.map((x: any) => ({ deployment_id: x.deployment_id }))
+        : [],
     })
     setEditId(r.id)
+    setActiveTab('basic')
     setOpen(true)
   }
 
   const submit = async () => {
     const v = await form.validateFields()
-    const targets = (v.targets || []).map((x: any) => ({
-      deployment_id: x.deployment_id, weight: x.weight ?? 100, is_fallback: !!x.is_fallback,
-    }))
+    const isLb = (v.policy || 'lb') === 'lb'
+    let targets: any[]
+    if (isLb) {
+      const main = (v.lb_main || []).map((x: any) => ({ deployment_id: x.deployment_id, weight: x.weight ?? 100, is_fallback: false }))
+      const fb = (v.lb_fallback || []).map((x: any) => ({ deployment_id: x.deployment_id, weight: x.weight ?? 100, is_fallback: true }))
+      targets = [...main, ...fb]
+    } else {
+      targets = (v.pr_list || []).map((x: any) => ({ deployment_id: x.deployment_id, weight: 100, is_fallback: false }))
+    }
+    if (!targets.length) { message.error(t('routes.needTarget')); return }
     if (editId) {
       // 路由名即对外 API 前缀（/v1/<name>/），编辑时锁定（换名请删除重建）
       await api.put(`/api/inference/routes/${editId}`, {
@@ -131,6 +153,12 @@ export default function InferRoutes() {
   })
 
   const policy = Form.useWatch('policy', form) || 'lb'
+  const deployOptions = deploys.map((d: any) => ({ value: d.id, label: `${d.name} (${d.status})` }))
+
+  const atLeastOne = (msg: string) => ({
+    validator: (_: any, value: any) =>
+      (value && value.length) ? Promise.resolve() : Promise.reject(msg),
+  })
 
   return (
     <div>
@@ -172,7 +200,7 @@ export default function InferRoutes() {
                     {r.policy === 'priority' ? `P${i + 1} ` : ''}{x.deployment_name}
                     {r.policy !== 'priority' && ` ${x.weight}`}
                     {r.policy !== 'priority' && x.is_fallback ? ` · ${t('routes.fallback')}` : ''}
-                    {x.deployment_status !== 'running' && ` (${x.deployment_status})`}
+                    {x.deployment_status !== 'running' && ` (${st(x.deployment_status)})`}
                   </Tag>
                 ))}
               </Space>
@@ -219,8 +247,8 @@ export default function InferRoutes() {
           },
         ]} />
 
-      {/* 新建 / 编辑路由（右侧 Drawer；名即 API 前缀，编辑时锁定） */}
-      <Drawer title={editId ? t('routes.editTitle') : t('routes.new')} width={680} open={open} onClose={() => setOpen(false)}
+      {/* 新建 / 编辑路由（右侧 Drawer，三标签页：基本信息 / 路由方式 / 路由目标） */}
+      <Drawer title={editId ? t('routes.editTitle') : t('routes.new')} width={720} open={open} onClose={() => setOpen(false)}
         footer={<div style={{ textAlign: 'right' }}>
           <Space>
             <Button onClick={() => setOpen(false)}>{t('common.cancel')}</Button>
@@ -228,82 +256,152 @@ export default function InferRoutes() {
           </Space>
         </div>}>
         <Form form={form} layout="vertical">
-          <SectionTitle>{t('routes.basic')}</SectionTitle>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <Form.Item name="name" style={{ flex: 1, marginBottom: 12 }}
-              tooltip={editId ? t('routes.nameLocked') : undefined}
-              rules={[{ required: true, pattern: /^[a-z0-9][a-z0-9-]*$/, message: t('routes.nameRule') }, { max: 128 }]}>
-              <Input placeholder={t('routes.namePh')} showCount maxLength={128}
-                disabled={!!editId} />
-            </Form.Item>
-            <Form.Item name="enabled" label={t('common.status')} valuePropName="checked" style={{ width: 160, marginBottom: 12 }}>
-              <Switch checkedChildren={t('common.enabled')} unCheckedChildren={t('common.disabled')} />
-            </Form.Item>
-          </div>
-          <Form.Item name="description" label={t('common.desc')}>
-            <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
-          </Form.Item>
-
-          <SectionTitle>{t('routes.models')}</SectionTitle>
-          <Form.Item name="policy" tooltip={t('routes.policyTip')}>
-            <Radio.Group optionType="button" buttonStyle="solid">
-              <Radio.Button value="lb">{t('routes.policyLb')}</Radio.Button>
-              <Radio.Button value="priority">{t('routes.policyPriority')}</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
-          <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginTop: 0, marginBottom: 8 }}>
-            {policy === 'priority' ? t('routes.priorityHint') : t('routes.lbHint')}
-          </p>
-          <Form.List name="targets">
-            {(fields, { add, remove, move }) => (
-              <>
-                {fields.map(({ key, name: fidx, ...rest }, i) => (
-                  <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 4 }} wrap>
-                    {policy === 'priority' && (
-                      <Tag color={i === 0 ? 'blue' : 'gold'} style={{ margin: 0, minWidth: 30, textAlign: 'center' }}>P{i + 1}</Tag>
-                    )}
-                    <Form.Item {...rest} name={[fidx, 'deployment_id']} rules={[{ required: true, message: t('routes.targetReq') }]}
-                      style={{ marginBottom: 0 }}>
-                      <Select style={{ width: 240 }} showSearch optionFilterProp="label" placeholder={t('routes.targetPh')}
-                        options={deploys.map((d: any) => ({ value: d.id, label: `${d.name} (${d.status})` }))} />
+          <Tabs activeKey={activeTab} onChange={setActiveTab} destroyOnHidden={false} items={[
+            // ---------- Tab 1：基本信息 ----------
+            {
+              key: 'basic', label: t('routes.tabBasic'), forceRender: true,
+              children: (
+                <>
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <Form.Item name="name" style={{ flex: 1, marginBottom: 12 }}
+                      tooltip={editId ? t('routes.nameLocked') : undefined}
+                      rules={[{ required: true, pattern: /^[a-z0-9][a-z0-9-]*$/, message: t('routes.nameRule') }, { max: 128 }]}>
+                      <Input placeholder={t('routes.namePh')} showCount maxLength={128}
+                        disabled={!!editId} />
                     </Form.Item>
-                    {policy === 'lb' && (
-                      <>
-                        <Form.Item {...rest} name={[fidx, 'weight']} rules={[{ required: true }]} style={{ marginBottom: 0 }}
-                          tooltip={t('routes.weightHint')}>
-                          <InputNumber min={1} max={100} style={{ width: 100 }} />
-                        </Form.Item>
-                        <Form.Item {...rest} name={[fidx, 'is_fallback']} valuePropName="checked" style={{ marginBottom: 0 }}>
-                          <Switch size="small" checkedChildren={t('routes.fallback')} />
-                        </Form.Item>
-                      </>
-                    )}
-                    {policy === 'priority' && (
-                      <Space size={0}>
-                        <Button size="small" type="text" icon={<ArrowUpOutlined />} disabled={i === 0}
-                          onClick={() => move(fidx, fidx - 1)} />
-                        <Button size="small" type="text" icon={<ArrowDownOutlined />} disabled={i === fields.length - 1}
-                          onClick={() => move(fidx, fidx + 1)} />
-                      </Space>
-                    )}
-                    {fields.length > 1 && (
-                      <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(fidx)} />
-                    )}
-                  </Space>
-                ))}
-                <Button type="dashed" block icon={<PlusOutlined />}
-                  onClick={() => add({ deployment_id: undefined, weight: 100, is_fallback: false })}>
-                  {t('routes.addTarget')}
-                </Button>
-              </>
-            )}
-          </Form.List>
+                    <Form.Item name="enabled" label={t('common.status')} valuePropName="checked" style={{ width: 160, marginBottom: 12 }}>
+                      <Switch checkedChildren={t('common.enabled')} unCheckedChildren={t('common.disabled')} />
+                    </Form.Item>
+                  </div>
+                  <Form.Item name="description" label={t('common.desc')}>
+                    <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
+                  </Form.Item>
+                  <Form.Item name="cache_service_id" label={t('routes.cacheSvc')} tooltip={t('routes.cacheTip')}>
+                    <Select allowClear showSearch optionFilterProp="label" placeholder={t('infer.cacheSvcNone')}
+                      options={caches.map((c: any) => ({ value: c.id, label: `${c.name} (${c.capacity_gb ? `${c.capacity_gb} GB ` : ''}${c.cache_type === 'ssd' ? t('cache.typeSsd') : t('cache.typeMemory')})` }))} />
+                  </Form.Item>
+                </>
+              ),
+            },
+            // ---------- Tab 2：路由方式 ----------
+            {
+              key: 'policy', label: t('routes.tabPolicy'), forceRender: true,
+              children: (
+                <>
+                  <Form.Item name="policy" label={t('routes.policy')} tooltip={t('routes.policyTip')}>
+                    <Radio.Group optionType="button" buttonStyle="solid">
+                      <Radio.Button value="lb">{t('routes.policyLb')}</Radio.Button>
+                      <Radio.Button value="priority">{t('routes.policyPriority')}</Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                  <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+                    {policy === 'priority' ? t('routes.priorityHint') : t('routes.lbHint')}
+                  </p>
+                </>
+              ),
+            },
+            // ---------- Tab 3：路由目标 ----------
+            {
+              key: 'targets', label: t('routes.tabTargets'), forceRender: true,
+              children: (
+                policy === 'lb' ? (
+                  <>
+                    <SectionTitle>{t('routes.primaryTargets')}</SectionTitle>
+                    <Form.List name="lb_main" rules={[{ validator: async (_: any, v: any) => { if (!v || !v.length) throw new Error(t('routes.needTarget')); } }]}>
+                      {(fields, { add, remove }) => (
+                        <>
+                          {fields.map(({ key, name: fidx, ...rest }) => (
+                            <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 8 }} wrap>
+                              <Form.Item {...rest} name={[fidx, 'deployment_id']} rules={[{ required: true, message: t('routes.targetReq') }]} style={{ marginBottom: 0 }}>
+                                <Select style={{ width: 260 }} showSearch optionFilterProp="label" placeholder={t('routes.targetPh')} options={deployOptions} />
+                              </Form.Item>
+                              <Form.Item {...rest} name={[fidx, 'weight']} rules={[{ required: true }]} style={{ marginBottom: 0 }} tooltip={t('routes.weightHint')}>
+                                <InputNumber min={1} max={100} style={{ width: 100 }} />
+                              </Form.Item>
+                              {fields.length > 1 && (
+                                <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(fidx)} />
+                              )}
+                            </Space>
+                          ))}
+                          <Button type="dashed" block icon={<PlusOutlined />}
+                            onClick={() => add({ deployment_id: undefined, weight: 100 })}>
+                            {t('routes.addPrimary')}
+                          </Button>
+                        </>
+                      )}
+                    </Form.List>
 
-          <SectionTitle>{t('routes.cacheSvc')}</SectionTitle>
-          <Form.Item name="cache_service_id" tooltip={t('routes.cacheTip')}>
-            <Select allowClear showSearch optionFilterProp="label" placeholder={t('infer.cacheSvcNone')}
-              options={caches.map((c: any) => ({ value: c.id, label: `${c.name} (${c.capacity_gb ? `${c.capacity_gb} GB ` : ''}${c.cache_type === 'ssd' ? t('cache.typeSsd') : t('cache.typeMemory')})` }))} />
-          </Form.Item>
+                    <div style={{ height: 16 }} />
+                    <SectionTitle>{t('routes.fallbackSection')}</SectionTitle>
+                    <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginTop: 0, marginBottom: 8 }}>
+                      {t('routes.fallbackSectionHint')}
+                    </p>
+                    <Form.List name="lb_fallback">
+                      {(fields, { add, remove }) => (
+                        <>
+                          {fields.length === 0 && (
+                            <div style={{ color: 'var(--ant-color-text-quaternary)', fontSize: 12, marginBottom: 8 }}>
+                              {t('routes.noFallback')}
+                            </div>
+                          )}
+                          {fields.map(({ key, name: fidx, ...rest }) => (
+                            <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 8 }} wrap>
+                              <Form.Item {...rest} name={[fidx, 'deployment_id']} rules={[{ required: true, message: t('routes.targetReq') }]} style={{ marginBottom: 0 }}>
+                                <Select style={{ width: 260 }} showSearch optionFilterProp="label" placeholder={t('routes.targetPh')} options={deployOptions} />
+                              </Form.Item>
+                              <Form.Item {...rest} name={[fidx, 'weight']} rules={[{ required: true }]} style={{ marginBottom: 0 }} tooltip={t('routes.weightHint')}>
+                                <InputNumber min={1} max={100} style={{ width: 100 }} />
+                              </Form.Item>
+                              {fields.length > 0 && (
+                                <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(fidx)} />
+                              )}
+                            </Space>
+                          ))}
+                          <Button type="dashed" block icon={<PlusOutlined />}
+                            onClick={() => add({ deployment_id: undefined, weight: 100 })}>
+                            {t('routes.addFallback')}
+                          </Button>
+                        </>
+                      )}
+                    </Form.List>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginTop: 0, marginBottom: 8 }}>
+                      {t('routes.priorityHint')}
+                    </p>
+                    <Form.List name="pr_list" rules={[{ validator: async (_: any, v: any) => { if (!v || !v.length) throw new Error(t('routes.needTarget')); } }]}>
+                      {(fields, { add, remove, move }) => (
+                        <>
+                          {fields.map(({ key, name: fidx, ...rest }, i) => (
+                            <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 8 }} wrap>
+                              <Tag color={i === 0 ? 'blue' : 'gold'} style={{ margin: 0, minWidth: 30, textAlign: 'center' }}>P{i + 1}</Tag>
+                              <Form.Item {...rest} name={[fidx, 'deployment_id']} rules={[{ required: true, message: t('routes.targetReq') }]} style={{ marginBottom: 0 }}>
+                                <Select style={{ width: 260 }} showSearch optionFilterProp="label" placeholder={t('routes.targetPh')} options={deployOptions} />
+                              </Form.Item>
+                              <Space size={0}>
+                                <Button size="small" type="text" icon={<ArrowUpOutlined />} disabled={i === 0}
+                                  onClick={() => move(fidx, fidx - 1)} />
+                                <Button size="small" type="text" icon={<ArrowDownOutlined />} disabled={i === fields.length - 1}
+                                  onClick={() => move(fidx, fidx + 1)} />
+                              </Space>
+                              {fields.length > 1 && (
+                                <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(fidx)} />
+                              )}
+                            </Space>
+                          ))}
+                          <Button type="dashed" block icon={<PlusOutlined />}
+                            onClick={() => add({ deployment_id: undefined })}>
+                            {t('routes.addTarget')}
+                          </Button>
+                        </>
+                      )}
+                    </Form.List>
+                  </>
+                )
+              ),
+            },
+          ]} />
         </Form>
       </Drawer>
     </div>

@@ -54,6 +54,46 @@ def test_cache_type_capacity_crud(admin_tok):
     r.raise_for_status()
 
 
+def test_cache_lmcache_orchestrated_fields(admin_tok):
+    """LMCache 编排型：config 非空 → 编排字段回显 + 校验 + 漂移标记初始为假。"""
+    name = f"500lmcache-{SUF}"
+    cfg = {"ram_size": 16, "chunk_size": 256,
+           "l2_storages": [{"backend": "fs_native",
+                            "params": {"base_path": f"/data/kv-{SUF}"}}]}
+    c = _mk_cache(name, tok=admin_tok, cache_type="memory", capacity_gb=20,
+                  provider="lmcache", provider_version="v0.5.4",
+                  config=cfg, metrics_port=8080, restart_on_error=True)
+    try:
+        assert c["provider"] == "lmcache" and c["provider_version"] == "v0.5.4"
+        assert c["mode"] == "managed" and c["config"] == cfg
+        assert c["metrics_port"] == 8080 and c["restart_on_error"] is True
+        assert c["spec_digest"] == "" and c["spec_drift"] is False
+        # 编辑 config（未启动）：漂移仍为假（漂移只对运行/启动中生效）
+        cfg2 = dict(cfg, ram_size=32)
+        r = requests.put(f"{BASE}/api/cache/services/{c['id']}", headers=H(admin_tok), timeout=15,
+                         json={"config": cfg2})
+        r.raise_for_status()
+        body = r.json()
+        assert body["config"] == cfg2 and body["spec_drift"] is False
+        # 校验：非法 provider / mode / metrics 端口 → 400
+        r = requests.put(f"{BASE}/api/cache/services/{c['id']}", headers=H(admin_tok), timeout=15,
+                         json={"provider": "bogus"})
+        assert r.status_code == 400
+        r = requests.put(f"{BASE}/api/cache/services/{c['id']}", headers=H(admin_tok), timeout=15,
+                         json={"mode": "bogus"})
+        assert r.status_code == 400
+        r = requests.put(f"{BASE}/api/cache/services/{c['id']}", headers=H(admin_tok), timeout=15,
+                         json={"metrics_port": 99999})
+        assert r.status_code == 400
+        # 非法 provider 创建 400
+        r = requests.post(f"{BASE}/api/cache/services", headers=H(admin_tok), timeout=15,
+                          json={"name": f"500lmcache-bad-{SUF}", "provider": "bogus",
+                                "config": {"ram_size": 8}})
+        assert r.status_code == 400
+    finally:
+        requests.delete(f"{BASE}/api/cache/services/{c['id']}", headers=H(admin_tok), timeout=15)
+
+
 # ---------- 路由：策略 / 路由级缓存 / 命名互斥解除 ----------
 
 def test_route_policy_and_cache(admin_tok):

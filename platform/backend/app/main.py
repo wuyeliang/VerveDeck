@@ -128,6 +128,16 @@ def _migrate_columns():
             "cache_services": [
                 ("cache_type", "VARCHAR(16) NOT NULL DEFAULT 'memory'"),
                 ("capacity_gb", "INTEGER NOT NULL DEFAULT 0"),
+                # LMCache 编排（#45）：存量 config 为空 → 走旧路径/逻辑型，行为不变
+                ("provider", "VARCHAR(32) NOT NULL DEFAULT 'lmcache'"),
+                ("provider_version", "VARCHAR(32) NOT NULL DEFAULT 'v0.5.4'"),
+                ("mode", "VARCHAR(16) NOT NULL DEFAULT 'managed'"),
+                ("config", f"{json_type} NOT NULL DEFAULT '{{}}'"),
+                ("metrics_port", "INTEGER NOT NULL DEFAULT 0"),
+                ("restart_on_error", "BOOLEAN NOT NULL DEFAULT 'true'"),
+                ("healthy", "BOOLEAN NOT NULL DEFAULT 'false'"),
+                ("last_check_at", "TIMESTAMP"),
+                ("spec_digest", "VARCHAR(32) NOT NULL DEFAULT ''"),
             ],
             # 告警规则分类 + 事件人工确认（存量库补列；新库由 create_all 建出）
             "alert_rules": [("category", "VARCHAR(64) NOT NULL DEFAULT ''")],

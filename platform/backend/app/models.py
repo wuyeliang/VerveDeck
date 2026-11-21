@@ -357,13 +357,29 @@ class InferenceBackendVersion(Base):
 class CacheService(Base):
     """缓存服务实例（独立于部署的托管容器）：L2 分布式 KV 缓存存储等。
     类型（memory=内存 / ssd=SSD）+ 容量（GB）为规划元数据；
-    部署/路由关联后向其实例注入 VD_CACHE_ENDPOINT。"""
+    部署/路由关联后向其实例注入 VD_CACHE_ENDPOINT。
+
+    LMCache 编排（#45）：config 非空 = LMCache 编排型，容器命令/env/镜像按
+    config 渲染（版本→镜像、chunk/淘汰/L2→启动参数、凭据→env）；config 为空
+    = 旧路径（用顶层 image/command/env）或逻辑型（image 亦空，不建容器）。
+    健康检查走 HTTP /healthcheck（metrics 端口，503 直到引擎就绪）。"""
     __tablename__ = "cache_services"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
     description: Mapped[str] = mapped_column(Text, default="")
     cache_type: Mapped[str] = mapped_column(String(16), default="memory")  # memory=内存 / ssd=SSD
     capacity_gb: Mapped[int] = mapped_column(Integer, default=0)  # 容量（GB，规划值）
+    # ---- LMCache 编排字段（#45）----
+    provider: Mapped[str] = mapped_column(String(32), default="lmcache")  # 缓存提供方
+    provider_version: Mapped[str] = mapped_column(String(32), default="v0.5.4")  # 提供方版本
+    mode: Mapped[str] = mapped_column(String(16), default="managed")  # managed=托管容器 / external=外部端点
+    config: Mapped[dict] = mapped_column(JSON, default=dict)  # LMCache 配置（ram_size/chunk_size/eviction/l2_storages/parameters/env/image）
+    metrics_port: Mapped[int] = mapped_column(Integer, default=0)  # HTTP metrics/health 端口
+    restart_on_error: Mapped[bool] = mapped_column(Boolean, default=True)  # 进程异常退出自动重启
+    healthy: Mapped[bool] = mapped_column(Boolean, default=False)  # 最近一次健康检查结果
+    last_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 最近健康检查时间
+    spec_digest: Mapped[str] = mapped_column(String(32), default="")  # 规格摘要（漂移检测：编辑后与运行容器比对）
+    # ---- 旧路径字段（image/command/env 为容器原始规格；config 为空时使用）----
     image: Mapped[str] = mapped_column(String(255))
     command: Mapped[str] = mapped_column(String(512), default="")  # 覆盖镜像默认启动命令
     env: Mapped[dict] = mapped_column(JSON, default=dict)
