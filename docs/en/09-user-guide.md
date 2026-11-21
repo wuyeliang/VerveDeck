@@ -126,7 +126,8 @@ curl https://<ip>/v1/<deploy_name>/chat/completions \
   - Placeholders: `{{model_path}}` `{{port}}` `{{model_name}}` `{{worker_ip}}` `{{gpu_count}}` `{{gpu_ids}}` `{{VAR}}` (injected env vars); unknown placeholders are kept verbatim with a warning, never silently dropped
   - Health check path: liveness & metrics probe (default `/v1/models`)
   - Default env / default params (JSON, used for form defaults)
-- YAML import: create-only, never overwrite (existing names reject the whole batch with per-item errors)
+- Page: card grid (icon / name / type / available frameworks / versions · default version / effective image); click a card for version details (framework filter + per-version set-default / edit / delete); the toolbar supports name search and source (built-in / custom) filtering
+- YAML import: create-only, never overwrite (existing names reject the whole batch with per-item errors); single-backend YAML export is supported (same format as import, re-importable)
 - Protection: a backend referenced by a deployment cannot be deleted; a referenced version cannot be renamed/deleted; custom backends do not support PD disaggregation
 
 ### 7.4 Cache Acceleration

@@ -211,6 +211,7 @@ VerveDeck 平台后端 REST API 全量路由表。与代码 `platform/backend/ap
 | POST | /api/inference/backends | 创建自定义后端（名须以 `-custom` 结尾） |
 | PUT | /api/inference/backends/{bid} | 编辑（description/health_check_path/default_env/default_params；名不可改） |
 | DELETE | /api/inference/backends/{bid} | 删除（builtin 403；被部署引用 409） |
+| GET | /api/inference/backends/{bid}/export | 导出单后端 YAML（与 import 同格式，附件下载；builtin 可导出供查阅） |
 | POST | /api/inference/backends/{bid}/versions | 加版本 `{version, image, run_command…}`（custom 必填 run_command；is_default 互斥） |
 | PUT | /api/inference/backends/{bid}/versions/{vid} | 改版本（被引用的版本号 409 拒改） |
 | DELETE | /api/inference/backends/{bid}/versions/{vid} | 删版本（最后一个 400；被引用 409） |

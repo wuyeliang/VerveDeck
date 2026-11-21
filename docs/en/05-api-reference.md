@@ -211,6 +211,7 @@ Components (19, `upgrade_service.COMPONENTS` is the single source of truth, same
 | POST | /api/inference/backends | Create custom backend (name must end with `-custom`) |
 | PUT | /api/inference/backends/{bid} | Edit (description/health_check_path/default_env/default_params; name immutable) |
 | DELETE | /api/inference/backends/{bid} | Delete (builtin 403; referenced by a deployment 409) |
+| GET | /api/inference/backends/{bid}/export | Export one backend as YAML (same format as import, attachment download; builtins exportable for reference) |
 | POST | /api/inference/backends/{bid}/versions | Add version `{version, image, run_command…}` (custom requires run_command; is_default is exclusive) |
 | PUT | /api/inference/backends/{bid}/versions/{vid} | Update version (referenced version numbers are rejected with 409) |
 | DELETE | /api/inference/backends/{bid}/versions/{vid} | Delete version (last one 400; referenced 409) |
