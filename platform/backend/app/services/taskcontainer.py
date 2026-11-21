@@ -386,9 +386,36 @@ def create_container(name: str, image: str, gpus: int = 0, cpus: float | None = 
     # 部署级 Docker 参数（白名单解析后的 kwargs；用户显式参数覆盖内置默认）
     if extra_kwargs:
         kwargs.update(extra_kwargs)
-    ctr = client.containers.run(**kwargs)
+    ctr = _run_with_name_retry(client, name, kwargs)
     log.info("created placeholder container %s (id=%s, gpus=%s)", name, ctr.id[:12], gpus)
     return ctr.id
+
+
+def _run_with_name_retry(client, name: str, kwargs: dict):
+    """client.containers.run 幂等包装：容器名被同名残留容器占用（409 "already in use"，
+    并发 stop+launch 竞态的删除尚未落定）时强删残留并重试，最多 3 次。
+
+    此前创建直接抛 409 → 启动线程写 failed，而残留容器随后被删，部署停留在
+    failed 且原因误导。其余错误（GPU 分配失败等）原样抛出。
+    """
+    for attempt in range(3):
+        try:
+            return client.containers.run(**kwargs)
+        except docker_errors.APIError as e:
+            resp = getattr(e, "response", None)
+            try:
+                body = (resp.text or "").lower() if resp is not None else ""
+            except Exception:
+                body = ""
+            if getattr(resp, "status_code", None) != 409 or "already in use" not in body:
+                raise
+            log.warning("容器名 %s 被残留占用，清理后重试（%d/3）", name, attempt + 1)
+            try:
+                client.containers.get(name).remove(force=True)
+            except Exception:
+                pass
+            time.sleep(0.3 * (attempt + 1))
+    raise RuntimeError(f"容器名 {name} 重试后仍被占用")
 
 
 def exec_run(name_or_id: str, cmd, timeout: int = 300) -> tuple[int, str]:

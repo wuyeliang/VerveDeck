@@ -115,6 +115,20 @@ def _migrate_columns():
                 ("labels", f"{json_type} NOT NULL DEFAULT '[]'"),
             ],
             "api_keys": [("model_ids", f"{json_type} NOT NULL DEFAULT '[]'")],
+            # 模型路由增强（自动关联/路由策略/路由级缓存）：默认值保持存量路由行为不变（lb 权重+容灾）
+            "model_routes": [
+                ("policy", "VARCHAR(16) NOT NULL DEFAULT 'lb'"),
+                ("cache_service_id", "INTEGER"),
+                ("auto", "BOOLEAN NOT NULL DEFAULT 'false'"),
+            ],
+            "model_route_targets": [
+                ("priority", "INTEGER NOT NULL DEFAULT 1"),
+            ],
+            # 缓存加速页（类型内存|SSD + 容量）：存量默认 memory/0，行为不变
+            "cache_services": [
+                ("cache_type", "VARCHAR(16) NOT NULL DEFAULT 'memory'"),
+                ("capacity_gb", "INTEGER NOT NULL DEFAULT 0"),
+            ],
             # 告警规则分类 + 事件人工确认（存量库补列；新库由 create_all 建出）
             "alert_rules": [("category", "VARCHAR(64) NOT NULL DEFAULT ''")],
             "alert_events": [
@@ -255,10 +269,33 @@ def _reconcile_alert_rules(db) -> int:
     return created
 
 
+def _backfill_auto_routes():
+    """存量部署自动补同名路由（部署创建自动关联路由的存量对齐）。
+
+    幂等：部署无同名路由 → 建 auto 路由（单目标=该部署）；有同名路由但
+    未挂该部署 → 补目标。存量库在互斥约束下不存在同名路由，均为新建。"""
+    from .api.model_routes import ensure_auto_route
+    db = SessionLocal()
+    try:
+        changed = 0
+        for d in db.query(Deployment).all():
+            if ensure_auto_route(db, d, d.created_by):
+                changed += 1
+        if changed:
+            db.commit()
+            log.info("auto route backfill: %d", changed)
+    except Exception:
+        db.rollback()
+        log.exception("auto route backfill failed")
+    finally:
+        db.close()
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     _drop_legacy_metric_tables()
     _migrate_columns()
+    _backfill_auto_routes()
     db = SessionLocal()
     try:
         # 超级管理员（必须先建，作为默认项目 owner 的外键目标）

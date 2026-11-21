@@ -69,7 +69,11 @@ def launch(task: QuantTask) -> None:
         labels={"fintune.task": str(task.id), "fintune.type": "quantize"},
     )
     m = METHODS[task.method]
-    pip_step = f"pip install -q {m['pip']} && " if m.get("pip") else ""
+    # 运行时 pip 安装：优先沿用镜像内 PIP_INDEX_URL（自构兜底镜像/气隔环境已配好），
+    # 否则默认走阿里云源——官方 llamafactory 镜像未预置 PIP_INDEX_URL，默认源 pypi.org
+    # 在腾讯云实测挂起 ~49min 才失败，量化任务长时间占卡空转
+    pip_step = (f"pip install -q -i ${{PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}} "
+                f"{m['pip']} && ") if m.get("pip") else ""
     cmd = ["bash", "-lc", f"cd /data && {pip_step} llamafactory-cli export {cfg} 2>&1"]
     tc.start_task(f"quant-{task.id}", cid, cmd, os.path.join(task_dir(task.id), "run.log"))
     db = SessionLocal()

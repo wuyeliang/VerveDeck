@@ -279,9 +279,18 @@ def test_build_config_export_strips_training_keys(sdb):
 @pytest.fixture()
 def launch_env(sdb, monkeypatch):
     """mock launch 全部外部依赖，记录 create/start/remove 调用；write_config 走真实路径
-    （build_config 真跑，仅屏蔽 tensorboard 镜像探测）。"""
+    （build_config 真跑，仅屏蔽 tensorboard 镜像探测）。
+
+    单副本改造（515cce4）后 launch() 启动前会做 base 模型本地可用性校验
+    （ensure_model_local：本地路径存在或 object 型从桶拉取）。本文件测的是
+    分布式编排（容器/env/命令/DB 收敛），与模型可用性无关，且 _seed_job 种的是
+    假路径 /data/models/hub/base——此处一律打桩为可用，保持用例 hermetic
+    （不依赖宿主机 /data 是否有真实模型）。不可用分支由
+    test_launch_model_unavailable_fails 单独钉住。"""
     rec = {"created": [], "started": [], "removed": [], "db": sdb}
 
+    from app.services import model_service as ms
+    monkeypatch.setattr(ms, "ensure_model_local", lambda asset, db: True)
     monkeypatch.setattr(ts, "image_has_tensorboard", lambda image: True)
     monkeypatch.setattr(ts.upgrade_service, "current_image",
                         lambda name: "fintune/llamafactory:test")
@@ -389,6 +398,18 @@ def test_launch_multinode_master_ip_unavailable(launch_env, monkeypatch):
     with pytest.raises(RuntimeError, match="主容器 IP"):
         ts.launch(job)
     assert launch_env["started"] == []               # 未启动任何 rank
+
+
+def test_launch_model_unavailable_fails(launch_env, monkeypatch):
+    """单副本：base 模型本地缺失且桶内拉取失败 → launch 显式失败，不建任何容器
+    （单副本语义下桶内是唯一副本，不能拿不存在的路径起训练容器）"""
+    from app.services import model_service as ms
+    monkeypatch.setattr(ms, "ensure_model_local", lambda asset, db: False)
+    s = launch_env["db"]
+    job = _seed_job(s, jid=906, node_count=1, nproc_per_node=1, gpu_count=1)
+    with pytest.raises(RuntimeError, match="不可用"):
+        ts.launch(job)
+    assert launch_env["created"] == [] and launch_env["started"] == []
 
 
 def test_cancel_removes_all_rank_containers(monkeypatch):

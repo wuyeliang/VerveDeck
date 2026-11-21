@@ -19,16 +19,25 @@ from ..services import cache_service as cs
 log = logging.getLogger("cache")
 router = APIRouter(tags=["cache"])
 
-_EDITABLE = ("description", "image", "command", "env", "port")
+_EDITABLE = ("description", "image", "command", "env", "port",
+             "cache_type", "capacity_gb")
+_CACHE_TYPES = ("memory", "ssd")
 
 
 def _used_by(db: Session, cid: int) -> list[str]:
-    return [d.name for d in db.query(Deployment).filter_by(cache_service_id=cid).all()]
+    """引用方：部署（cache_service_id）+ 路由（route.cache_service_id）。"""
+    from ..models import ModelRoute
+    out = [d.name for d in db.query(Deployment).filter_by(cache_service_id=cid).all()]
+    out += [f"路由:{r.name}" for r in
+            db.query(ModelRoute).filter_by(cache_service_id=cid).all()]
+    return out
 
 
 def _brief(c: CacheService, db: Session | None = None) -> dict:
     out = {
         "id": c.id, "name": c.name, "description": c.description or "",
+        "cache_type": c.cache_type or "memory",
+        "capacity_gb": c.capacity_gb or 0,
         "image": c.image, "command": c.command or "", "env": c.env or {},
         "port": c.port or 0, "status": c.status,
         "state_message": c.state_message or "",
@@ -42,20 +51,28 @@ def _brief(c: CacheService, db: Session | None = None) -> dict:
     return out
 
 
-def _validate(name: str, image: str, port) -> tuple[str, str, int]:
+def _validate(name: str, image: str, port, cache_type: str = "memory",
+              capacity_gb=None) -> tuple[str, str, int, str, int]:
+    """image 可为空 = 逻辑型缓存（仅名称/类型/容量元数据，不起容器、
+    无端点注入；需端点时在高级设置填镜像后启动）。"""
     name = (name or "").strip()
     if not name or len(name) > 128:
         raise HTTPException(400, "名称长度须 1-128")
     image = (image or "").strip()
-    if not image:
-        raise HTTPException(400, "镜像不可为空")
     try:
         port = int(port or 0)
     except (TypeError, ValueError):
         raise HTTPException(400, "端口须为整数")
     if port < 0 or port > 65535:
         raise HTTPException(400, "端口须 0-65535（0=不做端口探活）")
-    return name, image, port
+    cache_type = (cache_type or "memory").strip()
+    if cache_type not in _CACHE_TYPES:
+        raise HTTPException(400, "类型须为 memory（内存）/ ssd（SSD）")
+    try:
+        capacity_gb = max(0, int(capacity_gb or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "容量须为非负整数（GB）")
+    return name, image, port, cache_type, capacity_gb
 
 
 # ---------- CRUD ----------
@@ -68,6 +85,8 @@ def list_cache_services(db: Session = Depends(get_db), user=Depends(get_current_
 class CacheReq(BaseModel):
     name: str
     description: str = ""
+    cache_type: str = "memory"  # memory=内存 / ssd=SSD
+    capacity_gb: int = 0  # 容量（GB，规划值）
     image: str
     command: str = ""
     env: dict = {}
@@ -76,10 +95,12 @@ class CacheReq(BaseModel):
 
 @router.post("/api/cache/services")
 def create_cache_service(req: CacheReq, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    name, image, port = _validate(req.name, req.image, req.port)
+    name, image, port, cache_type, capacity_gb = _validate(
+        req.name, req.image, req.port, req.cache_type, req.capacity_gb)
     if db.query(CacheService).filter_by(name=name).first():
         raise HTTPException(400, f"缓存服务 {name} 已存在")
     c = CacheService(name=name, description=req.description or "", image=image,
+                     cache_type=cache_type, capacity_gb=capacity_gb,
                      command=(req.command or "").strip(),
                      env={str(k): str(v) for k, v in (req.env or {}).items()},
                      port=port, status="stopped", created_by=user.id)
@@ -100,7 +121,9 @@ def update_cache_service(cid: int, req: dict, db: Session = Depends(get_db), use
         raise HTTPException(400, f"不支持的字段: {', '.join(bad)}（名称不可修改）")
     if not req:
         raise HTTPException(400, "无更新字段")
-    _, image, port = _validate(c.name, req.get("image", c.image), req.get("port", c.port))
+    _, image, port, cache_type, capacity_gb = _validate(
+        c.name, req.get("image", c.image), req.get("port", c.port),
+        req.get("cache_type", c.cache_type), req.get("capacity_gb", c.capacity_gb))
     for k, v in req.items():
         if k == "env":
             c.env = {str(a): str(b) for a, b in (v or {}).items()}
@@ -108,17 +131,28 @@ def update_cache_service(cid: int, req: dict, db: Session = Depends(get_db), use
             c.command = (v or "").strip()
         elif k == "image":
             c.image = image
+        elif k == "cache_type":
+            c.cache_type = cache_type
+        elif k == "capacity_gb":
+            c.capacity_gb = capacity_gb
         else:
             setattr(c, k, v)
-    # 运行中改配置：容器需重启才生效 → 停旧 + 后台重启（状态机交 reconcile 收敛）
-    if c.status in ("running", "creating"):
+    # 运行中改容器配置（镜像/命令/环境变量/端口）：需重启才生效；
+    # 类型/容量/说明为元数据，直改不重启
+    if c.status in ("running", "creating") and \
+            set(req) & {"image", "command", "env", "port"}:
         cs.stop_container(c)
-        c.status = "creating"
-        c.state_message = "配置变更，重启中…"
         c.endpoint = ""
         c.container_id = ""
-        db.commit()
-        cs.launch_cache_thread(c.id, note="配置变更，重启中…")
+        if (c.image or "").strip():
+            c.status = "creating"
+            c.state_message = "配置变更，重启中…"
+            db.commit()
+            cs.launch_cache_thread(c.id, note="配置变更，重启中…")
+        else:
+            c.status = "stopped"
+            c.state_message = ""
+            db.commit()
     else:
         db.commit()
     return _brief(c, db)
@@ -145,6 +179,8 @@ def start_cache_service(cid: int, db: Session = Depends(get_db), user=Depends(ge
     c = db.get(CacheService, cid)
     if not c:
         raise HTTPException(404, "缓存服务不存在")
+    if not (c.image or "").strip():
+        raise HTTPException(400, "逻辑型缓存（未配置镜像）无容器可启动；如需缓存端点请在高级设置填写镜像")
     if c.status in ("creating", "running"):
         raise HTTPException(400, "缓存服务正在启动/运行中")
     c.status = "creating"

@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """训练中心 API：任务创建校验 / 查询 / 取消 / 排队优先级 / 断点续训 / 模板
 
-GPU 被常驻部署占用 → 本文件创建的任务全部保持 queued（可安全测排队/取消），不占 GPU。
+本文件创建的任务须全部保持 queued（排队/取消/续训断言都依赖该前提）。
+双卡机上常驻部署只占 1 卡、留 1 张空闲 → gpu_count=1 的任务会被调度器
+真实拉起并产出 checkpoint（曾致 test_get_checkpoints_empty 全量失败）。
+故任务 gpu_count 取在线节点总卡数：常驻部署至少占 1 卡，free < 总卡数，
+任务永不可调度，确定性保持 queued。
 """
 import os
 
@@ -11,9 +15,19 @@ import requests
 from conftest import BASE, H, SUF, DEFAULT_PROJECT, BASE_MODEL_ASSET_ID
 
 
+def _unsatisfiable_gpu_count(admin_tok) -> int:
+    """在线节点总卡数 + 1：任何情况下都不可调度（连常驻部署全停都不够）"""
+    r = requests.get(f"{BASE}/api/cluster/nodes", headers=H(admin_tok), timeout=15)
+    r.raise_for_status()
+    total = sum((n.get("gpu_count") or 0) for n in r.json()
+                if n.get("status") == "online")
+    return max(2, total) + 1
+
+
 @pytest.fixture(scope="module")
 def tctx(admin_tok, dsctx, succeeded_ckpt):
-    """默认项目：导出用 LoRA 产物 + 各阶段排队任务"""
+    """默认项目：导出用 LoRA 产物 + 各阶段排队任务（gpu_count=总卡数+1 → 永 queued）"""
+    unsat_gpu = _unsatisfiable_gpu_count(admin_tok)
     c = {}
     # 本地 LoRA 产物（供 export 任务）
     aname = f"500texp-{SUF}"
@@ -36,7 +50,8 @@ def tctx(admin_tok, dsctx, succeeded_ckpt):
     def mk_job(name, stage, versions, extra=None):
         body = {"project_id": DEFAULT_PROJECT, "name": name, "stage": stage,
                 "finetuning_type": "lora", "base_model_id": BASE_MODEL_ASSET_ID,
-                "dataset_version_ids": versions, "gpu_count": 1, "priority": 5}
+                "dataset_version_ids": versions,
+                "gpu_count": unsat_gpu, "priority": 5}
         if extra:
             body.update(extra)
         r = requests.post(f"{BASE}/api/training/jobs", headers=H(admin_tok),

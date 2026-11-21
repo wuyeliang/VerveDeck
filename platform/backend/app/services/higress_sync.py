@@ -193,18 +193,30 @@ def _ensure_catchall(c: hc.HigressClient) -> None:
         _applied[CATCHALL_ROUTE] = h
 
 
-def _healthy_targets(route: ModelRoute, targets, deployments) -> list:
-    """容灾决策：主目标可用 → 只用主目标；否则 fallback 接管。返回 [(dep, weight)]。"""
+def _healthy_targets(route: ModelRoute, targets, deployments) -> tuple[list, str]:
+    """按路由策略选出服务目标。返回 ([(dep, weight)], 策略标记)。
+
+    lb：主目标（is_fallback=False）可用 → 按权重只用主目标；否则 fallback
+        接管（权重再平衡）。标记 ""=正常 / "fallback"=容灾接管中。
+    priority：目标按 priority 升序级联，第一个 running 独占 100 权重。
+        标记 "p{n}"=当前第 n 级在服务。"""
     deps = {d.id: d for d in deployments}
+    if (route.policy or "lb") == "priority":
+        ordered = sorted(targets, key=lambda t: (t.priority or 1, t.id))
+        for i, t in enumerate(ordered, start=1):
+            dep = deps.get(t.deployment_id)
+            if dep and dep.status == "running":
+                return [(dep, 100)], f"p{i}"
+        return [], ""
     primary = [(deps[t.deployment_id], t.weight) for t in targets
                if not t.is_fallback and t.deployment_id in deps
                and deps[t.deployment_id].status == "running"]
     if primary:
-        return primary
+        return primary, ""
     fallback = [(deps[t.deployment_id], t.weight) for t in targets
                 if t.is_fallback and t.deployment_id in deps
                 and deps[t.deployment_id].status == "running"]
-    return fallback
+    return fallback, "fallback"
 
 
 def _sync_one_route(c: hc.HigressClient, db, route: ModelRoute) -> None:
@@ -225,14 +237,18 @@ def _sync_one_route(c: hc.HigressClient, db, route: ModelRoute) -> None:
         _set_status(db, route, "synced", "已停用" if not route.enabled else "无目标")
         return
 
-    upstream = _healthy_targets(route, targets, deployments)
+    upstream, mark = _healthy_targets(route, targets, deployments)
     if not upstream:
         try:
             c.delete_route(name)
             _applied.pop(name, None)
         except hc.HigressError:
             pass
-        _set_status(db, route, "synced", "无可用目标（主目标与容灾目标均不可用）")
+        if (route.policy or "lb") == "priority":
+            msg = "无可用目标（所有优先级目标均不可用）"
+        else:
+            msg = "无可用目标（主目标与容灾目标均不可用）"
+        _set_status(db, route, "synced", msg)
         return
 
     # 端口池占用全集（DB 已分配的），防本 tick 内多路由重复挑选同一端口
@@ -255,10 +271,13 @@ def _sync_one_route(c: hc.HigressClient, db, route: ModelRoute) -> None:
     if _applied.get(name) != h:
         c.upsert_route(payload)
         _applied[name] = h
-    _set_status(db, route, "synced",
-                f"{len(services)} 个端点加权" +
-                ("（容灾接管中：主目标不可用）"
-                 if all(d.id in fallback_ids for d, _ in upstream) else ""))
+    if (route.policy or "lb") == "priority":
+        msg = f"优先级路由：第 {mark[1:]} 级在服务（1 个端点）"
+    else:
+        msg = f"{len(services)} 个端点加权" + \
+              ("（容灾接管中：主目标不可用）"
+               if all(d.id in fallback_ids for d, _ in upstream) else "")
+    _set_status(db, route, "synced", msg)
 
 
 def _set_status(db, route: ModelRoute, status: str, message: str) -> None:

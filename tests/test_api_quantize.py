@@ -406,6 +406,10 @@ def test_batch_delete_mixed(qctx, admin_tok):
                        timeout=15, json={"ids": []})
     r0.raise_for_status()
     assert r0.json() == {"deleted": [], "failed": []}
+    # 收尾：T2 的"进行中"分支已断言完毕，强制收敛到终态并强删容器，释放其占用的 GPU 槽位。
+    # 否则 T2 的真实量化容器（pip 安装慢/网络抖动时长时间 running）残留占卡，
+    # 会饿死后续文件的 GPU 调度（实测 e2e TC11 双卡任务因此 30min 超时失败）
+    _finalize(t2, False, "test cleanup")
 
 
 def test_batch_delete_cross_tenant(qctx, admin_tok, tenant_b):

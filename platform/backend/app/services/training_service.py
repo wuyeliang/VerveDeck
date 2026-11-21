@@ -717,13 +717,31 @@ def cancel(job: TrainingJob) -> None:
 
 
 def checkpoints(job: TrainingJob) -> list[dict]:
+    """任务目录下可用 checkpoint 列表（step 降序）。
+
+    只统计不早于任务创建时间的 checkpoint：任务 ID 虽单调递增，但数据库重建后
+    /data 目录仍持久——新一代任务可能与旧代同号任务的残留 ckpt 目录碰撞
+    （实测：re-clone 后 job 101 命中 11-19 旧代训练残留 checkpoint-5，
+    把假 checkpoint 报给前端并允许"续训"是错误语义）。"""
+    from datetime import timezone as _tz
     out = []
     base = f"{job_dir(job.id)}/ckpt"
+    since = 0.0
+    if job.created_at:
+        ca = job.created_at
+        if ca.tzinfo is None:
+            ca = ca.replace(tzinfo=_tz.utc)  # DB 存 naive UTC（datetime.utcnow）
+        since = ca.timestamp() - 5.0         # 5s 时钟抖动容差
     for p in glob.glob(os.path.join(base, "checkpoint-*")):
         step = p.rsplit("-", 1)[-1]
         try:
             step = int(step)
         except ValueError:
+            continue
+        try:
+            if os.path.getmtime(p) < since:
+                continue
+        except OSError:
             continue
         out.append({"path": p, "step": step})
     return sorted(out, key=lambda x: x["step"], reverse=True)

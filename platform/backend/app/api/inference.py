@@ -253,9 +253,6 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
         raise HTTPException(400, "engine 需为 vllm/sglang")
     if db.query(Deployment).filter_by(name=req.name).first():
         raise HTTPException(400, "部署名已存在")
-    from ..models import ModelRoute
-    if db.query(ModelRoute).filter_by(name=req.name).first():
-        raise HTTPException(400, "与已有模型路由名冲突（/v1/ 路径前缀不能碰撞）")
     asset = db.get(ModelAsset, req.model_asset_id)
     if not asset or asset.status != "ready":
         raise HTTPException(400, "模型资产不存在或未就绪")
@@ -335,6 +332,10 @@ def create_deploy(req: DeployReq, db=Depends(get_db), user=Depends(get_current_u
     db.add(d)
     db.commit()
     db.refresh(d)
+    # 自动关联路由：同名路由（auto）即刻暴露 /v1/<名>/，人工可继续编辑
+    from .model_routes import ensure_auto_route
+    ensure_auto_route(db, d, user.id)
+    db.commit()
 
     inf.launch_thread(d.id, note="推理容器启动中…")
     return _brief(d, db)
@@ -536,7 +537,12 @@ def delete_deploy(did: int, db=Depends(get_db), user=Depends(get_current_user)):
     _check(db, d.project_id, user)
     if d.status in ("running", "creating"):
         inf.stop(d)
+    dep_name = d.name
     db.delete(d)
+    db.commit()
+    # 自动路由 GC：同名 auto 路由失去该目标后若已空则一并删除
+    from .model_routes import gc_auto_route_for
+    gc_auto_route_for(db, dep_name, did)
     db.commit()
     return {"ok": True}
 
@@ -711,8 +717,13 @@ def update_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curr
         if db.query(Deployment).filter_by(name=req["name"]).first():
             raise HTTPException(400, "部署名已存在")
         from ..models import ModelRoute
-        if db.query(ModelRoute).filter_by(name=req["name"]).first():
-            raise HTTPException(400, "与已有模型路由名冲突")
+        # 自动路由需与部署同名：新名被他人路由占用 → 拒绝（本部署自己的 auto 路由除外）
+        own_auto = db.query(ModelRoute).filter_by(name=d.name, auto=True).first()
+        clash = db.query(ModelRoute).filter_by(name=req["name"]).first()
+        if clash and clash is not own_auto:
+            raise HTTPException(400, f"与已有模型路由 {req['name']} 冲突（部署自动路由须同名）")
+        if own_auto:
+            own_auto.name = req["name"]  # 自动路由跟随部署改名（同事务提交）
     if "model_asset_id" in req:
         asset = db.get(ModelAsset, req["model_asset_id"])
         if not asset or asset.status != "ready":

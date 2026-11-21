@@ -1,23 +1,26 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Form, Input, InputNumber, Select, Drawer,
-  message, Modal, Switch, Tooltip, Dropdown,
+  message, Modal, Switch, Tooltip, Dropdown, Radio,
 } from 'antd'
 import {
   PlusOutlined, CopyOutlined, EditOutlined, DeleteOutlined,
   MinusCircleOutlined, ExclamationCircleOutlined,
-  SearchOutlined, MoreOutlined, ReloadOutlined,
+  SearchOutlined, MoreOutlined, ReloadOutlined, ArrowUpOutlined, ArrowDownOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { StatusDot, SectionTitle } from './infer-shared'
 
-/** 模型路由：服务名 → 多部署目标（权重 + 容灾），数据面走 Higress 网关 */
+/** 模型路由：服务名 → 多部署目标（负载均衡权重 / 优先级级联）+ 路由级缓存加速。
+ *  部署创建时自动生成同名路由（auto），数据面走 Higress 网关（/v1/<名>/）。 */
 export default function InferRoutes() {
   const { t } = useTranslation()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
   const [deploys, setDeploys] = useState<any[]>([])
+  const [caches, setCaches] = useState<any[]>([])
   const [kw, setKw] = useState('')
   const [open, setOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -28,6 +31,8 @@ export default function InferRoutes() {
       .then((r) => setList(r.data || [])).catch(() => {})
     api.get('/api/inference/deployments')
       .then((r) => setDeploys(r.data || [])).catch(() => {})
+    api.get('/api/cache/services')
+      .then((r) => setCaches(r.data || [])).catch(() => {})
   }, [projectId])
   useEffect(() => { load(); const x = setInterval(load, 5000); return () => clearInterval(x) }, [load])
 
@@ -40,7 +45,11 @@ export default function InferRoutes() {
 
   const openCreate = () => {
     form.resetFields()
-    form.setFieldsValue({ name: '', description: '', targets: [{ deployment_id: undefined, weight: 100, is_fallback: false }] })
+    form.setFieldsValue({
+      name: '', description: '', enabled: true, policy: 'lb',
+      cache_service_id: undefined,
+      targets: [{ deployment_id: undefined, weight: 100, is_fallback: false }],
+    })
     setEditId(null)
     setOpen(true)
   }
@@ -49,6 +58,8 @@ export default function InferRoutes() {
     form.resetFields()
     form.setFieldsValue({
       name: r.name, description: r.description || '',
+      enabled: r.enabled, policy: r.policy || 'lb',
+      cache_service_id: r.cache_service_id || undefined,
       targets: r.targets.length
         ? r.targets.map((x: any) => ({ deployment_id: x.deployment_id, weight: x.weight, is_fallback: x.is_fallback }))
         : [{ deployment_id: undefined, weight: 100, is_fallback: false }],
@@ -63,11 +74,16 @@ export default function InferRoutes() {
       deployment_id: x.deployment_id, weight: x.weight ?? 100, is_fallback: !!x.is_fallback,
     }))
     if (editId) {
-      // 路由名即对外 API 前缀（/v1/<name>/），不可改（换名请删除重建，与后端注册表命名口径一致）
-      await api.put(`/api/inference/routes/${editId}`, { description: v.description || '', targets })
+      // 路由名即对外 API 前缀（/v1/<name>/），编辑时锁定（换名请删除重建）
+      await api.put(`/api/inference/routes/${editId}`, {
+        description: v.description || '', enabled: v.enabled,
+        policy: v.policy, cache_service_id: v.cache_service_id ?? null, targets,
+      })
     } else {
       await api.post('/api/inference/routes', {
-        project_id: projectId, name: v.name, description: v.description || '', targets,
+        project_id: projectId, name: v.name, description: v.description || '',
+        enabled: v.enabled, policy: v.policy,
+        cache_service_id: v.cache_service_id ?? null, targets,
       })
     }
     message.success(t('routes.saved'))
@@ -94,6 +110,10 @@ export default function InferRoutes() {
     return { text: t('routes.synced'), tone: 'success' as const }
   }
 
+  const policyTag = (r: any) => (r.policy === 'priority'
+    ? <Tag color="purple">{t('routes.policyPriority')}</Tag>
+    : <Tag color="blue">{t('routes.policyLb')}</Tag>)
+
   const onRowAction = (key: string, r: any) => {
     if (key === 'edit') { openEdit(r); return }
     if (key === 'delete') {
@@ -110,6 +130,8 @@ export default function InferRoutes() {
     return !k || (r.name || '').toLowerCase().includes(k) || (r.description || '').toLowerCase().includes(k)
   })
 
+  const policy = Form.useWatch('policy', form) || 'lb'
+
   return (
     <div>
       {/* 工具栏：左=搜索+刷新；右=新建（列表页无大标题） */}
@@ -122,7 +144,7 @@ export default function InferRoutes() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('routes.new')}</Button>
       </div>
       <Table rowKey="id" size="small" dataSource={filtered} pagination={{ pageSize: 12, showSizeChanger: false }}
-        scroll={{ x: 1180 }}
+        scroll={{ x: 1320 }}
         locale={{ emptyText: t('routes.empty') }}
         columns={[
           {
@@ -130,6 +152,7 @@ export default function InferRoutes() {
               <div style={{ minWidth: 0 }}>
                 <Space size={4}>
                   <span style={{ color: 'var(--ant-color-primary)', fontWeight: 600 }}>{v}</span>
+                  {r.auto && <Tag color="green">{t('routes.autoTag')}</Tag>}
                   <Button size="small" type="text" icon={<CopyOutlined />}
                     onClick={() => copy(`${location.origin}/v1/${r.name}`)} />
                 </Space>
@@ -139,19 +162,27 @@ export default function InferRoutes() {
               </div>
             ),
           },
+          { title: t('routes.policy'), width: 120, render: (_: any, r: any) => policyTag(r) },
           {
-            title: t('routes.targets'), width: 340, render: (_: any, r: any) => (
+            title: t('routes.models'), width: 330, render: (_: any, r: any) => (
               <Space size={[4, 4]} wrap>
                 {(r.targets || []).length === 0 && <span style={{ color: 'var(--ant-color-text-quaternary)' }}>{t('routes.noTargets')}</span>}
-                {(r.targets || []).map((x: any) => (
-                  <Tag key={x.id} color={x.is_fallback ? 'gold' : 'blue'}>
-                    {x.deployment_name} {x.weight}
-                    {x.is_fallback ? ` · ${t('routes.fallback')}` : ''}
+                {(r.targets || []).map((x: any, i: number) => (
+                  <Tag key={x.id} color={r.policy === 'priority' ? (i === 0 ? 'blue' : 'gold') : (x.is_fallback ? 'gold' : 'blue')}>
+                    {r.policy === 'priority' ? `P${i + 1} ` : ''}{x.deployment_name}
+                    {r.policy !== 'priority' && ` ${x.weight}`}
+                    {r.policy !== 'priority' && x.is_fallback ? ` · ${t('routes.fallback')}` : ''}
                     {x.deployment_status !== 'running' && ` (${x.deployment_status})`}
                   </Tag>
                 ))}
               </Space>
             ),
+          },
+          {
+            title: t('routes.cacheSvc'), width: 140, render: (_: any, r: any) =>
+              r.cache_service_id
+                ? <Tag icon={<ThunderboltOutlined />} color="cyan">{r.cache_name || `#${r.cache_service_id}`}</Tag>
+                : <span style={{ color: 'var(--ant-color-text-quaternary)' }}>-</span>,
           },
           {
             title: t('common.status'), width: 210, render: (_: any, r: any) => {
@@ -189,7 +220,7 @@ export default function InferRoutes() {
         ]} />
 
       {/* 新建 / 编辑路由（右侧 Drawer；名即 API 前缀，编辑时锁定） */}
-      <Drawer title={editId ? t('routes.editTitle') : t('routes.new')} width={640} open={open} onClose={() => setOpen(false)}
+      <Drawer title={editId ? t('routes.editTitle') : t('routes.new')} width={680} open={open} onClose={() => setOpen(false)}
         footer={<div style={{ textAlign: 'right' }}>
           <Space>
             <Button onClick={() => setOpen(false)}>{t('common.cancel')}</Button>
@@ -197,63 +228,82 @@ export default function InferRoutes() {
           </Space>
         </div>}>
         <Form form={form} layout="vertical">
-          <SectionTitle>{t('routes.name')}</SectionTitle>
-          <Form.Item name="name"
-            tooltip={editId ? t('routes.nameLocked') : undefined}
-            rules={[{ required: true, pattern: /^[a-z0-9][a-z0-9-]*$/, message: t('routes.nameRule') }, { max: 128 }]}>
-            <Input placeholder={t('routes.namePh')} showCount maxLength={128}
-              disabled={!!editId} />
+          <SectionTitle>{t('routes.basic')}</SectionTitle>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="name" style={{ flex: 1, marginBottom: 12 }}
+              tooltip={editId ? t('routes.nameLocked') : undefined}
+              rules={[{ required: true, pattern: /^[a-z0-9][a-z0-9-]*$/, message: t('routes.nameRule') }, { max: 128 }]}>
+              <Input placeholder={t('routes.namePh')} showCount maxLength={128}
+                disabled={!!editId} />
+            </Form.Item>
+            <Form.Item name="enabled" label={t('common.status')} valuePropName="checked" style={{ width: 160, marginBottom: 12 }}>
+              <Switch checkedChildren={t('common.enabled')} unCheckedChildren={t('common.disabled')} />
+            </Form.Item>
+          </div>
+          <Form.Item name="description" label={t('common.desc')}>
+            <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
           </Form.Item>
-          <Form.Item noStyle shouldUpdate={(a, b) => a.name !== b.name}>
-            {() => {
-              const n = (form.getFieldValue('name') || '').toLowerCase()
-              const clash = deploys.find((d: any) => d.name === n && n)
-              return clash && !editId
-                ? <p style={{ color: '#cf1322', fontSize: 12, marginTop: -12, marginBottom: 8 }}>
-                  {t('routes.nameClash')}
-                </p>
-                : null
-            }}
+
+          <SectionTitle>{t('routes.models')}</SectionTitle>
+          <Form.Item name="policy" tooltip={t('routes.policyTip')}>
+            <Radio.Group optionType="button" buttonStyle="solid">
+              <Radio.Button value="lb">{t('routes.policyLb')}</Radio.Button>
+              <Radio.Button value="priority">{t('routes.policyPriority')}</Radio.Button>
+            </Radio.Group>
           </Form.Item>
-          <SectionTitle>{t('routes.targets')}</SectionTitle>
-          <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginTop: 0 }}>{t('routes.targetHint')}</p>
+          <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12, marginTop: 0, marginBottom: 8 }}>
+            {policy === 'priority' ? t('routes.priorityHint') : t('routes.lbHint')}
+          </p>
           <Form.List name="targets">
-            {(fields, { add, remove }) => (
+            {(fields, { add, remove, move }) => (
               <>
-                {fields.map(({ key, name: fidx, ...rest }) => (
+                {fields.map(({ key, name: fidx, ...rest }, i) => (
                   <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 4 }} wrap>
+                    {policy === 'priority' && (
+                      <Tag color={i === 0 ? 'blue' : 'gold'} style={{ margin: 0, minWidth: 30, textAlign: 'center' }}>P{i + 1}</Tag>
+                    )}
                     <Form.Item {...rest} name={[fidx, 'deployment_id']} rules={[{ required: true, message: t('routes.targetReq') }]}
                       style={{ marginBottom: 0 }}>
-                      <Select style={{ width: 260 }} showSearch optionFilterProp="label" placeholder={t('routes.targetPh')}
+                      <Select style={{ width: 240 }} showSearch optionFilterProp="label" placeholder={t('routes.targetPh')}
                         options={deploys.map((d: any) => ({ value: d.id, label: `${d.name} (${d.status})` }))} />
                     </Form.Item>
-                    <Form.Item {...rest} name={[fidx, 'weight']} rules={[{ required: true }]} style={{ marginBottom: 0 }}
-                      tooltip={t('routes.weightHint')}>
-                      <InputNumber min={1} max={100} style={{ width: 110 }} />
-                    </Form.Item>
-                    <Form.Item {...rest} name={[fidx, 'is_fallback']} valuePropName="checked" style={{ marginBottom: 0 }}>
-                      <Switch size="small" checkedChildren={t('routes.fallback')} />
-                    </Form.Item>
+                    {policy === 'lb' && (
+                      <>
+                        <Form.Item {...rest} name={[fidx, 'weight']} rules={[{ required: true }]} style={{ marginBottom: 0 }}
+                          tooltip={t('routes.weightHint')}>
+                          <InputNumber min={1} max={100} style={{ width: 100 }} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[fidx, 'is_fallback']} valuePropName="checked" style={{ marginBottom: 0 }}>
+                          <Switch size="small" checkedChildren={t('routes.fallback')} />
+                        </Form.Item>
+                      </>
+                    )}
+                    {policy === 'priority' && (
+                      <Space size={0}>
+                        <Button size="small" type="text" icon={<ArrowUpOutlined />} disabled={i === 0}
+                          onClick={() => move(fidx, fidx - 1)} />
+                        <Button size="small" type="text" icon={<ArrowDownOutlined />} disabled={i === fields.length - 1}
+                          onClick={() => move(fidx, fidx + 1)} />
+                      </Space>
+                    )}
                     {fields.length > 1 && (
                       <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(fidx)} />
                     )}
                   </Space>
                 ))}
-                <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ deployment_id: undefined, weight: 100, is_fallback: false })}>
+                <Button type="dashed" block icon={<PlusOutlined />}
+                  onClick={() => add({ deployment_id: undefined, weight: 100, is_fallback: false })}>
                   {t('routes.addTarget')}
                 </Button>
               </>
             )}
           </Form.List>
-          <SectionTitle>{t('common.desc')}</SectionTitle>
-          <Form.Item name="description">
-            <Input.TextArea maxLength={200} showCount autoSize={{ minRows: 1, maxRows: 3 }} />
+
+          <SectionTitle>{t('routes.cacheSvc')}</SectionTitle>
+          <Form.Item name="cache_service_id" tooltip={t('routes.cacheTip')}>
+            <Select allowClear showSearch optionFilterProp="label" placeholder={t('infer.cacheSvcNone')}
+              options={caches.map((c: any) => ({ value: c.id, label: `${c.name} (${c.capacity_gb ? `${c.capacity_gb} GB ` : ''}${c.cache_type === 'ssd' ? t('cache.typeSsd') : t('cache.typeMemory')})` }))} />
           </Form.Item>
-          {editId && (
-            <p style={{ color: 'var(--ant-color-text-tertiary)', fontSize: 12 }}>
-              {t('routes.nameLocked')}
-            </p>
-          )}
         </Form>
       </Drawer>
     </div>

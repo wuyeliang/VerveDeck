@@ -118,6 +118,12 @@ def reconcile(db) -> None:
         name = container_name(cs)
         if cs.status not in ("creating", "running"):
             continue
+        if not (cs.image or "").strip():
+            # 逻辑型缓存（无镜像）不应当处于容器态；兜底收敛为 stopped
+            cs.status = "stopped"
+            cs.state_message = ""
+            cs.endpoint = ""
+            continue
         healthy, msg = _health_of(cs, name)
         alive = tc.container_alive(name)
         ip = tc.container_ip(name) if alive else ""
@@ -224,14 +230,32 @@ def launch_cache_thread(cs_id: int, note: str = "") -> None:
     threading.Thread(target=_run, name=f"cache-launch-{cs_id}", daemon=True).start()
 
 
+def _route_cache_id(db, dep_id: int) -> int | None:
+    """部署被启用的路由引用且路由关联缓存 → 路由级缓存 id（优先于部署级）。
+    多路由同挂一部署时取最小 id 路由（确定性）。"""
+    from ..models import ModelRoute, ModelRouteTarget
+    tgt = db.query(ModelRouteTarget).filter_by(deployment_id=dep_id) \
+        .order_by(ModelRouteTarget.id).first()
+    if not tgt:
+        return None
+    r = db.get(ModelRoute, tgt.route_id)
+    if r and r.enabled and r.cache_service_id:
+        return r.cache_service_id
+    return None
+
+
 def cache_env_for(dep) -> dict:
-    """部署关联的缓存服务 → VD_CACHE_ENDPOINT 注入（http://ip:port）。
+    """缓存端点 → VD_CACHE_ENDPOINT 注入（http://ip:port）。
+    解析优先级：路由级缓存（部署所属启用路由的关联）> 部署级关联。
     未关联 / 服务未运行 / 无地址 → 空 dict（部署不受影响，优雅降级）。"""
     cid = getattr(dep, "cache_service_id", None)
-    if not cid:
-        return {}
     db = SessionLocal()
     try:
+        rid = _route_cache_id(db, dep.id)
+        if rid:
+            cid = rid
+        if not cid:
+            return {}
         cs = db.get(CacheService, cid)
         if cs and cs.status == "running" and cs.endpoint:
             return {"VD_CACHE_ENDPOINT": f"http://{cs.endpoint}"}

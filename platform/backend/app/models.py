@@ -287,16 +287,20 @@ class Deployment(Base):
 
 
 class ModelRoute(Base):
-    """模型路由：服务名 → 多部署目标（权重 + 容灾）。
+    """模型路由：服务名 → 多部署目标（负载均衡权重 / 优先级级联）。
     数据面走 Higress（路径 /v1/<name>/），平台 reconciler 负责把
-    目标权重/fallback 再平衡/重试策略同步到网关 Console API。
-    name 与部署名互斥（路径前缀不能与 /v1/<部署名>/ 存量入口碰撞）。"""
+    目标权重/优先级接管/重试策略同步到网关 Console API。
+    部署创建时自动生成同名路由（auto=True，部署删除时 GC）；
+    路由名与部署名允许相同（网关最长前缀匹配，同名路由优先于兜底直连）。"""
     __tablename__ = "model_routes"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)  # 停用=从网关摘除流量（目标保留）
+    policy: Mapped[str] = mapped_column(String(16), default="lb")  # lb=负载均衡（权重+容灾）/ priority=优先级路由（有序级联）
+    cache_service_id: Mapped[int | None] = mapped_column(ForeignKey("cache_services.id"), nullable=True)  # 路由级缓存加速（优先于部署级关联）
+    auto: Mapped[bool] = mapped_column(Boolean, default=False)  # 自动生成（随部署创建/删除，可人工编辑）
     sync_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/synced/error（reconciler 回写）
     sync_message: Mapped[str] = mapped_column(String(512), default="")
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -304,15 +308,16 @@ class ModelRoute(Base):
 
 
 class ModelRouteTarget(Base):
-    """路由目标：部署 + 权重（0-100）+ 容灾标记。
-    主目标（is_fallback=False）不可用时，reconciler 将 fallback 目标
-    权重按比例再平衡到 100 写回网关；恢复后还原。"""
+    """路由目标：部署 + 权重（0-100）+ 容灾标记 + 优先级序号。
+    lb 策略：主目标（is_fallback=False）不可用时 fallback 权重再平衡接管；
+    priority 策略：按 priority 升序级联（第一个 running 独占 100 权重）。"""
     __tablename__ = "model_route_targets"
     id: Mapped[int] = mapped_column(primary_key=True)
     route_id: Mapped[int] = mapped_column(ForeignKey("model_routes.id", ondelete="CASCADE"), index=True)
     deployment_id: Mapped[int] = mapped_column(ForeignKey("deployments.id", ondelete="CASCADE"), index=True)
     weight: Mapped[int] = mapped_column(Integer, default=1)
     is_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    priority: Mapped[int] = mapped_column(Integer, default=1)  # 优先级路由序号（1=最高；lb 策略忽略）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     __table_args__ = (Index("uq_route_target", "route_id", "deployment_id", unique=True),)
 
@@ -351,11 +356,14 @@ class InferenceBackendVersion(Base):
 
 class CacheService(Base):
     """缓存服务实例（独立于部署的托管容器）：L2 分布式 KV 缓存存储等。
-    部署关联后向其实例注入 VD_CACHE_ENDPOINT。"""
+    类型（memory=内存 / ssd=SSD）+ 容量（GB）为规划元数据；
+    部署/路由关联后向其实例注入 VD_CACHE_ENDPOINT。"""
     __tablename__ = "cache_services"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True)
     description: Mapped[str] = mapped_column(Text, default="")
+    cache_type: Mapped[str] = mapped_column(String(16), default="memory")  # memory=内存 / ssd=SSD
+    capacity_gb: Mapped[int] = mapped_column(Integer, default=0)  # 容量（GB，规划值）
     image: Mapped[str] = mapped_column(String(255))
     command: Mapped[str] = mapped_column(String(512), default="")  # 覆盖镜像默认启动命令
     env: Mapped[dict] = mapped_column(JSON, default=dict)
