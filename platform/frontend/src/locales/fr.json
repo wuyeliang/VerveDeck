@@ -78,6 +78,24 @@
     "batchDone": "Suppression par lot terminée",
     "edit": "Modifier"
   },
+  "status": {
+    "queued": "En file d'attente",
+    "running": "En cours",
+    "succeeded": "Réussi",
+    "failed": "En échec",
+    "cancelled": "Annulé",
+    "pending": "En attente",
+    "creating": "En création",
+    "stopped": "Arrêté",
+    "ready": "Prêt",
+    "pending_download": "Téléchargement",
+    "draft": "Brouillon",
+    "committed": "Validé",
+    "done": "Terminé",
+    "online": "En ligne",
+    "offline": "Hors ligne",
+    "maintenance": "En maintenance"
+  },
   "dashboard": {
     "gpuUtil": "Utilisation GPU",
     "gpuMem": "Mémoire GPU (GB)",

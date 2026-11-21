@@ -78,6 +78,24 @@
     "batchDone": "Eliminación por lotes completada",
     "edit": "Editar"
   },
+  "status": {
+    "queued": "En cola",
+    "running": "En ejecución",
+    "succeeded": "Completado",
+    "failed": "Fallido",
+    "cancelled": "Cancelado",
+    "pending": "Pendiente",
+    "creating": "Creando",
+    "stopped": "Detenido",
+    "ready": "Listo",
+    "pending_download": "Descargando",
+    "draft": "Borrador",
+    "committed": "Enviado",
+    "done": "Hecho",
+    "online": "En línea",
+    "offline": "Sin conexión",
+    "maintenance": "En mantenimiento"
+  },
   "dashboard": {
     "gpuUtil": "Uso de GPU",
     "gpuMem": "Memoria GPU (GB)",

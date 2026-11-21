@@ -78,6 +78,24 @@
     "batchDone": "Batch delete finished",
     "edit": "Edit"
   },
+  "status": {
+    "queued": "Queued",
+    "running": "Running",
+    "succeeded": "Succeeded",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "pending": "Pending",
+    "creating": "Creating",
+    "stopped": "Stopped",
+    "ready": "Ready",
+    "pending_download": "Downloading",
+    "draft": "Draft",
+    "committed": "Committed",
+    "done": "Done",
+    "online": "Online",
+    "offline": "Offline",
+    "maintenance": "Maintenance"
+  },
   "dashboard": {
     "gpuUtil": "GPU Utilization",
     "gpuMem": "GPU Memory (GB)",

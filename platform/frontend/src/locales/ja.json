@@ -78,6 +78,24 @@
     "batchDone": "一括削除完了",
     "edit": "編集"
   },
+  "status": {
+    "queued": "キュー中",
+    "running": "実行中",
+    "succeeded": "成功",
+    "failed": "失敗",
+    "cancelled": "取り消し済み",
+    "pending": "待機中",
+    "creating": "作成中",
+    "stopped": "停止済み",
+    "ready": "準備完了",
+    "pending_download": "ダウンロード中",
+    "draft": "下書き",
+    "committed": "提出済み",
+    "done": "完了",
+    "online": "オンライン",
+    "offline": "オフライン",
+    "maintenance": "メンテナンス中"
+  },
   "dashboard": {
     "gpuUtil": "GPU 使用率",
     "gpuMem": "GPU メモリ (GB)",

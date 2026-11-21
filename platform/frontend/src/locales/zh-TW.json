@@ -78,6 +78,24 @@
     "batchDone": "批次刪除完成",
     "edit": "編輯"
   },
+  "status": {
+    "queued": "排隊中",
+    "running": "運行中",
+    "succeeded": "已完成",
+    "failed": "失敗",
+    "cancelled": "已取消",
+    "pending": "等待中",
+    "creating": "創建中",
+    "stopped": "已停止",
+    "ready": "就緒",
+    "pending_download": "下載中",
+    "draft": "草稿",
+    "committed": "已提交",
+    "done": "已完成",
+    "online": "在線",
+    "offline": "離線",
+    "maintenance": "維護中"
+  },
   "dashboard": {
     "gpuUtil": "GPU 利用率",
     "gpuMem": "GPU 顯存 (GB)",
