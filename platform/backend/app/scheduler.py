@@ -317,6 +317,16 @@ def _admit_jobs(db):
                 if job.error != str(e):
                     job.error = str(e)
                     db.commit()
+            except tc.GpuNotEnough as e:
+                # 瞬时 GPU 不足：准入用 DB 口径（_free_gpus），建容器用物理口径
+                # （assign_gpus：DCGM 显存 + 容器标签，有最长 ~45s 滞后）。刚释放的卡
+                # DCGM 尚未沉降 / 与并发任务争抢时两者不一致 → 此处被准入却在建容器
+                # 时拿不到卡。放回队列等指标沉降后下周期重试，而非判 failed。
+                job.status = "queued"
+                if job.error != str(e):
+                    job.error = str(e)
+                    db.commit()
+                log.info("training job %s re-queued (GPU 瞬时不足: %s)", job.id, e)
             except Exception as e:
                 job.status = "failed"
                 job.error = f"启动失败: {e}"
@@ -337,6 +347,14 @@ def _admit_jobs(db):
                 if task.error != str(e):
                     task.error = str(e)
                     db.commit()
+            except tc.GpuNotEnough as e:
+                # 同训练任务：准入（DB 口径）与建容器（物理口径）不一致时的瞬时
+                # GPU 不足，放回 pending 等下周期重试，而非判 failed。
+                task.status = "pending"
+                if task.error != str(e):
+                    task.error = str(e)
+                    db.commit()
+                log.info("quant task %s re-queued (GPU 瞬时不足: %s)", task.id, e)
             except Exception as e:
                 task.status = "failed"
                 task.error = f"启动失败: {e}"
