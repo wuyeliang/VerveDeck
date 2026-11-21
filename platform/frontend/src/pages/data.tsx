@@ -7,6 +7,7 @@ import { PlusOutlined, EyeOutlined, CloudUploadOutlined, ThunderboltOutlined, Do
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useBatchDelete } from '../batch'
+import { useStatusLabel } from '../status'
 
 const T_STATUS: Record<string, string> = { draft: 'default', committed: 'success', running: 'processing', done: 'success', failed: 'error', pending: 'default' }
 const FMTS = ['alpaca', 'sharegpt', 'dpo']
@@ -252,6 +253,7 @@ export default function DataCenter() {
 
 function DsDetail(props: any) {
   const { t } = useTranslation()
+  const st = useStatusLabel()
   const { cur, projectId, reload, deps, tasks } = props
   const [pv, setPv] = useState<any>(null)
   const [pvPage, setPvPage] = useState(1)
@@ -282,7 +284,7 @@ function DsDetail(props: any) {
                 { title: t('data.colFmt'), dataIndex: 'fmt', width: 90 },
                 { title: t('data.colSamples'), dataIndex: 'sample_count', width: 80 },
                 { title: t('data.colSizeKB'), width: 90, render: (_: any, r: any) => (r.size_bytes / 1024).toFixed(1) },
-                { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={T_STATUS[v]}>{v}</Tag> },
+                { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={T_STATUS[v]}>{st(v)}</Tag> },
                 { title: t('data.colDvcRev'), dataIndex: 'dvc_rev', width: 110, ellipsis: true },
                 { title: t('data.colNote'), dataIndex: 'note', ellipsis: true },
                 {
@@ -360,7 +362,7 @@ function DsDetail(props: any) {
             columns={[
               { title: t('common.id'), dataIndex: 'id', width: 55 },
               { title: t('data.colType'), dataIndex: 'kind', width: 80 },
-              { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={T_STATUS[v] || 'default'}>{v}</Tag> },
+              { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={T_STATUS[v] || 'default'}>{st(v)}</Tag> },
               { title: t('data.colProgress'), dataIndex: 'progress', width: 120, render: (v: number, r: any) => r.kind === 'synth' ? <Progress percent={v} size="small" /> : '-' },
               { title: t('data.colFile'), render: (_: any, r: any) => r.file_name || JSON.stringify(r.result || {}), ellipsis: true },
               { title: t('data.colError'), dataIndex: 'error', ellipsis: true },

@@ -8,6 +8,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useBatchDelete } from '../batch'
+import { useStatusLabel } from '../status'
 
 const ST: Record<string, string> = { queued: 'default', running: 'processing', succeeded: 'success', failed: 'error', cancelled: 'warning' }
 
@@ -41,6 +42,7 @@ const Section = ({ title, extra, children }: { title: React.ReactNode, extra?: R
 
 export default function TrainCenter() {
   const { t } = useTranslation()
+  const st = useStatusLabel()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
   const [sel, setSel] = useState<number[]>([])
@@ -224,7 +226,7 @@ export default function TrainCenter() {
           { title: t('train.colBase'), dataIndex: 'base_model', width: 170, ellipsis: true },
           { title: t('train.dGpu'), dataIndex: 'gpu_count', width: 60 },
           { title: t('train.colPriority'), dataIndex: 'priority', width: 70 },
-          { title: t('common.status'), dataIndex: 'status', width: 110, render: (v: string) => <Tag color={ST[v]}>{v}</Tag> },
+          { title: t('common.status'), dataIndex: 'status', width: 110, render: (v: string) => <Tag color={ST[v]}>{st(v)}</Tag> },
           { title: t('common.createTime'), dataIndex: 'created_at', width: 170 },
           { title: t('common.actions'), width: 160, render: (_: any, r: any) => (
             <Space size={4}>
@@ -418,7 +420,7 @@ export default function TrainCenter() {
           <div>
             <Descriptions size="small" column={3} bordered style={{ marginBottom: 16 }}
               items={[
-                { key: 1, label: t('common.status'), children: <Tag color={ST[detail.status]}>{detail.status}</Tag> },
+                { key: 1, label: t('common.status'), children: <Tag color={ST[detail.status]}>{st(detail.status)}</Tag> },
                 { key: 2, label: t('train.dStage'), children: detail.stage },
                 { key: 3, label: t('train.dMethod'), children: detail.finetuning_type },
                 { key: 4, label: t('train.colBase'), children: detail.base_model },

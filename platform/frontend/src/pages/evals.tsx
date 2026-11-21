@@ -8,6 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, 
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useBatchDelete } from '../batch'
+import { useStatusLabel } from '../status'
 
 const ST: Record<string, string> = { pending: 'default', running: 'processing', succeeded: 'success', failed: 'error' }
 const BENCHES = ['gsm8k', 'ceval', 'arc', 'cmmlu', 'human_eval', 'mbpp']
@@ -15,6 +16,7 @@ const scoreOf = (s: any): number => (s?.avg_score != null ? s.avg_score : (s?.ju
 
 export default function EvalCenter() {
   const { t } = useTranslation()
+  const st = useStatusLabel()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
   const [sel, setSel] = useState<number[]>([])
@@ -73,7 +75,7 @@ export default function EvalCenter() {
           { title: t('evals.colTarget'), dataIndex: 'target', width: 180, ellipsis: true },
           { title: t('evals.colBench'), render: (_: any, r: any) => r.benchmark ? <Tag color="gold">{r.benchmark}</Tag> : (r.dataset_version || t('evals.custom')), width: 120 },
           { title: t('evals.colMethod'), dataIndex: 'method', width: 90 },
-          { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={ST[v]}>{v}</Tag> },
+          { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={ST[v]}>{st(v)}</Tag> },
           {
             title: t('evals.colScore'), width: 130, render: (_: any, r: any) => r.status === 'succeeded'
               ? <Space size={4}><b>{(r.summary?.avg_score ?? r.summary?.judge_avg ?? 0).toFixed?.(3) ?? r.summary?.avg_score ?? '-'}</b>

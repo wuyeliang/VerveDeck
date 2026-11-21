@@ -103,6 +103,7 @@
     "dsVersions": "Datasets / Versions",
     "modelDeploy": "Models / Live Deployments",
     "gpuTrend": "GPU Utilization (last hour)",
+    "multiNodes": "{{n}} nodes",
     "recentJobs": "Recent Training Jobs",
     "chartUtil": "Util %",
     "chartMem": "Mem GB",

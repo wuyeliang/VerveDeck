@@ -103,6 +103,7 @@
     "dsVersions": "データセット / バージョン",
     "modelDeploy": "モデル資産 / 稼働デプロイ",
     "gpuTrend": "GPU 使用率（直近 1 時間）",
+    "multiNodes": "{{n}} ノード",
     "recentJobs": "最近のトレーニングジョブ",
     "chartUtil": "使用率%",
     "chartMem": "メモリGB",

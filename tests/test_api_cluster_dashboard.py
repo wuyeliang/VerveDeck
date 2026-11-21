@@ -207,6 +207,13 @@ def test_summary_gpu(admin_tok):
                      timeout=15).json()
     assert s["gpu"]["count"] >= 1   # 卡数随环境而变（单卡/双卡服务器都合法）
     assert s["gpu"]["node"] == "node-1"
+    # 多节点聚合：nodes 列表覆盖全部节点，首节点口径与 node 字段一致
+    nodes = s["gpu"]["nodes"]
+    assert nodes and nodes[0]["name"] == s["gpu"]["node"]
+    assert all({"name", "status", "count", "maintenance"} <= set(n) for n in nodes)
+    row_nodes = requests.get(f"{BASE}/api/cluster/nodes", headers=H(admin_tok),
+                             timeout=15).json()
+    assert {n["name"] for n in nodes} == {n["name"] for n in row_nodes}
 
 
 def test_summary_recent_jobs(admin_tok):

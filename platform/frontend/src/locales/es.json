@@ -103,6 +103,7 @@
     "dsVersions": "Conjuntos de datos / Versiones",
     "modelDeploy": "Modelos / Despliegues activos",
     "gpuTrend": "Uso de GPU (última hora)",
+    "multiNodes": "{{n}} nodos",
     "recentJobs": "Tareas de entrenamiento recientes",
     "chartUtil": "Uso %",
     "chartMem": "Mem GB",

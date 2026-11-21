@@ -35,9 +35,14 @@ def summary(db=Depends(get_db), user=Depends(get_current_user)):
     pids = [p.id for p in db.query(Project).all() if can_access_project(user, db, p)]
     pids = pids or [0]  # 无项目时查不到任何行
 
-    node = db.query(GpuNode).filter_by(name="node-1").first()
+    # 全节点聚合（不再硬编码 node-1）：维护中节点不计入容量与利用率
+    nodes = db.query(GpuNode).order_by(GpuNode.id).all()
+    node = nodes[0] if nodes else None
     # GPU 快照 = DCGM 即时查询（Prometheus 底座），口径与旧 GpuMetric 行一致
-    gpus = prom_service.gpu_snapshot(node)
+    gpus = []
+    for nd in nodes:
+        if not nd.maintenance:
+            gpus.extend(prom_service.gpu_snapshot(nd))
     util = round(sum(g["util"] for g in gpus) / len(gpus), 1) if gpus else 0
     mem_used = sum(g["mem_used"] for g in gpus)
     mem_total = sum(g["mem_total"] for g in gpus)
@@ -110,8 +115,9 @@ def summary(db=Depends(get_db), user=Depends(get_current_user)):
 
     # 告警（前端按 code 做 i18n 文案）
     alerts = []
-    if node and node.status == "offline":
-        alerts.append({"level": "error", "code": "node_offline", "arg": node.name})
+    for nd in nodes:
+        if nd.status == "offline" and not nd.maintenance:
+            alerts.append({"level": "error", "code": "node_offline", "arg": nd.name})
     if storage.get("enabled") and not storage.get("ok"):
         alerts.append({"level": "error", "code": "storage", "arg": storage.get("detail", "")})
     for g in gpus:
@@ -157,10 +163,15 @@ def summary(db=Depends(get_db), user=Depends(get_current_user)):
             "api_keys": db.query(ApiKey).filter(ApiKey.is_active.is_(True)).count(),
         },
         "gpu": {
+            # node/status/count 保留首节点口径（兼容旧前端与测试）；
+            # nodes 为全节点列表，前端据此拼多节点标签与按节点趋势线
             "node": node.name if node else "",
             "status": node.status if node else "unknown",
             "count": node.gpu_count if node else 0,
             "util": util, "mem_used": mem_used, "mem_total": mem_total,
+            "nodes": [{"name": nd.name, "status": nd.status,
+                       "maintenance": bool(nd.maintenance), "count": nd.gpu_count}
+                      for nd in nodes],
         },
         "gpus": gpus,
         "recent_jobs": [

@@ -10,6 +10,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useBatchDelete } from '../batch'
+import { useStatusLabel } from '../status'
 
 const TYPE_COLOR: Record<string, string> = { base: 'geekblue', lora: 'purple', merged: 'green' }
 const ST_COLOR: Record<string, string> = { ready: 'success', pending_download: 'processing', failed: 'error' }
@@ -17,6 +18,7 @@ const fmtGB = (b: number) => (b / 1073741824).toFixed(2)
 
 export default function ModelRepo() {
   const { t } = useTranslation()
+  const st = useStatusLabel()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
   const [sel, setSel] = useState<number[]>([])
@@ -178,9 +180,9 @@ export default function ModelRepo() {
           {
             title: t('common.status'), dataIndex: 'status', width: 170,
             render: (v: string, r: any) => v === 'pending_download'
-              ? <Space size={4}><Tag color="processing" icon={<DownloadOutlined spin />}>{v}</Tag>
+              ? <Space size={4}><Tag color="processing" icon={<DownloadOutlined spin />}>{st(v)}</Tag>
                 <span style={{ color: '#888', fontSize: 12 }}>{t('models.dlProgress', { mb: Math.round(r.size_bytes / 1048576) })}</span></Space>
-              : <Tag color={ST_COLOR[v]}>{v}</Tag>,
+              : <Tag color={ST_COLOR[v]}>{st(v)}</Tag>,
           },
           { title: t('models.colSize'), width: 90, render: (_: any, r: any) => r.status === 'pending_download' ? <span style={{ color: '#888' }}>…</span> : fmtGB(r.size_bytes || 0) },
           { title: t('models.lineage'), width: 90, render: (_: any, r: any) => r.job_id || r.parent_name ? <Button size="small" icon={<NodeIndexOutlined />} onClick={() => api.get(`/api/models/${r.id}/lineage`).then((x) => setLineage(x.data))}>{t('models.trace')}</Button> : '-' },
@@ -220,8 +222,8 @@ export default function ModelRepo() {
                 <div style={{ minHeight: 88 }}>
                   <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>
                     {m.status === 'pending_download'
-                      ? <Space size={4}><Tag color="processing" icon={<DownloadOutlined spin />} style={{ marginInlineEnd: 0 }}>{m.status}</Tag>{t('models.dlProgress', { mb: Math.round(m.size_bytes / 1048576) })}</Space>
-                      : <Tag color={ST_COLOR[m.status]} style={{ marginInlineEnd: 0 }}>{m.status}</Tag>}
+                      ? <Space size={4}><Tag color="processing" icon={<DownloadOutlined spin />} style={{ marginInlineEnd: 0 }}>{st(m.status)}</Tag>{t('models.dlProgress', { mb: Math.round(m.size_bytes / 1048576) })}</Space>
+                      : <Tag color={ST_COLOR[m.status]} style={{ marginInlineEnd: 0 }}>{st(m.status)}</Tag>}
                     {m.status !== 'pending_download' && <span style={{ marginLeft: 6 }}>{fmtGB(m.size_bytes || 0)} GB</span>}
                   </div>
                   <div style={{ fontSize: 12, color: '#888', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

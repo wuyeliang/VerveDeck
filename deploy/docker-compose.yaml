@@ -381,6 +381,10 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-vervedeck-grafana}
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # grafana 11.6 默认 preinstall 列表含 grafana-lokiexplore-app，每次启动从插件市场重新下载；
+      # 该应用为 SystemJS 裸依赖（react/jsx-runtime），经 nginx 子路径反代时解析失败（console 刷 404），
+      # 且本平台数据源仅 Prometheus 用不到 → 禁用 preinstall（同时省掉每次重启 ~2 分钟的插件下载）
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
     ports:
       - "127.0.0.1:3000:3000"    # 仅本机调试；平台内走 web 容器 /grafana 反向代理
     volumes:
@@ -407,6 +411,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-vervedeck-grafana}
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"   # 同 grafana 主实例：禁用 lokiexplore 启动自动下载（子路径 404 且用不到）
     ports:
       - "127.0.0.1:3003:3000"    # 仅本机调试；平台内走 web 容器 /grafana-light 反向代理
     volumes:

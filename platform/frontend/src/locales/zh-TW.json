@@ -103,6 +103,7 @@
     "dsVersions": "數據集 / 版本",
     "modelDeploy": "模型資產 / 在線部署",
     "gpuTrend": "GPU 利用率（近 1 小時）",
+    "multiNodes": "{{n}} 個節點",
     "recentJobs": "最近訓練任務",
     "chartUtil": "利用率%",
     "chartMem": "顯存GB",

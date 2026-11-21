@@ -7,11 +7,13 @@ import { PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { useBatchDelete } from '../batch'
+import { useStatusLabel } from '../status'
 
 const ST: Record<string, string> = { pending: 'default', running: 'processing', succeeded: 'success', failed: 'error' }
 
 export default function QuantCenter() {
   const { t } = useTranslation()
+  const st = useStatusLabel()
   const projectId = Number(localStorage.getItem('projectId') || 0)
   const [list, setList] = useState<any[]>([])
   const [sel, setSel] = useState<number[]>([])
@@ -73,7 +75,7 @@ export default function QuantCenter() {
           { title: t('common.name'), dataIndex: 'name', width: 180, ellipsis: true },
           { title: t('quant.colModel'), dataIndex: 'model_name', width: 200, ellipsis: true },
           { title: t('quant.colMethod'), dataIndex: 'method_label', width: 200, render: (v: string) => <Tag color="geekblue">{v}</Tag> },
-          { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={ST[v]}>{v}</Tag> },
+          { title: t('common.status'), dataIndex: 'status', width: 100, render: (v: string) => <Tag color={ST[v]}>{st(v)}</Tag> },
           { title: t('common.createTime'), dataIndex: 'created_at', width: 170 },
           { title: t('quant.colFinished'), dataIndex: 'finished_at', width: 170, render: (v: string) => v || '-' },
           {
@@ -137,7 +139,7 @@ export default function QuantCenter() {
                 { key: 'name', label: t('common.name'), children: detail.name },
                 { key: 'model', label: t('quant.colModel'), children: detail.model_name || '-' },
                 { key: 'method', label: t('quant.colMethod'), children: <Tag color="geekblue">{detail.method_label}</Tag> },
-                { key: 'status', label: t('common.status'), children: <Tag color={ST[detail.status]}>{detail.status}</Tag> },
+                { key: 'status', label: t('common.status'), children: <Tag color={ST[detail.status]}>{st(detail.status)}</Tag> },
                 { key: 'gpu', label: t('quant.gpuCount'), children: detail.gpu_count },
                 { key: 'created', label: t('common.createTime'), children: detail.created_at },
                 { key: 'finished', label: t('quant.colFinished'), children: detail.finished_at || '-', span: 2 },

@@ -11,11 +11,13 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { StatusDot, STATUS_TONE, SectionTitle } from './infer-shared'
+import { useStatusLabel } from '../status'
 
 /** 缓存加速：① 缓存服务（类型 内存|SSD + 容量 + 可选托管容器端点）
  *  ② 部署级扩展 KV（CPU 卸载 / HiCache，随实例重建生效） */
 export default function InferCache() {
   const { t } = useTranslation()
+  const st = useStatusLabel()
   const [list, setList] = useState<any[]>([])
   const [deploys, setDeploys] = useState<any[]>([])
   const [kw, setKw] = useState('')
@@ -187,7 +189,7 @@ export default function InferCache() {
                 const s = effStatus(r)
                 const tone = s === 'available' ? 'success' : (STATUS_TONE[s] || 'default')
                 const tip = r.image ? r.state_message : t('cache.logicalTip')
-                return <StatusDot status={s === 'available' ? t('cache.available') : s} tone={tone} tip={tip} />
+                return <StatusDot status={s === 'available' ? t('cache.available') : st(s)} tone={tone} tip={tip} />
               },
             },
             { title: t('common.name'), dataIndex: 'name', width: 190, ellipsis: true, render: (v: string, r: any) => (
@@ -252,7 +254,7 @@ export default function InferCache() {
             { title: t('infer.colEngine'), dataIndex: 'engine', width: 90, render: (v: string) => <Tag color={v === 'vllm' ? 'blue' : 'cyan'}>{v}</Tag> },
             {
               title: t('common.status'), dataIndex: 'status', width: 110, render: (v: string, r: any) => (
-                <StatusDot status={v} tone={STATUS_TONE[v] || 'default'} tip={r.state_message} />
+                <StatusDot status={st(v)} tone={STATUS_TONE[v] || 'default'} tip={r.state_message} />
               ),
             },
             { title: t('cache.extKv'), width: 170, render: (_: any, r: any) => kvTag(r) || <span style={{ color: 'var(--ant-color-text-quaternary)' }}>{t('cache.none')}</span> },

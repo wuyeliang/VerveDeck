@@ -1,13 +1,17 @@
 import React, { useEffect, useState } from 'react'
 import { Row, Col, Card, Statistic, Table, Tag, Progress, Alert, Descriptions, Empty, Divider } from 'antd'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { useStatusLabel } from '../status'
 
 const STATUS_COLOR: Record<string, string> = {
   running: 'processing', queued: 'default', succeeded: 'success', failed: 'error',
   cancelled: 'warning', creating: 'processing', stopped: 'default', pending: 'default',
 }
+
+/** 多节点趋势线配色（按节点顺序取模） */
+const TREND_PALETTE = ['#1677ff', '#52c41a', '#fa8c16', '#722ed1', '#13c2c2', '#eb2f96']
 
 const fmtBytes = (n: number) => {
   if (!n || n <= 0) return '0 B'
@@ -19,18 +23,57 @@ const fmtBytes = (n: number) => {
 
 export default function Dashboard() {
   const { t, i18n: ti18n } = useTranslation()
+  const st = useStatusLabel()
   const [s, setS] = useState<any>(null)
   const [metrics, setMetrics] = useState<any[]>([])
+  const [trendNodes, setTrendNodes] = useState<string[]>([])
 
   const load = () => {
     api.get('/api/dashboard/summary').then((r) => setS(r.data)).catch(() => {})
+    // 全节点 GPU 趋势：每节点一条利用率线 + 一条显存线（分钟粒度对齐合并）
     api.get('/api/cluster/nodes').then((r) => {
-      const n = r.data[0]
-      if (n) api.get(`/api/cluster/nodes/${n.id}/metrics?minutes=60`)
-        .then((m) => {
-          const ser = m.data.series?.[0] || []
-          setMetrics(ser.map((x: any) => ({ t: new Date(x.ts * 1000).toLocaleTimeString(ti18n.language, { hour: '2-digit', minute: '2-digit' }), util: x.util, mem: Math.round((x.mem_used / 1024) * 10) / 10 })))
-        }).catch(() => {})
+      const ns = r.data || []
+      if (!ns.length) return
+      Promise.all(ns.map((n) =>
+        api.get(`/api/cluster/nodes/${n.id}/metrics?minutes=60`)
+          .then((m) => ({ name: m.data.node || n.name, series: m.data.series || {} }))
+          .catch(() => null),
+      )).then((rs) => {
+        const perNode: { name: string; pts: [number, number, number][] }[] = []
+        for (const r of rs) {
+          if (!r) continue
+          const byMin = new Map<number, { u: number[]; m: number[] }>()
+          for (const pts of Object.values(r.series) as any[]) {
+            for (const p of pts || []) {
+              const k = Math.floor((p.ts || 0) / 60) * 60
+              const e = byMin.get(k) || { u: [], m: [] }
+              e.u.push(p.util ?? 0); e.m.push(p.mem_used ?? 0)
+              byMin.set(k, e)
+            }
+          }
+          const pts = [...byMin.entries()].sort((a, b) => a[0] - b[0])
+            .map(([ts, e]): [number, number, number] => [ts,
+              Math.round(e.u.reduce((x, y) => x + y, 0) / e.u.length),
+              Math.round(e.m.reduce((x, y) => x + y, 0) / 1024 * 10) / 10])
+          if (pts.length) perNode.push({ name: r.name, pts })
+        }
+        const rows: any[] = []
+        const rowIdx = new Map<number, number>()
+        for (const n of perNode) {
+          for (const [ts, u, m] of n.pts) {
+            let i = rowIdx.get(ts)
+            if (i === undefined) {
+              i = rows.length
+              rowIdx.set(ts, i)
+              rows.push({ t: new Date(ts * 1000).toLocaleTimeString(ti18n.language, { hour: '2-digit', minute: '2-digit' }) })
+            }
+            rows[i][`u:${n.name}`] = u
+            rows[i][`m:${n.name}`] = m
+          }
+        }
+        setTrendNodes(perNode.map((n) => n.name))
+        setMetrics(rows)
+      })
     }).catch(() => {})
   }
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t) }, [])
@@ -47,7 +90,14 @@ export default function Dashboard() {
       : h === 1 ? <Tag color="warning">{t('cluster.healthWarn')}</Tag>
       : <Tag color="success">{t('cluster.healthOk')}</Tag>
 
-  const stTag = (v: string) => <Tag color={STATUS_COLOR[v] || 'default'}>{v}</Tag>
+  const stTag = (v: string) => <Tag color={STATUS_COLOR[v] || 'default'}>{st(v)}</Tag>
+
+  // GPU 汇总标签：多节点时显示节点数（维护中节点不计入）；状态取聚合口径（任一在线即在线）
+  const gpuNodes: any[] = (s.gpu && s.gpu.nodes) || []
+  const activeGpuNodes = gpuNodes.filter((n: any) => !n.maintenance)
+  const gpuNodeLabel = gpuNodes.length <= 1 ? (s.gpu.node || '-') : t('dashboard.multiNodes', { n: activeGpuNodes.length })
+  const gpuTotalCount = activeGpuNodes.reduce((sum: number, n: any) => sum + (n.count || 0), 0)
+  const gpuSt = gpuNodes.length ? (activeGpuNodes.some((n: any) => n.status === 'online') ? 'online' : 'offline') : 'unknown'
 
   const diskPct = s.storage?.disk_total ? Math.round((s.storage.disk_used / s.storage.disk_total) * 100) : 0
 
@@ -61,7 +111,7 @@ export default function Dashboard() {
       {/* 第一行：核心指标 */}
       <Row gutter={16}>
         <Col span={4}><Card size="small"><Statistic title={t('dashboard.gpuUtil')} value={s.gpu.util} suffix="%"
-          prefix={<span style={{ color: s.gpu.status === 'online' ? '#3f8600' : '#cf1322', fontSize: 12 }}>● {s.gpu.node} ({s.gpu.status}) × {s.gpu.count}</span>} /></Card></Col>
+          prefix={<span style={{ color: gpuSt === 'online' ? '#3f8600' : '#cf1322', fontSize: 12 }}>● {gpuNodeLabel} ({st(gpuSt)}) × {gpuTotalCount}</span>} /></Card></Col>
         <Col span={4}><Card size="small"><Statistic title={t('dashboard.gpuMem')} value={(s.gpu.mem_used / 1024).toFixed(1)} suffix={`/ ${(s.gpu.mem_total / 1024).toFixed(0)} GB`} /></Card></Col>
         <Col span={4}><Card size="small"><Statistic title={t('dashboard.trainCard')} value={s.jobs_running}
           suffix={<span style={{ fontSize: 12, color: '#999' }}>{t('dashboard.running')} / {s.jobs_total}</span>}
@@ -99,7 +149,7 @@ export default function Dashboard() {
           <Card title={t('dashboard.sysTitle')} size="small">
             <Descriptions size="small" column={2} bordered>
               <Descriptions.Item label={t('nav.cluster')}>
-                <Tag color={s.gpu.status === 'online' ? 'success' : 'error'}>{s.gpu.node} · {s.gpu.status}</Tag>
+                <Tag color={gpuSt === 'online' ? 'success' : 'error'}>{gpuNodeLabel} · {st(gpuSt)}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label={t('dashboard.storage')}>
                 <Tag color={s.storage?.ok ? 'success' : 'error'}>{s.storage?.ok ? t('common.enabled') : t('common.disabled')}</Tag>
@@ -125,7 +175,7 @@ export default function Dashboard() {
           </Card>
         </Col>
       </Row>
-      {/* 第三行：GPU 趋势 */}
+      {/* 第三行：GPU 趋势（每节点一条利用率实线 + 一条显存虚线；单节点时与旧口径一致） */}
       <Card title={t('dashboard.gpuTrend')} style={{ marginTop: 16 }} size="small">
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={metrics}>
@@ -133,8 +183,18 @@ export default function Dashboard() {
             <YAxis yAxisId="l" domain={[0, 100]} fontSize={11} />
             <YAxis yAxisId="r" orientation="right" fontSize={11} unit="GB" />
             <Tooltip />
-            <Line yAxisId="l" type="monotone" dataKey="util" name={t('dashboard.chartUtil')} stroke="#1677ff" dot={false} />
-            <Line yAxisId="r" type="monotone" dataKey="mem" name={t('dashboard.chartMem')} stroke="#52c41a" dot={false} />
+            {trendNodes.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+            {trendNodes.map((nm, i) => {
+              const color = trendNodes.length === 1 ? '#1677ff' : TREND_PALETTE[i % TREND_PALETTE.length]
+              const memColor = trendNodes.length === 1 ? '#52c41a' : color
+              const prefix = trendNodes.length > 1 ? `${nm} ` : ''
+              return (
+                <React.Fragment key={nm}>
+                  <Line yAxisId="l" type="monotone" dataKey={`u:${nm}`} name={`${prefix}${t('dashboard.chartUtil')}`} stroke={color} dot={false} connectNulls />
+                  <Line yAxisId="r" type="monotone" dataKey={`m:${nm}`} name={`${prefix}${t('dashboard.chartMem')}`} stroke={memColor} strokeDasharray={trendNodes.length > 1 ? '5 3' : undefined} dot={false} connectNulls />
+                </React.Fragment>
+              )
+            })}
           </LineChart>
         </ResponsiveContainer>
       </Card>
