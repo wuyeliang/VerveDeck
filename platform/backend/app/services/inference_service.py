@@ -573,11 +573,15 @@ def launch(dep: Deployment, model_path: str, abort=None) -> bool:
         for i in range(dep.replicas):
             if not _spawn(lambda: start_replica(dep, i, model_path)):
                 return False
-        # 等待首副本就绪后登记 endpoint（IP 在创建后即可取）
+        # 登记 endpoint：容器已全部重建，无条件取首副本新 IP 覆盖（IP 创建后即可取）。
+        # 此前 `not dep.endpoint` 守卫在重启路径（start/自动重启/参数重建均不清空
+        # endpoint）残留旧容器 IP，wait_ready 持续探测死 IP → 1200s 后误判
+        # 「模型加载超时」failed，而引擎实际健康（2026-11-21 基线部署实锤）。
         for i in range(dep.replicas):
             ip = tc.container_ip(ids[i])
-            if ip and not dep.endpoint:
+            if ip:
                 dep.endpoint = f"{ip}:8000"
+                break
     if _aborted():  # 最后一道门：登记/写库前再复检，防止行已删容器白建
         _cleanup_partial()
         return False
