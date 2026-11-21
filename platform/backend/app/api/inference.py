@@ -585,8 +585,14 @@ def scale_deploy(did: int, req: dict, db=Depends(get_db), user=Depends(get_curre
         return _brief(d, db)
     need = want * (d.tensor_parallel or 1)
     have = d.replicas * (d.tensor_parallel or 1)
-    if node and need > (node.gpu_count or 0) - used + have:
-        raise HTTPException(400, f"GPU 不足：需要 {need} 卡，可用 {max(0, (node.gpu_count or 0) - used + have)}")
+    # _gpu_in_use 仅统计 running/creating 部署：只有该部署正占卡（被计入 used）时，
+    # 把它的 have 回补进可用卡才成立；stopped/failed 部署并不占卡，若回补会虚增
+    # 可用卡、放行超容量扩容（扩容立即 start_replica 建新副本 → 真实超订 GPU）。
+    # 非占卡状态不回补，与创建时准入口径（need > gpu_count - used）一致。
+    if node:
+        avail = (node.gpu_count or 0) - used + (have if d.status in ("running", "creating") else 0)
+        if need > avail:
+            raise HTTPException(400, f"GPU 不足：需要 {need} 卡，可用 {max(0, avail)}")
     asset = db.get(ModelAsset, d.model_asset_id)
     path = _resolve_model_path(asset, db)
     try:
