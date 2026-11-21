@@ -146,8 +146,11 @@ def test_brief_fields_complete(admin_tok, mctx):
                        headers=H(admin_tok), timeout=15).json()
     for k in ("id", "project_id", "name", "type", "path", "source", "hf_id",
               "size_bytes", "status", "parent_name", "job_id",
-              "dataset_version_ids", "note", "created_at"):
+              "dataset_version_ids", "note", "created_at",
+              "deploy_status", "deploy_running"):
         assert k in row, f"缺字段 {k}"
+    assert row["deploy_status"] in ("none", "running", "creating", "failed", "stopped")
+    assert isinstance(row["deploy_running"], int)
 
 
 # ---------- 血缘 ----------

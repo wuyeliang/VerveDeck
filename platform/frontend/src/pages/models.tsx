@@ -16,6 +16,27 @@ const TYPE_COLOR: Record<string, string> = { base: 'geekblue', lora: 'purple', m
 const ST_COLOR: Record<string, string> = { ready: 'success', pending_download: 'processing', failed: 'error' }
 const fmtGB = (b: number) => (b / 1073741824).toFixed(2)
 
+// 运行状态（聚合该模型部署）：绿=运行中 · 琥珀=创建中 · 红=失败 · 灰=已停止；未部署=淡灰文字
+const RUN_TONE: Record<string, string> = {
+  running: 'var(--ant-color-success)',
+  creating: 'var(--ant-color-warning)',
+  failed: 'var(--ant-color-error)',
+  stopped: 'var(--ant-color-text-quaternary)',
+}
+const RUN_KEY: Record<string, string> = { running: 'runRunning', creating: 'runCreating', failed: 'runFailed', stopped: 'runStopped' }
+
+function RunStatus({ status, running }: { status?: string; running?: number }) {
+  const { t } = useTranslation()
+  if (!status || status === 'none')
+    return <span style={{ color: 'var(--ant-color-text-quaternary)' }}>{t('models.runNone')}</span>
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: RUN_TONE[status] || 'var(--ant-color-text-quaternary)', flex: 'none' }} />
+      <span>{t(`models.${RUN_KEY[status]}`, { defaultValue: status })}{status === 'running' && running > 0 ? ` · ${running}` : ''}</span>
+    </span>
+  )
+}
+
 export default function ModelRepo() {
   const { t } = useTranslation()
   const st = useStatusLabel()
@@ -184,6 +205,10 @@ export default function ModelRepo() {
                 <span style={{ color: '#888', fontSize: 12 }}>{t('models.dlProgress', { mb: Math.round(r.size_bytes / 1048576) })}</span></Space>
               : <Tag color={ST_COLOR[v]}>{st(v)}</Tag>,
           },
+          {
+            title: t('models.colRun'), key: 'deploy', width: 130,
+            render: (_: any, r: any) => <RunStatus status={r.deploy_status} running={r.deploy_running} />,
+          },
           { title: t('models.colSize'), width: 90, render: (_: any, r: any) => r.status === 'pending_download' ? <span style={{ color: '#888' }}>…</span> : fmtGB(r.size_bytes || 0) },
           { title: t('models.lineage'), width: 90, render: (_: any, r: any) => r.job_id || r.parent_name ? <Button size="small" icon={<NodeIndexOutlined />} onClick={() => api.get(`/api/models/${r.id}/lineage`).then((x) => setLineage(x.data))}>{t('models.trace')}</Button> : '-' },
           { title: t('common.createTime'), dataIndex: 'created_at', width: 170 },
@@ -225,6 +250,9 @@ export default function ModelRepo() {
                       ? <Space size={4}><Tag color="processing" icon={<DownloadOutlined spin />} style={{ marginInlineEnd: 0 }}>{st(m.status)}</Tag>{t('models.dlProgress', { mb: Math.round(m.size_bytes / 1048576) })}</Space>
                       : <Tag color={ST_COLOR[m.status]} style={{ marginInlineEnd: 0 }}>{st(m.status)}</Tag>}
                     {m.status !== 'pending_download' && <span style={{ marginLeft: 6 }}>{fmtGB(m.size_bytes || 0)} GB</span>}
+                  </div>
+                  <div style={{ fontSize: 12, marginBottom: 6 }}>
+                    <RunStatus status={m.deploy_status} running={m.deploy_running} />
                   </div>
                   <div style={{ fontSize: 12, color: '#888', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {m.source || m.hf_id || '-'}

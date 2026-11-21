@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..security import get_current_user, can_access_project, require_role
-from ..models import ModelAsset, Project, TrainingJob, DatasetVersion, User, StorageBackend
+from ..models import ModelAsset, Project, TrainingJob, DatasetVersion, User, StorageBackend, Deployment
 from ..services import storage
 
 log = logging.getLogger("models")
@@ -63,14 +63,40 @@ def _model_hub_root(db: Session, storage_backend_id: int | None) -> str:
     return os.path.join(settings.data_dir, "models", "hub")
 
 
-def _brief(a: ModelAsset, db: Session) -> dict:
+def _deploy_status_map(db: Session, model_ids: list[int]) -> dict:
+    """按模型聚合部署运行状态：{model_id: {"status", "running"}}。
+    status 优先级 running > creating > failed > stopped；无任何部署=none；
+    running=运行中副本总数（status=running 的部署 replicas 之和）。一次批量查询，
+    供列表页避免 N+1。"""
+    ids = [i for i in (model_ids or []) if i]
+    out = {mid: {"status": "none", "running": 0} for mid in ids}
+    if not ids:
+        return out
+    deps = db.query(Deployment).filter(Deployment.model_asset_id.in_(ids)).all()
+    prio = {"running": 4, "creating": 3, "failed": 2, "stopped": 1}
+    by: dict[int, list] = {}
+    for d in deps:
+        by.setdefault(d.model_asset_id, []).append(d)
+    for mid, ds in by.items():
+        out[mid] = {
+            "status": max((d.status for d in ds), key=lambda s: prio.get(s, 0)),
+            "running": sum(d.replicas or 0 for d in ds if d.status == "running"),
+        }
+    return out
+
+
+def _brief(a: ModelAsset, db: Session, _deploy: dict | None = None) -> dict:
     base = db.get(ModelAsset, a.parent_asset_id) if a.parent_asset_id else None
     _, _, label = storage.location(a.storage_backend_id, db)
+    ds = _deploy if _deploy is not None else _deploy_status_map(db, [a.id])[a.id]
     return {
         "id": a.id, "project_id": a.project_id, "name": a.name, "type": a.type,
         "category": a.category or "", "tags": a.tags or [],
         "path": a.path, "source": a.source, "hf_id": a.hf_id,
         "size_bytes": a.size_bytes, "status": a.status,
+        # 运行状态（聚合该模型全部部署，区别于上面的下载/就绪 status）：
+        # none=未部署 / running=运行中 / creating=创建中 / failed=失败 / stopped=已停止
+        "deploy_status": ds["status"], "deploy_running": ds["running"],
         "parent_name": base.name if base else "",
         "storage_backend_id": a.storage_backend_id,
         "storage_backend": label,
@@ -116,9 +142,10 @@ def list_models(project_id: int | None = None, mtype: str = "", category: str | 
     if kw:
         q = q.filter(ModelAsset.name.ilike(f"%{kw}%"))
     rows = q.order_by(ModelAsset.id.desc()).all()
+    depmap = _deploy_status_map(db, [a.id for a in rows])  # 一次批量查部署，避免 N+1
     out = []
     for a in rows:
-        b = _brief(a, db)
+        b = _brief(a, db, _deploy=depmap.get(a.id))
         if a.status == "pending_download" and a.path:
             # 断点续传进度：实时统计已落地字节数（huggingface_hub 直接写 local_dir，部分文件也在内）
             b["size_bytes"] = _size(a.path)
