@@ -1,23 +1,63 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
-  Table, Button, Space, Tag, Form, Input,
-  Select, message, Modal, Upload, Tooltip, Switch, Dropdown, Drawer,
+  Row, Col, Card, Button, Space, Tag, Form, Input,
+  Select, message, Modal, Upload, Tooltip, Switch, Dropdown, Drawer, Empty,
 } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, ImportOutlined,
   StarOutlined, CodeOutlined, CopyOutlined,
   SearchOutlined, MoreOutlined, ReloadOutlined,
+  RocketOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 import { SectionTitle } from './infer-shared'
 
-/** 推理后端注册表：builtin（vllm/sglang，镜像走 pin 系统）/ custom（版本决定镜像+启动命令模板） */
+// ---------- 卡片图标：builtin 用引擎图标，custom 按 id 确定性取色+数学符号（参照 GPUStack） ----------
+const ENGINE_META: Record<string, { icon: React.ReactNode; color: string }> = {
+  vllm: { icon: <RocketOutlined />, color: '#16a34a' },
+  sglang: { icon: <ThunderboltOutlined />, color: '#ea580c' },
+}
+const CUSTOM_COLORS = ['#0284c7', '#7c3aed', '#db2777', '#0d9488', '#d97706', '#4f46e5', '#dc2626', '#65a30d']
+const CUSTOM_SYMBOLS = ['∑', '∏', '∫', '∂', '∞', 'π', 'θ', '∆']
+const FRAME_COLOR: Record<string, string> = { cuda: 'green', rocm: 'volcano', cpu: 'default' }
+
+function BackendIcon({ b }: { b: any }) {
+  const meta = ENGINE_META[b.name]
+  const box: React.CSSProperties = {
+    width: 32, height: 32, borderRadius: 8, flex: 'none',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
+  }
+  if (meta) {
+    return <span style={{ ...box, background: `${meta.color}1a`, color: meta.color }}>{meta.icon}</span>
+  }
+  const color = CUSTOM_COLORS[b.id % CUSTOM_COLORS.length]
+  return (
+    <span style={{ ...box, background: `${color}1a`, color, fontWeight: 600 }}>
+      {CUSTOM_SYMBOLS[b.id % CUSTOM_SYMBOLS.length]}
+    </span>
+  )
+}
+
+/** 后端全部版本的框架聚合：{fw, vers[]}（框架标签 tooltip 展示对应版本） */
+function frameworksOf(b: any): { fw: string; vers: string[] }[] {
+  const m = new Map<string, string[]>()
+  for (const v of b.versions || []) {
+    const fw = v.framework || 'cuda'
+    m.set(fw, [...(m.get(fw) || []), v.version])
+  }
+  return [...m.entries()].map(([fw, vers]) => ({ fw, vers }))
+}
+
+/** 推理后端注册表：builtin（vllm/sglang，镜像走 pin 系统）/ custom（版本决定镜像+启动命令模板）
+ *  卡片网格布局（参照 GPUStack backends 页）：卡片=图标+名称+类型+框架+版本；点击卡片→版本详情弹窗 */
 export default function InferBackends() {
   const { t } = useTranslation()
   const [list, setList] = useState<any[]>([])
   const [kw, setKw] = useState('')
-  const [expandedKeys, setExpandedKeys] = useState<number[]>([])
+  const [src, setSrc] = useState<string | undefined>(undefined)
+  const [openDetail, setOpenDetail] = useState<any>(null)  // 版本详情弹窗：当前后端
+  const [verFw, setVerFw] = useState<string | undefined>(undefined)
   const [openNew, setOpenNew] = useState(false)
   const [openEdit, setOpenEdit] = useState<any>(null)
   const [openVer, setOpenVer] = useState<any>(null)  // {backend, ver?}
@@ -132,7 +172,7 @@ export default function InferBackends() {
       .catch((e) => message.error(e.response?.data?.detail || e.message))
   }
 
-  // ---------- YAML 导入 ----------
+  // ---------- YAML 导入 / 导出 ----------
   const doImport = async (file: File) => {
     setImporting(true)
     try {
@@ -148,6 +188,16 @@ export default function InferBackends() {
     }
     return false  // 不走 antd 自动上传
   }
+  const doExport = (b: any) => {
+    api.get(`/api/inference/backends/${b.id}/export`, { responseType: 'blob' }).then((r) => {
+      const url = URL.createObjectURL(new Blob([r.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${b.name}.yaml`
+      a.click()
+      URL.revokeObjectURL(url)
+    }).catch((e) => message.error(e.response?.data?.detail || e.message))
+  }
 
   const copy = (text: string) => {
     navigator.clipboard?.writeText(text).then(
@@ -156,52 +206,21 @@ export default function InferBackends() {
     )
   }
 
-  const verColumns = (b: any) => [
-    { title: t('backends.ver'), dataIndex: 'version', width: 130, render: (v: string, r: any) => (
-      <Space size={4}>
-        <span style={{ fontWeight: 600 }}>{v}</span>
-        {r.is_default && <Tooltip title={t('backends.defaultVer')}><StarOutlined style={{ color: '#faad14' }} /></Tooltip>}
-      </Space>
-    ) },
-    { title: t('backends.image'), dataIndex: 'image', ellipsis: true, render: (v: string) => (
-      <Space size={4}><code style={{ fontSize: 11 }}>{v}</code>
-        <Button size="small" type="text" icon={<CodeOutlined />} onClick={() => copy(v)} /></Space>
-    ) },
-    { title: 'framework', dataIndex: 'framework', width: 90 },
-    {
-      title: t('backends.runCmd'), ellipsis: true, render: (_: any, r: any) => r.run_command
-        ? <Tooltip title={r.run_command}><code style={{ fontSize: 11 }}>{r.run_command}</code></Tooltip>
-        : <span style={{ color: 'var(--ant-color-text-quaternary)' }}>-</span>,
-    },
-    {
-      title: t('common.actions'), key: 'ops', width: 60, render: (_: any, r: any) => (
-        <Dropdown menu={{
-          items: [
-            ...(!r.is_default ? [{ key: 'def', icon: <StarOutlined />, label: t('backends.setDefault') }] : []),
-            { key: 'edit', icon: <CodeOutlined />, label: t('common.edit') },
-            { type: 'divider' as const },
-            { key: 'delete', icon: <DeleteOutlined />, label: t('common.delete'), danger: true },
-          ],
-          onClick: ({ key }: any) => {
-            if (key === 'def') setDefaultVer(b, r)
-            else if (key === 'edit') openEditVer(b, r)
-            else if (key === 'delete') {
-              Modal.confirm({
-                title: t('backends.verDelConfirm'),
-                okButtonProps: { danger: true },
-                onOk: () => delVer(b, r),
-              })
-            }
-          },
-        }}>
-          <Button size="small" type="text" icon={<MoreOutlined />} />
-        </Dropdown>
-      ),
-    },
+  // ---------- 卡片操作 ----------
+  const cardActions = (b: any) => [
+    { key: 'view', icon: <SearchOutlined />, label: t('backends.viewVersions') },
+    { key: 'export', icon: <ImportOutlined />, label: t('backends.exportYaml') },
+    ...(b.source === 'custom' ? [
+      { type: 'divider' as const },
+      { key: 'addVer', icon: <PlusOutlined />, label: t('backends.addVer') },
+      { key: 'edit', icon: <CodeOutlined />, label: t('common.edit') },
+      { type: 'divider' as const },
+      { key: 'delete', icon: <DeleteOutlined />, label: t('common.delete'), danger: true },
+    ] : []),
   ]
-
-  // 行操作：版本 / 编辑 / 删除（custom 后端才暴露修改项）
-  const onRowAction = (key: string, b: any) => {
+  const onCardAction = (key: string, b: any) => {
+    if (key === 'view') { setVerFw(undefined); setOpenDetail(b); return }
+    if (key === 'export') { doExport(b); return }
     if (key === 'addVer') { openAddVer(b); return }
     if (key === 'edit') {
       editForm.resetFields()
@@ -222,19 +241,42 @@ export default function InferBackends() {
       })
     }
   }
+  // 版本项操作（详情弹窗内，custom 后端才暴露）
+  const onVerAction = (key: string, b: any, ver: any) => {
+    if (key === 'def') setDefaultVer(b, ver)
+    else if (key === 'edit') openEditVer(b, ver)
+    else if (key === 'delete') {
+      Modal.confirm({
+        title: t('backends.verDelConfirm'),
+        okButtonProps: { danger: true },
+        onOk: () => delVer(b, ver),
+      })
+    }
+  }
 
   const filtered = list.filter((b) => {
     const k = kw.trim().toLowerCase()
+    if (src && b.source !== src) return false
     return !k || (b.name || '').toLowerCase().includes(k) || (b.description || '').toLowerCase().includes(k)
   })
 
+  // 版本详情弹窗内容（框架筛选）
+  const detailVers = openDetail?.versions || []
+  const detailFws = [...new Set(detailVers.map((v: any) => v.framework || 'cuda'))]
+  const shownVers = verFw ? detailVers.filter((v: any) => (v.framework || 'cuda') === verFw) : detailVers
+
   return (
     <div>
-      {/* 工具栏：左=搜索+刷新；右=YAML 导入+新建（列表页无大标题） */}
+      {/* 工具栏：左=搜索+来源筛选+刷新；右=YAML 导入+新建 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
         <Space wrap>
           <Input allowClear prefix={<SearchOutlined style={{ color: 'var(--ant-color-text-quaternary)' }} />}
-            placeholder={t('backends.searchPh')} value={kw} onChange={(e) => setKw(e.target.value)} style={{ width: 260 }} />
+            placeholder={t('backends.searchPh')} value={kw} onChange={(e) => setKw(e.target.value)} style={{ width: 240 }} />
+          <Select allowClear placeholder={t('backends.source')} value={src} onChange={(v) => setSrc(v)} style={{ width: 110 }}
+            options={[
+              { value: 'builtin', label: t('backends.builtin') },
+              { value: 'custom', label: t('backends.custom') },
+            ]} />
           <Button type="text" icon={<ReloadOutlined />} onClick={load} />
         </Space>
         <Space>
@@ -247,101 +289,158 @@ export default function InferBackends() {
           </Button>
         </Space>
       </div>
-      <Table rowKey="id" size="small" dataSource={filtered} pagination={{ pageSize: 12, showSizeChanger: false }}
-        scroll={{ x: 1080 }}
-        locale={{ emptyText: t('backends.empty') }}
-        expandable={{
-          expandedRowKeys: expandedKeys,
-          onExpandedRowsChange: (keys: any) => setExpandedKeys(keys.map(Number)),
-          expandedRowRender: (b: any) => (
-            <div style={{ padding: '6px 12px', background: 'var(--ant-color-fill-quaternary)' }}>
-              <Space size={[6, 4]} wrap style={{ marginBottom: 8 }}>
-                {Object.keys(b.default_env || {}).length > 0 && (
-                  <Tooltip title={jsonOf(b.default_env)}>
-                    <Tag color="purple">{t('backends.envKeys', { n: Object.keys(b.default_env).length })}</Tag>
-                  </Tooltip>
+
+      {/* 卡片网格（点击卡片→版本详情） */}
+      {filtered.length === 0 ? (
+        <Empty description={t('backends.empty')} style={{ padding: '80px 0' }} />
+      ) : (
+        <Row gutter={[12, 12]}>
+          {filtered.map((b) => {
+            const def = b.versions.find((v: any) => v.is_default)
+            return (
+              <Col xs={24} sm={12} md={8} xl={6} key={b.id}>
+                <Card size="small" hoverable
+                  onClick={() => { setVerFw(undefined); setOpenDetail(b) }}
+                  title={
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 8 }}>
+                      <Space size={8}>
+                        <BackendIcon b={b} />
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {b.source === 'custom' ? b.name.replace(/-custom$/, '') : b.name}
+                          </span>
+                          <Tag color={b.source === 'builtin' ? 'geekblue' : 'orange'} style={{ margin: 0, flex: 'none' }}>
+                            {b.source === 'builtin' ? t('backends.builtin') : t('backends.custom')}
+                          </Tag>
+                        </span>
+                      </Space>
+                      <Dropdown menu={{ items: cardActions(b), onClick: ({ key }) => onCardAction(key, b) }}>
+                        <Button size="small" type="text" icon={<MoreOutlined />}
+                          onClick={(e) => e.stopPropagation()} />
+                      </Dropdown>
+                    </div>
+                  }
+                  extra={null}>
+                  {b.description && (
+                    <div style={{ fontSize: 12, color: 'var(--ant-color-text-tertiary)', marginBottom: 8,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={b.description}>{b.description}</div>
+                  )}
+                  {/* 可用框架（tooltip=对应版本列表） */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--ant-color-text-tertiary)', flex: 'none' }}>{t('backends.frameworks')}:</span>
+                    {frameworksOf(b).map(({ fw, vers }) => (
+                      <Tooltip key={fw} title={vers.join(', ')}>
+                        <Tag color={FRAME_COLOR[fw] || 'default'} style={{ margin: 0 }}>{fw}</Tag>
+                      </Tooltip>
+                    ))}
+                  </div>
+                  {/* 版本数 · 默认版本 + 生效镜像 */}
+                  <div style={{ fontSize: 12, color: 'var(--ant-color-text-secondary)', marginBottom: 6,
+                    display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <span style={{ flex: 'none' }}>{t('backends.versions')} {b.versions.length}</span>
+                    {def && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                        <span>·</span>
+                        <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{def.version}</span>
+                        <StarOutlined style={{ color: '#faad14', flex: 'none' }} />
+                      </span>
+                    )}
+                  </div>
+                  {b.current_image && (
+                    <Tooltip title={t('backends.currentImageHint')}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                        <code style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {b.current_image}
+                        </code>
+                        <Button size="small" type="text" icon={<CopyOutlined />} style={{ flex: 'none' }}
+                          onClick={(e) => { e.stopPropagation(); copy(b.current_image) }} />
+                      </div>
+                    </Tooltip>
+                  )}
+                </Card>
+              </Col>
+            )
+          })}
+        </Row>
+      )}
+
+      {/* 版本详情弹窗（点击卡片进入；框架筛选 + 版本项列表；custom 可管理版本） */}
+      <Modal open={!!openDetail} width={640} centered destroyOnClose
+        onCancel={() => setOpenDetail(null)} footer={null}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 14 }}>
+              {t('backends.versions')} · {openDetail?.name}（{detailVers.length}）
+            </span>
+            {openDetail?.source === 'custom' && (
+              <Button type="link" size="small" icon={<PlusOutlined />} style={{ padding: 0 }}
+                onClick={() => openAddVer(openDetail)}>
+                {t('backends.addVer')}
+              </Button>
+            )}
+          </div>
+        }>
+        <Select allowClear placeholder={t('backends.frameworkFilter')} style={{ width: '100%', marginBottom: 12 }}
+          value={verFw} onChange={(v) => setVerFw(v)}
+          options={detailFws.map((f) => ({ value: f, label: f }))} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: '60vh', overflow: 'auto', paddingRight: 4 }}>
+          {shownVers.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('backends.noVersion')} />
+          ) : shownVers.map((v: any) => (
+            <div key={v.id} style={{ border: '1px solid var(--ant-color-border)', borderRadius: 10, padding: '10px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontWeight: 600 }}>{v.version}</span>
+                {openDetail?.source === 'builtin' && (
+                  <Tag color="geekblue" style={{ margin: 0 }}>{t('backends.builtin')}</Tag>
                 )}
-                {Object.keys(b.default_params || {}).length > 0 && (
-                  <Tooltip title={jsonOf(b.default_params)}>
-                    <Tag color="green">{t('backends.paramKeys', { n: Object.keys(b.default_params).length })}</Tag>
-                  </Tooltip>
-                )}
-              </Space>
-              <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{t('backends.versions')}（{b.versions.length}）</span>
-                {b.source === 'custom' && (
-                  <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => openAddVer(b)}>
-                    {t('backends.addVer')}
-                  </Button>
+                {v.is_default && <Tag color="geekblue" style={{ margin: 0 }}>{t('backends.defaultTag')}</Tag>}
+                <span style={{ flex: 1 }} />
+                {openDetail?.source === 'custom' && (
+                  <Dropdown menu={{
+                    items: [
+                      ...(!v.is_default ? [{ key: 'def', icon: <StarOutlined />, label: t('backends.setDefault') }] : []),
+                      { key: 'edit', icon: <CodeOutlined />, label: t('common.edit') },
+                      { type: 'divider' as const },
+                      { key: 'delete', icon: <DeleteOutlined />, label: t('common.delete'), danger: true },
+                    ],
+                    onClick: ({ key }) => onVerAction(key, openDetail, v),
+                  }}>
+                    <Button size="small" type="text" icon={<MoreOutlined />} />
+                  </Dropdown>
                 )}
               </div>
-              <Table size="small" rowKey="id" pagination={false} dataSource={b.versions} columns={verColumns(b)}
-                scroll={{ x: 560 }} />
-            </div>
-          ),
-        }}
-        columns={[
-          {
-            title: t('common.name'), dataIndex: 'name', width: 200, fixed: 'left', render: (v: string, b: any) => (
-              <div style={{ minWidth: 0 }}>
-                <span style={{ color: 'var(--ant-color-primary)', fontWeight: 600 }}>{v}</span>
-                <div style={{ fontSize: 12, color: 'var(--ant-color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {b.description || '-'}
-                </div>
-              </div>
-            ),
-          },
-          {
-            title: t('backends.source'), dataIndex: 'source', width: 110, render: (v: string) => (
-              <Tag color={v === 'builtin' ? 'geekblue' : 'orange'}>
-                {v === 'builtin' ? t('backends.builtin') : t('backends.custom')}
-              </Tag>
-            ),
-          },
-          {
-            title: t('backends.image'), key: 'image', width: 240, ellipsis: true,
-            render: (_: any, b: any) => (
-              <Tooltip title={t('backends.currentImageHint')}>
-                <Space size={4}>
-                  <code style={{ fontSize: 11 }}>{b.current_image || '—'}</code>
-                  {b.current_image && <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => copy(b.current_image)} />}
-                </Space>
-              </Tooltip>
-            ),
-          },
-          {
-            title: t('backends.versions'), key: 'vers', width: 140,
-            render: (_: any, b: any) => {
-              const def = b.versions.find((v: any) => v.is_default)
-              return (
-                <span style={{ color: 'var(--ant-color-text-secondary)' }}>
-                  {b.versions.length} · {def ? def.version : '-'}
-                  {def && <StarOutlined style={{ color: '#faad14', marginLeft: 4 }} />}
+              <div style={{ display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: '4px 10px', fontSize: 12 }}>
+                <span style={{ color: 'var(--ant-color-text-tertiary)' }}>{t('backends.image')}:</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                  <code style={{ fontSize: 11, wordBreak: 'break-all' }}>{v.image}</code>
+                  <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => copy(v.image)} />
                 </span>
-              )
-            },
-          },
-          {
-            title: t('backends.healthPath'), dataIndex: 'health_check_path', width: 150,
-            render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code>,
-          },
-          {
-            title: t('common.actions'), key: 'ops', width: 52, fixed: 'right', align: 'center',
-            render: (_: any, b: any) => b.source !== 'custom' ? null : (
-              <Dropdown menu={{
-                items: [
-                  { key: 'addVer', icon: <PlusOutlined />, label: t('backends.addVer') },
-                  { key: 'edit', icon: <CodeOutlined />, label: t('common.edit') },
-                  { type: 'divider' as const },
-                  { key: 'delete', icon: <DeleteOutlined />, label: t('common.delete'), danger: true },
-                ],
-                onClick: ({ key }: any) => onRowAction(key, b),
-              }}>
-                <Button size="small" type="text" icon={<MoreOutlined />} />
-              </Dropdown>
-            ),
-          },
-        ]} />
+                {v.entrypoint && (<>
+                  <span style={{ color: 'var(--ant-color-text-tertiary)' }}>{t('backends.entrypoint')}:</span>
+                  <span style={{ wordBreak: 'break-all' }}>{v.entrypoint}</span>
+                </>)}
+                {v.run_command && (<>
+                  <span style={{ color: 'var(--ant-color-text-tertiary)' }}>{t('backends.runCmd')}:</span>
+                  <Tooltip title={v.run_command}>
+                    <code style={{ fontSize: 11, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {v.run_command}
+                    </code>
+                  </Tooltip>
+                </>)}
+                {Object.keys(v.env || {}).length > 0 && (<>
+                  <span style={{ color: 'var(--ant-color-text-tertiary)' }}>{t('backends.env')}:</span>
+                  <Tooltip title={jsonOf(v.env)}>
+                    <Tag color="purple" style={{ margin: 0 }}>{t('backends.envKeys', { n: Object.keys(v.env).length })}</Tag>
+                  </Tooltip>
+                </>)}
+                <span style={{ color: 'var(--ant-color-text-tertiary)' }}>framework:</span>
+                <Tag color={FRAME_COLOR[v.framework] || 'default'} style={{ margin: 0 }}>{v.framework}</Tag>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Modal>
 
       {/* 新建自定义后端 */}
       <Drawer title={t('backends.new')} width={620} open={openNew} onClose={() => setOpenNew(false)}

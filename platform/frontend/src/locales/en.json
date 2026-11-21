@@ -1479,8 +1479,13 @@
     "yesDefault": "yes",
     "searchPh": "Search backends",
     "empty": "No backends",
-    "source": "Type"
-  },
+    "source": "Type",
+    "frameworks": "Frameworks",
+    "frameworkFilter": "Filter by framework",
+    "exportYaml": "Export YAML",
+    "defaultTag": "Default",
+    "viewVersions": "View versions",
+    "noVersion": "No versions yet"  },
   "cache": {
     "title": "Cache Acceleration",
     "hint": "Two-tier acceleration: cache services (memory/SSD type + capacity planning, optionally a managed container providing the endpoint) + per-deployment extended KV (vLLM CPU offload / SGLang HiCache, effective on instance rebuild). Associated deployments or routes get VD_CACHE_ENDPOINT injected.",

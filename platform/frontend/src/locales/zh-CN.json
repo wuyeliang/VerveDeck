@@ -1479,8 +1479,13 @@
     "yesDefault": "是",
     "searchPh": "搜索后端",
     "empty": "暂无后端",
-    "source": "类型"
-  },
+    "source": "类型",
+    "frameworks": "可用框架",
+    "frameworkFilter": "按框架筛选",
+    "exportYaml": "导出 YAML",
+    "defaultTag": "默认",
+    "viewVersions": "查看版本",
+    "noVersion": "暂无版本"  },
   "cache": {
     "title": "缓存加速",
     "hint": "两级加速：缓存服务（内存/SSD 类型 + 容量规划，可配托管容器提供端点）+ 部署级扩展 KV（vLLM CPU 卸载 / SGLang HiCache，随实例重建生效）。部署或路由关联后向其注入 VD_CACHE_ENDPOINT。",

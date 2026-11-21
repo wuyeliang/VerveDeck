@@ -132,6 +132,35 @@ def update_backend(bid: int, req: dict, db: Session = Depends(get_db), user=Depe
     return _brief(b, _versions_of(db, b.id))
 
 
+@router.get("/api/inference/backends/{bid}/export")
+def export_backend(bid: int, db=Depends(get_db), user=Depends(get_current_user)):
+    """导出单后端 YAML（与 import 同格式，供跨环境迁移/备份）。
+
+    builtin 亦可导出（供查阅）；重新导入时 import 校验仅接受 custom 名（-custom 结尾）。"""
+    from fastapi.responses import PlainTextResponse
+    b = db.get(InferenceBackend, bid)
+    if not b:
+        raise HTTPException(404, "后端不存在")
+    data = {"backends": [{
+        "name": b.name,
+        "description": b.description or "",
+        "health_check_path": b.health_check_path or "/v1/models",
+        "default_env": b.default_env or {},
+        "default_params": b.default_params or {},
+        "versions": [
+            {"version": v.version, "image": v.image,
+             "framework": v.framework or "cuda", "entrypoint": v.entrypoint or "",
+             "run_command": v.run_command or "", "env": v.env or {},
+             "is_default": bool(v.is_default)}
+            for v in _versions_of(db, bid)
+        ],
+    }]}
+    text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=120)
+    return PlainTextResponse(
+        text, media_type="application/x-yaml; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{b.name}.yaml"'})
+
+
 @router.delete("/api/inference/backends/{bid}")
 def delete_backend(bid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     b = db.get(InferenceBackend, bid)

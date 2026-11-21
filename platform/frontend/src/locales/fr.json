@@ -1479,8 +1479,13 @@
     "yesDefault": "oui",
     "searchPh": "Rechercher des backends",
     "empty": "Aucun backend",
-    "source": "Type"
-  },
+    "source": "Type",
+    "frameworks": "Frameworks",
+    "frameworkFilter": "Filtrer par framework",
+    "exportYaml": "Exporter YAML",
+    "defaultTag": "Par défaut",
+    "viewVersions": "Voir les versions",
+    "noVersion": "Aucune version"  },
   "cache": {
     "title": "Accélération par cache",
     "hint": "Accélération en deux niveaux : services de cache (type mémoire/SSD + planification de capacité, conteneur managé facultatif fournissant l'endpoint) + KV étendu par déploiement (déchargement CPU vLLM / HiCache SGLang, effectif après reconstruction). Les déploiements ou routes associés reçoivent VD_CACHE_ENDPOINT.",

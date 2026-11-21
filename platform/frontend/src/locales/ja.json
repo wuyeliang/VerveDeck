@@ -1479,8 +1479,13 @@
     "yesDefault": "はい",
     "searchPh": "バックエンドを検索",
     "empty": "バックエンドはありません",
-    "source": "タイプ"
-  },
+    "source": "タイプ",
+    "frameworks": "利用可能なフレームワーク",
+    "frameworkFilter": "フレームワークで絞り込み",
+    "exportYaml": "YAML をエクスポート",
+    "defaultTag": "デフォルト",
+    "viewVersions": "バージョンを表示",
+    "noVersion": "バージョンがありません"  },
   "cache": {
     "title": "キャッシュ加速",
     "hint": "2 層の加速：キャッシュサービス（メモリ/SSD タイプ + 容量計画、マネージドコンテナでエンドポイントを提供可）+ デプロイ単位の拡張 KV（vLLM CPU オフロード / SGLang HiCache、インスタンス再構築で有効）。デプロイまたはルートの関連付けで VD_CACHE_ENDPOINT を注入します。",

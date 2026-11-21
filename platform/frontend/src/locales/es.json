@@ -1479,8 +1479,13 @@
     "yesDefault": "sí",
     "searchPh": "Buscar backends",
     "empty": "Sin backends",
-    "source": "Tipo"
-  },
+    "source": "Tipo",
+    "frameworks": "Frameworks",
+    "frameworkFilter": "Filtrar por framework",
+    "exportYaml": "Exportar YAML",
+    "defaultTag": "Predeterminado",
+    "viewVersions": "Ver versiones",
+    "noVersion": "Sin versiones"  },
   "cache": {
     "title": "Aceleración por caché",
     "hint": "Aceleración en dos niveles: servicios de caché (tipo memoria/SSD + planificación de capacidad, contenedor administrado opcional que provee el endpoint) + KV extendido por despliegue (offload CPU de vLLM / HiCache de SGLang, efectivo al reconstruir instancias). Los despliegues o rutas asociados reciben VD_CACHE_ENDPOINT.",

@@ -1479,8 +1479,13 @@
     "yesDefault": "是",
     "searchPh": "搜尋後端",
     "empty": "暫無後端",
-    "source": "類型"
-  },
+    "source": "類型",
+    "frameworks": "可用框架",
+    "frameworkFilter": "按框架篩選",
+    "exportYaml": "匯出 YAML",
+    "defaultTag": "預設",
+    "viewVersions": "查看版本",
+    "noVersion": "暫無版本"  },
   "cache": {
     "title": "快取加速",
     "hint": "兩級加速：快取服務（記憶體/SSD 類型 + 容量規劃，可配託管容器提供端點）+ 部署級擴展 KV（vLLM CPU 卸載 / SGLang HiCache，隨實例重建生效）。部署或路由關聯後向其注入 VD_CACHE_ENDPOINT。",
